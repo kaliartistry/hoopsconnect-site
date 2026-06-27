@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HoopsConnect — Wireframe & Audit</title>
+<meta name="viewport" content="width=1440">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/app.css">
+<link rel="stylesheet" href="styles/phone.css">
+</head>
+<body>
+<div class="page">
+
+  <!-- ─── Top rail ─── -->
+  <div class="toprail">
+    <div class="brand">
+      <img src="assets/jba_logo.png" alt="JBA">
+      <div class="titles">
+        <div class="t1">HoopsConnect — Wireframe &amp; UX Audit</div>
+        <div class="t2">Jamaica Basketball Association · v0.9 · for Claude Code handoff</div>
+      </div>
+    </div>
+    <div class="meta">
+      <span><b>Stack</b> Flutter · Firebase · Cloud Functions</span>
+      <span class="pill">Internal · Pre-build review</span>
+    </div>
+  </div>
+
+  <!-- ─── Left section nav ─── -->
+  <nav class="sectnav">
+    <h4>Document</h4>
+    <button class="on" data-sec="proto"><span class="num">01</span>Interactive Prototype</button>
+    <button data-sec="audit"><span class="num">02</span>UX Audit &amp; Findings</button>
+    <button data-sec="workflows"><span class="num">03</span>Role Workflows</button>
+    <button data-sec="livestats"><span class="num">04</span>Live Stats — Court-side</button>
+    <button data-sec="datamodel"><span class="num">05</span>Data Model &amp; Notifications</button>
+    <button data-sec="handoff"><span class="num">06</span>Claude Code Handoff</button>
+
+    <h4>Switch role (in prototype)</h4>
+    <button data-role-btn="superAdmin" class="role-btn"><span class="num">SA</span>Super Admin</button>
+    <button data-role-btn="admin" class="role-btn on"><span class="num">AD</span>Admin</button>
+    <button data-role-btn="statistician" class="role-btn"><span class="num">ST</span>Statistician</button>
+    <button data-role-btn="rep" class="role-btn"><span class="num">RP</span>Team Rep</button>
+    <button data-role-btn="press" class="role-btn"><span class="num">PR</span>Press / Media</button>
+    <button data-role-btn="fan" class="role-btn"><span class="num">FN</span>Fan</button>
+
+    <h4>Tips</h4>
+    <div style="font-size:11.5px;color:var(--muted);padding:0 10px;line-height:1.5">
+      Switch roles in the left rail to see how the app, tab bar, and inbox change. Tap any post that needs ack, any leaderboard player, or any game card with a CTA to navigate.
+    </div>
+  </nav>
+
+  <!-- ─── Center stage ─── -->
+  <main class="stage">
+
+    <!-- ─── Section 01: Prototype ─── -->
+    <section id="sec-proto" class="on">
+      <div class="stage-h">
+        <div>
+          <div class="lead">01 · Interactive Prototype</div>
+          <h1>One app, six roles, zero confusion.</h1>
+          <p>HoopsConnect collapses the JBA's separate ecosystem (FB updates, paper stat sheets, WhatsApp groups, manual recap writing) into a single role-aware mobile app. Try the prototype on the right — change role in the left rail to see how the surface adapts.</p>
+        </div>
+      </div>
+
+      <div class="phone-stage">
+        <!-- Phone -->
+        <div class="phone-shell">
+          <div class="phone-screen" id="phoneScreen"><!-- Rendered by app.js --></div>
+        </div>
+
+        <!-- Right column: role context + key flows -->
+        <div class="right-col">
+          <div style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:10px">Active role</div>
+          <div id="roleSummary"></div>
+
+          <div style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:24px 0 10px">Try these flows</div>
+
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('rep'); HCApp.go('board')">
+              👀 Rep · Acknowledge an urgent admin post
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('admin'); HCApp.openAckTracker()">
+              ⚡ Admin · See who hasn't ack'd yet
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('statistician'); HCApp.openLive()">
+              ▶ Statistician · Take live court-side stats
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('admin'); HCApp.openStatEntry('g-104','review')">
+              ✓ Admin · Approve submitted stats
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('press'); HCApp.go('media')">
+              📰 Press · Auto-recap &amp; box score export
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('fan'); HCApp.go('stats')">
+              📊 Fan · League leaderboards (no board, no admin)
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.openJoin()">
+              🔑 New user · Join with invite code
+            </button>
+            <button class="btn ghost" style="justify-content:flex-start" onclick="HCApp.setRole('superAdmin'); HCApp.openInvites()">
+              👑 Super-admin · Generate invite codes
+            </button>
+          </div>
+
+          <div class="dl-card">
+            <div class="icon">→</div>
+            <div class="meta">
+              <h5>Ready to build?</h5>
+              <p>Section 06 has a copy-pasteable Claude Code handoff prompt.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 02: Audit ─── -->
+    <section id="sec-audit">
+      <div class="stage-h">
+        <div>
+          <div class="lead">02 · UX Audit</div>
+          <h1>What needs to change before we build.</h1>
+          <p>Findings from your spec doc + the JBA workflow. Each card has a recommendation and where it lands in the prototype.</p>
+        </div>
+      </div>
+
+      <div class="audit-doc">
+
+        <div class="card">
+          <div class="head"><span class="num">A1</span><h3>Posts &amp; "acknowledge or it didn't happen"</h3></div>
+          <p>Your spec already includes ack-required posts — that's the right call. The issue is what happens <em>after</em> the deadline: the spec is silent on enforcement, escalation, and visibility.</p>
+          <ul>
+            <li><span class="b add">+</span><div><b>Ack tracker dashboard for admin.</b> Per-post: who has, who hasn't, color-coded by overdue. Bulk "Send reminder" + "Call rep" SMS deeplink.</div></li>
+            <li><span class="b warn">!</span><div><b>Visible deadline countdown</b> on each post for reps — not just "due date" text. Treats it like a task, not a notification.</div></li>
+            <li><span class="b ok">✓</span><div>Acknowledgments are persistent (Firestore subcollection), not just push receipts.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">A2</span><h3>The "live stats" workflow is the riskiest part</h3></div>
+          <p>Court-side stat entry is the highest-stakes interaction in the entire app — one tap on the wrong row inflates a player's PPG. Your spec lists it as a feature; it needs to be a <b>dedicated mode</b>.</p>
+          <ul>
+            <li><span class="b add">+</span><div><b>Lock the screen orientation, hide system chrome,</b> and switch to a 3-column court-side layout — home roster · action pad · away roster. (See §04.)</div></li>
+            <li><span class="b add">+</span><div><b>Two-tap rule:</b> select player → select action. Never let a single tap mutate stats.</div></li>
+            <li><span class="b add">+</span><div><b>Undo always available.</b> Statisticians make mistakes. Last 5 actions log in the right rail.</div></li>
+            <li><span class="b warn">!</span><div><b>Auto-detect foul-out</b> at 5 fouls — the player is force-benched, the statistician is prompted for a sub.</div></li>
+            <li><span class="b add">+</span><div><b>Validation gates</b> before "Submit": MIN ≤ 240/team, PTS = sum of made shots, no negatives. Block submission until clean.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">A3</span><h3>Stats lifecycle: who can edit, when?</h3></div>
+          <p>This is missing from the spec entirely. Without it, you'll get the same mess JBA has now — competing versions of the same box score.</p>
+          <ul>
+            <li><span class="b add">+</span><div>States: <code>not_started → in_progress → submitted → approved | rejected</code>. Only Admin can move from submitted → approved.</div></li>
+            <li><span class="b add">+</span><div><b>Stats are read-only once approved.</b> Standings &amp; leaderboards rebuild from approved games only — never from drafts.</div></li>
+            <li><span class="b add">+</span><div>Reject path: Admin sends back to statistician with a note (subcollection comment). The statistician sees the rejection in their inbox.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">A4</span><h3>League scope is implicit; make it explicit</h3></div>
+          <p>JBA runs multiple leagues simultaneously (NBL Premier, Women's Premier, Junior, etc.). Your spec mostly assumes "the league" — which breaks the second a Press user tries to filter, or an admin posts to one division.</p>
+          <ul>
+            <li><span class="b add">+</span><div><b>League scope bar</b> at the top of every screen — like Slack's workspace switcher. Standings, schedule, posts, and stats all filter by it.</div></li>
+            <li><span class="b add">+</span><div>Posts get an <b>audience field</b>: All / League / Specific teams. Admin can target.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">A5</span><h3>Press &amp; Fan — separate experiences, not toggled flags</h3></div>
+          <p>The spec lumps fans and press loosely. They want very different things.</p>
+          <ul>
+            <li><span class="b ok">✓</span><div><b>Fans</b> want the public board, standings, schedule, leaderboards. No login required for read-only public content (Tier 1 in your data model).</div></li>
+            <li><span class="b add">+</span><div><b>Press</b> want a digital credential, auto-generated recaps, copy-button box scores, head-to-head comparators, and CSV export. Make this its own tab.</div></li>
+            <li><span class="b warn">!</span><div>Don't show admin-internal posts to public — separate <code>visibility: public | internal</code> on every post.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">A6</span><h3>Invite codes: who, what, expiry</h3></div>
+          <p>Your code mentions invite codes but doesn't structure them. Roles + teams need to be baked into the code itself, not assigned post-hoc.</p>
+          <ul>
+            <li><span class="b add">+</span><div>Code shape: <code>{TEAM}-{ROLE}-{HASH}</code> e.g. <code>TIT-REP-9X4</code>. Single-use for reps/admins, multi-use for press/stats.</div></li>
+            <li><span class="b add">+</span><div>Codes carry: role, team binding, max uses, expiry, generated-by. Stored in <code>inviteCodes</code> collection, validated by Cloud Function on signup.</div></li>
+            <li><span class="b add">+</span><div>Super-admin can <b>revoke a code mid-flight</b> (mark inactive). Already-redeemed accounts unaffected.</div></li>
+          </ul>
+        </div>
+
+        <div class="card full">
+          <div class="head"><span class="num">A7</span><h3>Things to remove from scope (for v1)</h3></div>
+          <p>Your spec is ambitious. Here's what we'd cut to ship in 8-10 weeks instead of 20:</p>
+          <ul>
+            <li><span class="b bad">−</span><div><b>Live game clock control</b> from the app. Stats only — game clock is run by the table's existing equipment. (Optional Stats+Clock mode can come in v1.1.)</div></li>
+            <li><span class="b bad">−</span><div><b>Video / highlight clips.</b> Storage cost + moderation overhead. Press can link to YouTube in posts.</div></li>
+            <li><span class="b bad">−</span><div><b>In-app messaging / DMs between users.</b> Use the post system. WhatsApp wins for 1:1.</div></li>
+            <li><span class="b bad">−</span><div><b>Player-facing accounts.</b> Players are <em>data</em> in v1, not users. Reps manage rosters. (Adds 6+ weeks if you let players log in.)</div></li>
+            <li><span class="b bad">−</span><div><b>Bracket builder for playoffs.</b> v1 just shows the schedule. Bracket viz can be a v1.2 admin tool.</div></li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─── Section 03: Workflows ─── -->
+    <section id="sec-workflows">
+      <div class="stage-h">
+        <div>
+          <div class="lead">03 · Role Workflows</div>
+          <h1>Three flows that have to feel inevitable.</h1>
+          <p>If these don't work end-to-end, the app fails. Each is mocked live in the prototype above — switch role and follow the steps.</p>
+        </div>
+      </div>
+
+      <div class="flow">
+        <!-- Flow 1: Ack -->
+        <div class="flow-row">
+          <h3>Flow 1 · Admin posts an urgent announcement; reps must acknowledge</h3>
+          <div class="sub">Replaces: WhatsApp groups + "did you see my message?" follow-ups.</div>
+          <div class="flow-track">
+            <div class="flow-step start">
+              <span class="badge">ADMIN</span>
+              <div class="who">JBA Admin</div>
+              <div class="what">Compose post</div>
+              <div class="note">Title, body, audience (All/League/Teams), urgency, ack required + deadline.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step cf">
+              <span class="badge" style="background:var(--orange)">CLOUD FN</span>
+              <div class="who">onPostCreate</div>
+              <div class="what">Fan-out push + email</div>
+              <div class="note">FCM topic per role+team. SMS fallback for urgent. Writes one ack-pending doc per audience member.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <span class="badge">REP</span>
+              <div class="who">Coach Thompson</div>
+              <div class="what">Sees post in Board, marked "Ack required"</div>
+              <div class="note">Yellow border, deadline countdown, big "Tap to acknowledge" button.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <span class="badge">REP</span>
+              <div class="who">Coach Thompson</div>
+              <div class="what">Taps acknowledge</div>
+              <div class="note">Optimistic UI flips post to green "✓ Acknowledged · admin notified".</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step end">
+              <span class="badge">ADMIN</span>
+              <div class="who">JBA Admin</div>
+              <div class="what">Tracker shows ✓</div>
+              <div class="note">When all reps have ack'd, post auto-archives. Overdue reps surface in admin inbox + can be one-tap reminded.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flow 2: Stats -->
+        <div class="flow-row">
+          <h3>Flow 2 · Game stats → standings → leaderboards (the data spine)</h3>
+          <div class="sub">This is the entire reason the app exists. If this isn't bulletproof, nothing else matters.</div>
+          <div class="flow-track">
+            <div class="flow-step start">
+              <span class="badge">STATS</span>
+              <div class="who">Statistician</div>
+              <div class="what">Live stat entry · court-side</div>
+              <div class="note">3-col layout, two-tap rule, undo, foul-out auto-bench, auto-save to Firestore every action.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <span class="badge">STATS</span>
+              <div class="who">Statistician</div>
+              <div class="what">Submit for approval</div>
+              <div class="note">Validation gate: PTS = sum of makes, MIN ≤ 240/team, no negatives. Status: <code>submitted</code>.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <span class="badge">ADMIN</span>
+              <div class="who">JBA Admin</div>
+              <div class="what">Inbox: "Approve stats"</div>
+              <div class="note">Reviews box score, can edit any cell, send back with a note, or approve.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step cf">
+              <span class="badge" style="background:var(--orange)">CLOUD FN</span>
+              <div class="who">onStatsApproved</div>
+              <div class="what">Rebuild aggregates</div>
+              <div class="note">Updates team standings, player season totals, leaderboards, head-to-head. Emits push to fans subscribed to either team.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step end">
+              <span class="badge">PRESS · FAN</span>
+              <div class="who">Public</div>
+              <div class="what">Auto-recap published</div>
+              <div class="note">Final score on board, leaderboard updates, press-tab generates draft recap text from leaders.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flow 3: Onboarding -->
+        <div class="flow-row">
+          <h3>Flow 3 · New team rep joins via invite code</h3>
+          <div class="sub">Fastest path from "JBA hires a coach" to "coach sees their team's board".</div>
+          <div class="flow-track">
+            <div class="flow-step start">
+              <span class="badge">SUPER-ADMIN</span>
+              <div class="who">Kali (JBA Pres)</div>
+              <div class="what">Generate invite code</div>
+              <div class="note">Picks role: Team Rep · Team: Kingston Titans · Single-use · Expires: Apr 1. Code: TIT-REP-9X4.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <span class="badge">EXTERNAL</span>
+              <div class="who">Email · WhatsApp</div>
+              <div class="what">Code shared with coach</div>
+              <div class="note">Plain text. No link required.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step">
+              <span class="badge">REP</span>
+              <div class="who">Coach</div>
+              <div class="what">Downloads app · enters code</div>
+              <div class="note">Validation pre-fills "Team Rep · Kingston Titans". Coach adds name + email + password.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step cf">
+              <span class="badge" style="background:var(--orange)">CLOUD FN</span>
+              <div class="who">redeemInviteCode</div>
+              <div class="what">Create user · bind role · mark code used</div>
+              <div class="note">Atomic transaction. Sets custom claims for role-based Firestore rules.</div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step end">
+              <span class="badge">REP</span>
+              <div class="who">Coach</div>
+              <div class="what">Lands on Board</div>
+              <div class="note">Already scoped to Titans. Sees pinned welcome post + any pending ack-required notices.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 04: Live Stats (deep dive) ─── -->
+    <section id="sec-livestats">
+      <div class="stage-h">
+        <div>
+          <div class="lead">04 · Live Stats — Court-side Mode</div>
+          <h1>The 3-column rule.</h1>
+          <p>Open the live mode in the prototype (<button class="btn sm" onclick="HCApp.setRole('statistician'); HCApp.openLive()">▶ Open live stats</button>) — it takes over the screen. Below: why it's structured this way.</p>
+        </div>
+      </div>
+
+      <div class="audit-doc">
+        <div class="card">
+          <div class="head"><span class="num">L1</span><h3>Why three columns?</h3></div>
+          <p>Court-side, the statistician's eyes are on the floor — not the screen. The phone (or tablet) becomes a glance-and-tap surface.</p>
+          <ul>
+            <li><span class="b ok">✓</span><div><b>Left:</b> home roster · 5 on court at top, bench below. Foul-count badges visible at a glance.</div></li>
+            <li><span class="b ok">✓</span><div><b>Center:</b> action pad — the only place stats are recorded. Every button is a single tap, never a sequence.</div></li>
+            <li><span class="b ok">✓</span><div><b>Right:</b> away roster + last-plays log (so the stat-taker can verify themselves without scrolling).</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">L2</span><h3>Two-tap rule, and only two</h3></div>
+          <p>Every action is exactly: <b>tap player → tap action</b>. No three-tap drill-downs, no modals, no confirmations. The undo button is the safety net.</p>
+          <ul>
+            <li><span class="b add">+</span><div>Selected player is highlighted with a dark border + scoreboard color. Esc / tapping the same player deselects.</div></li>
+            <li><span class="b add">+</span><div>Action buttons are visibly disabled (greyed) until a player is selected. This is the single biggest source of "ghost stats" mistakes.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">L3</span><h3>Foul-out is automatic</h3></div>
+          <p>At 5 fouls (FIBA rules), the player auto-benches and the statistician is prompted: "Pick a sub." The sub doesn't go into <em>your</em> selection state until you've actually chosen them.</p>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">L4</span><h3>Auto-save semantics</h3></div>
+          <p>Every action writes to Firestore in real-time. If the stat-taker's phone dies, they pick up where they left off on a different device. The game's <code>events</code> subcollection is append-only; deletes are tombstoned for audit.</p>
+        </div>
+
+        <div class="card full">
+          <div class="head"><span class="num">L5</span><h3>What's NOT in live mode (and why)</h3></div>
+          <ul>
+            <li><span class="b bad">−</span><div><b>Game clock.</b> The table has a clock. Don't compete with it. (Stats+Clock optional toggle for venues that want it.)</div></li>
+            <li><span class="b bad">−</span><div><b>Shot chart.</b> Cool, but adds 5 taps per shot. Defer to v1.2.</div></li>
+            <li><span class="b bad">−</span><div><b>Roster editing mid-game.</b> If a player is missing, sub them in. Roster locks at game start.</div></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 05: Data model ─── -->
+    <section id="sec-datamodel">
+      <div class="stage-h">
+        <div>
+          <div class="lead">05 · Data Model &amp; Notifications</div>
+          <h1>Firestore shape, and what fires what.</h1>
+          <p>The minimum schema to make all six roles work. Cloud Functions are the only writers for derived data (standings, leaderboards, recaps).</p>
+        </div>
+      </div>
+
+      <div class="audit-doc">
+        <div class="card full">
+          <div class="head"><span class="num">D1</span><h3>Firestore collections</h3></div>
+          <pre style="font-family:var(--mono);font-size:11.5px;line-height:1.7;background:var(--bg);padding:18px;border-radius:8px;overflow:auto">
+leagues/{leagueId}                       — { name, season, divisions[], active }
+  /teams/{teamId}                        — { name, short, color, record, divisionId }
+    /players/{playerId}                  — { name, num, pos, height, active }
+      /seasonStats/{season}              — { gp, pts, reb, ast, stl, blk, … }    [WRITTEN BY CF]
+  /games/{gameId}                        — { homeTeamId, awayTeamId, date, venue, status: pending|final, statsStatus: not_started|in_progress|submitted|approved }
+    /events                              — append-only stat events (player, action, qtr, time)
+    /boxScore                            — derived snapshot                       [WRITTEN BY CF]
+    /comments                            — admin↔statistician notes on rejection
+
+users/{uid}                              — { name, email, role, teamId?, divisionIds[], pushTokens[] }
+  /inbox/{itemId}                        — { type: ack|approve|reminder, refDoc, createdAt, dismissedAt? }
+
+posts/{postId}                           — { authorUid, audience, leagueId?, teamId?, body, urgent, ackRequired, ackDeadline, visibility }
+  /acks/{uid}                            — { ackedAt }                            [user-writeable]
+
+inviteCodes/{code}                       — { role, teamId?, maxUses, usesCount, expiresAt, createdBy, active }
+
+leaderboards/{leagueId}/{stat}           — top 50 cached                          [WRITTEN BY CF]
+standings/{leagueId}                     — division → ordered teams               [WRITTEN BY CF]</pre>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">D2</span><h3>Cloud Functions (writers)</h3></div>
+          <ul>
+            <li><span class="b add">+</span><div><b>onPostCreate</b> — fan-out FCM, write inbox items, schedule SMS fallback for urgent.</div></li>
+            <li><span class="b add">+</span><div><b>onAckWrite</b> — if last ack lands, mark post resolved + notify admin.</div></li>
+            <li><span class="b add">+</span><div><b>onStatsApproved</b> — recompute team record + standings + season stats + leaderboards. Push to subscribed fans.</div></li>
+            <li><span class="b add">+</span><div><b>generateRecap</b> — on approval, draft press recap text from top performers.</div></li>
+            <li><span class="b add">+</span><div><b>redeemInviteCode</b> — atomic role binding + custom claims.</div></li>
+            <li><span class="b add">+</span><div><b>onAckDeadline (scheduled)</b> — every hour, surface overdue acks to admin inbox + send rep reminders.</div></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="head"><span class="num">D3</span><h3>Notification matrix</h3></div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr><th style="text-align:left;padding:6px;border-bottom:1px solid var(--line)">Event</th><th style="padding:6px;border-bottom:1px solid var(--line)">Push</th><th style="padding:6px;border-bottom:1px solid var(--line)">SMS</th><th style="padding:6px;border-bottom:1px solid var(--line)">Inbox</th></tr></thead>
+            <tbody>
+              <tr><td style="padding:6px;border-bottom:1px solid var(--line)">Urgent post</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td></tr>
+              <tr><td style="padding:6px;border-bottom:1px solid var(--line)">Standard post</td><td style="text-align:center">✓</td><td style="text-align:center">—</td><td style="text-align:center">✓</td></tr>
+              <tr><td style="padding:6px;border-bottom:1px solid var(--line)">Stats submitted</td><td style="text-align:center">Admin</td><td style="text-align:center">—</td><td style="text-align:center">Admin</td></tr>
+              <tr><td style="padding:6px;border-bottom:1px solid var(--line)">Stats approved</td><td style="text-align:center">Fans of teams</td><td style="text-align:center">—</td><td style="text-align:center">—</td></tr>
+              <tr><td style="padding:6px;border-bottom:1px solid var(--line)">Ack overdue</td><td style="text-align:center">Rep</td><td style="text-align:center">Rep (24h)</td><td style="text-align:center">Admin</td></tr>
+              <tr><td style="padding:6px">Game tip-off in 1h</td><td style="text-align:center">Subscribed</td><td style="text-align:center">—</td><td style="text-align:center">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 06: Handoff ─── -->
+    <section id="sec-handoff">
+      <div class="stage-h">
+        <div>
+          <div class="lead">06 · Claude Code Handoff</div>
+          <h1>Build it.</h1>
+          <p>This wireframe + audit is your spec. Below is the prompt — paste it into Claude Code at the root of your existing Flutter repo. It assumes Firebase is already wired (auth, Firestore, FCM).</p>
+        </div>
+      </div>
+
+      <div class="handoff">
+        <h3>Step-by-step</h3>
+
+        <div class="step">
+          <div class="n">1</div>
+          <div class="body"><h4>Open this wireframe alongside Claude Code</h4><p>Keep this page open in another tab. Reference it by section number when iterating ("see §04 L2"). Switching roles in the prototype is the fastest way to verify what you're building.</p></div>
+        </div>
+
+        <div class="step">
+          <div class="n">2</div>
+          <div class="body"><h4>Paste the prompt below into Claude Code</h4><p>It's calibrated for an existing Flutter repo with Firebase. If you're starting from scratch, prepend "Initialize a Flutter app with Firebase Auth, Firestore, FCM, and Cloud Functions before continuing."</p></div>
+        </div>
+
+        <div class="step">
+          <div class="n">3</div>
+          <div class="body"><h4>Build in this order</h4><p>(a) Auth + invite codes · (b) Data model + role-based Firestore rules · (c) Board + posts + acks · (d) Schedule + stats lifecycle (the spine) · (e) Live stat-taker · (f) Standings + leaderboards · (g) Press tab + recaps. Don't skip ahead — each builds on the last.</p></div>
+        </div>
+
+        <h3 style="margin-top:24px">Prompt for Claude Code</h3>
+        <div class="promptbox">
+<button class="copy">Copy</button><span id="handoffPrompt">You are building HoopsConnect, a Flutter + Firebase app for the Jamaica Basketball Association (JBA). The full UX spec lives in `docs/wireframe.html` (open it in a browser). Refer to it by section number; the role switcher in §01 shows every role's surface.
+
+────────────────────────────────────────
+SCOPE FOR THIS BUILD (v1)
+────────────────────────────────────────
+Six roles, one app:
+  • Super Admin   — full access + invite-code generation + division setup
+  • Admin         — posts, ack tracking, stats approval, schedule, teams
+  • Statistician  — live stat entry, post-game stat editing
+  • Team Rep      — team-scoped board, ack required posts, roster updates
+  • Press / Media — accreditation card, auto-recaps, box-score export
+  • Fan           — public board, standings, schedule, leaderboards (no login optional)
+
+EXPLICITLY OUT OF SCOPE for v1:
+  – Live game clock control (stats only)
+  – Video / highlight clips
+  – In-app DMs between users
+  – Player-facing accounts (players are data, not users)
+  – Bracket visualisation
+
+────────────────────────────────────────
+ARCHITECTURE
+────────────────────────────────────────
+• Flutter (Material 3, custom theme — see §01 design tokens: orange #EA580C primary, paper #fbfaf6, ink #0e0e0c, Newsreader serif for display, Inter Tight for UI, JetBrains Mono for stats/data).
+• Firebase: Auth (email/password + custom claims for role), Firestore (schema in §05 D1), Cloud Functions (handlers in §05 D2), FCM with topic subscriptions per (role, teamId, leagueId).
+• riverpod for state, go_router for nav. Repository pattern between UI and Firestore.
+
+────────────────────────────────────────
+NON-NEGOTIABLE BEHAVIOURS
+────────────────────────────────────────
+1. Stats lifecycle is `not_started → in_progress → submitted → approved | rejected`. Standings + leaderboards rebuild ONLY from approved games. Cloud Function `onStatsApproved` is the single writer.
+2. Posts with `ackRequired: true` create one inbox item per audience member. The "Tap to acknowledge" button writes to `posts/{id}/acks/{uid}` — that's the truth, not push receipts.
+3. Live stat entry mode (§04): two-tap rule (player → action), undo always available, foul-out auto-bench at 5, auto-save every action to `games/{id}/events`.
+4. Validation before stats submit: PTS == sum(2PT*2 + 3PT*3 + FT), MIN ≤ 240/team, no negatives. Block submit until clean; surface specific failures inline.
+5. Invite codes carry role + team binding + expiry + max uses. `redeemInviteCode` Cloud Function is the only path to creating a non-fan user.
+6. League scope bar at top of every screen (§02 A4). All queries respect the active scope.
+
+────────────────────────────────────────
+BUILD ORDER
+────────────────────────────────────────
+Phase 1 — Foundation
+  □ Firestore schema + security rules (role-based via custom claims).
+  □ Auth: signup with invite code, signin, role bootstrap.
+  □ Riverpod providers: currentUser, currentRole, leagueScope.
+  □ App shell: bottom nav that adapts to role (use §01 tab matrix).
+
+Phase 2 — Communication (Flow 1)
+  □ Posts list (Board). Filters by audience + scope. Author/Admin can compose.
+  □ Ack-required UI: yellow border, deadline countdown, big tap target.
+  □ Admin Ack Tracker (§02 A1): per-post grid of reps with status, bulk remind.
+  □ Cloud Functions: onPostCreate (fan-out), onAckWrite (mark resolved).
+
+Phase 3 — Stats spine (Flow 2)
+  □ Schedule view (Tonight / Recent / Upcoming) with role-aware CTAs.
+  □ Post-game stat editor (table view, one row per player, auto-totals).
+  □ Stats lifecycle state machine + UI chips.
+  □ Approval queue in Admin inbox.
+  □ Cloud Function: onStatsApproved → rebuild standings + season stats + leaderboards.
+
+Phase 4 — Live stat-taker (§04)
+  □ Dedicated full-screen mode. Lock orientation. Hide system chrome.
+  □ 3-column layout: home roster · action pad · away roster + log.
+  □ Two-tap interaction. Auto-save to events subcollection.
+  □ Foul-out detection + sub prompt.
+  □ Submit gate with validation.
+
+Phase 5 — Public surfaces
+  □ Standings (per division, with playoff cutoff).
+  □ Leaderboards (PPG/RPG/APG/SPG/BPG, min GP filter).
+  □ Player card screen (linked from leaderboard rows).
+
+Phase 6 — Press
+  □ Press tab with credential card.
+  □ Auto-recap generator (Cloud Function from approved box scores).
+  □ CSV export, head-to-head tool.
+
+Phase 7 — Super-admin
+  □ Invite code generator.
+  □ User & role management.
+  □ Division & season setup.
+
+────────────────────────────────────────
+DELIVERABLES PER PHASE
+────────────────────────────────────────
+For each phase, ship:
+  – Working screens behind the right role guard.
+  – Firestore rules tests covering happy path + every role's reject case.
+  – One end-to-end test per flow listed in §03.
+  – Update docs/CHANGELOG.md.
+
+Don't proceed to the next phase until I've reviewed and approved the previous.
+
+Start with Phase 1. Confirm the plan, list the files you'll create, then begin.</span>
+        </div>
+
+        <div class="dl-card">
+          <div class="icon">↓</div>
+          <div class="meta">
+            <h5>Want this whole package as a downloadable zip?</h5>
+            <p>Ask me ("download zip") and I'll bundle the wireframe + this prompt + the audit doc.</p>
+          </div>
+          <button class="btn ghost sm" onclick="HCApp.toast('Just say: download the wireframe as a zip')">How?</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ─── Right audit rail ─── -->
+  <aside class="audit-rail">
+    <h3>Audit · Top findings</h3>
+    <div class="auditset">
+      <div class="audit-card">
+        <span class="tag tag-flow">Flow gap</span>
+        <h5>Stats have no lifecycle in the spec</h5>
+        <p>Without states + an approval gate, you'll get conflicting box scores forever.</p>
+        <span class="ref">§02 · A3 → §03 · Flow 2</span>
+      </div>
+      <div class="audit-card">
+        <span class="tag tag-ux">UX risk</span>
+        <h5>Live stat entry needs its own mode</h5>
+        <p>Court-side, the current "feature in the app" framing will produce ghost stats. Three-column layout, two-tap rule, undo.</p>
+        <span class="ref">§02 · A2 → §04</span>
+      </div>
+      <div class="audit-card">
+        <span class="tag tag-ux">UX gap</span>
+        <h5>Acks need a tracker, not just a button</h5>
+        <p>"Did everyone see it?" is the question admins actually have. Build the answer.</p>
+        <span class="ref">§02 · A1</span>
+      </div>
+      <div class="audit-card">
+        <span class="tag tag-bug">Scope creep</span>
+        <h5>Cut: clock control, video, DMs, player accounts, brackets</h5>
+        <p>Each adds 4-6 weeks. None are core to the JBA pain point. Ship lean.</p>
+        <span class="ref">§02 · A7</span>
+      </div>
+      <div class="audit-card">
+        <span class="tag tag-good">Already strong</span>
+        <h5>Role-based + invite codes is the right shape</h5>
+        <p>Tighten the code grammar (TEAM-ROLE-HASH) and make it Cloud-Function-redeemed atomically.</p>
+        <span class="ref">§02 · A6 → §03 · Flow 3</span>
+      </div>
+      <div class="audit-card">
+        <span class="tag tag-flow">Add</span>
+        <h5>League scope bar everywhere</h5>
+        <p>JBA runs multiple leagues. The Slack-workspace pattern is the right metaphor.</p>
+        <span class="ref">§02 · A4</span>
+      </div>
+      <div class="audit-card">
+        <span class="tag tag-good">Press is the easy win</span>
+        <h5>Auto-recaps from approved box scores</h5>
+        <p>Once Flow 2 is solid, Press tab is essentially free — and it's the most "wow" feature for outside stakeholders.</p>
+        <span class="ref">§02 · A5</span>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- ─── Live stats overlay (full-screen) ─── -->
+<div id="liveOverlay" class="live-overlay"><!-- HCLive populates --></div>
+
+<script src="scripts/data.js"></script>
+<script src="scripts/screens.js"></script>
+<script src="scripts/live.js"></script>
+<script src="scripts/app.js"></script>
+</body>
+</html>

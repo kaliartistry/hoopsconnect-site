@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HoopsConnect - Live Stat-Taking</title>
+<style>
+  :root {
+    --primary: #EA580C;
+    --primary-light: #FFF7ED;
+    --primary-dark: #C2410C;
+    --home-bg: #FFF7ED;
+    --home-border: #FDBA74;
+    --away-bg: #EFF6FF;
+    --away-border: #93C5FD;
+    --dark: #1E293B;
+    --dark-mid: #334155;
+    --surface: #FFFFFF;
+    --border: #E2E8F0;
+    --text: #1E293B;
+    --text-secondary: #64748B;
+    --text-muted: #94A3B8;
+    --success: #16A34A;
+    --success-light: #DCFCE7;
+    --danger: #DC2626;
+    --danger-light: #FEF2F2;
+    --danger-border: #FECACA;
+    --warning: #D97706;
+    --make-bg: #EA580C;
+    --make-hover: #C2410C;
+    --miss-bg: #FEF2F2;
+    --miss-text: #DC2626;
+    --miss-border: #FECACA;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #F1F5F9;
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* ===== SETUP SCREEN ===== */
+  .setup-screen {
+    max-width: 700px;
+    margin: 40px auto;
+    padding: 32px;
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+  .setup-screen h1 { font-size: 24px; margin-bottom: 4px; color: var(--primary); }
+  .setup-screen .subtitle { color: var(--text-secondary); font-size: 14px; margin-bottom: 24px; }
+  .setup-section { margin-bottom: 24px; }
+  .setup-section h3 {
+    font-size: 14px; font-weight: 600; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+  }
+  .setup-section select {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 15px; background: var(--surface); color: var(--text); cursor: pointer;
+  }
+  .roster-select { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .roster-column h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; padding: 6px 10px; border-radius: 6px; }
+  .roster-column.home h4 { background: var(--home-bg); color: var(--primary-dark); }
+  .roster-column.away h4 { background: var(--away-bg); color: #1D4ED8; }
+  .roster-player-setup {
+    display: flex; align-items: center; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 6px; margin-bottom: 4px; cursor: pointer; transition: all 0.15s; font-size: 14px;
+  }
+  .roster-player-setup:hover { background: #F8FAFC; }
+  .roster-player-setup.starter { border-color: var(--primary); background: var(--primary-light); font-weight: 600; }
+  .roster-player-setup.starter.away-starter { border-color: #3B82F6; background: var(--away-bg); }
+  .roster-player-setup .star { width: 18px; margin-right: 6px; color: var(--text-muted); font-size: 14px; }
+  .roster-player-setup.starter .star { color: var(--primary); }
+  .roster-player-setup.starter.away-starter .star { color: #3B82F6; }
+  .starter-count { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+  .starter-count.ready { color: var(--success); font-weight: 600; }
+  .starter-count.over { color: var(--danger); font-weight: 600; }
+  .btn-start {
+    width: 100%; padding: 14px; background: var(--primary); color: white; border: none;
+    border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background 0.2s; margin-top: 8px;
+  }
+  .btn-start:hover { background: var(--primary-dark); }
+  .btn-start:disabled { background: #CBD5E1; cursor: not-allowed; }
+
+  /* ===== GAME SCREEN ===== */
+  .game-screen { display: none; height: 100vh; flex-direction: column; }
+  .game-screen.active { display: flex; }
+  .setup-screen.hidden { display: none; }
+
+  /* Score Header */
+  .score-header {
+    background: var(--dark); color: white; padding: 10px 20px;
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  .score-display { display: flex; align-items: center; gap: 16px; }
+  .team-score { display: flex; align-items: center; gap: 10px; }
+  .team-score .name { font-weight: 500; font-size: 14px; opacity: 0.9; }
+  .team-score .score {
+    font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums;
+    min-width: 50px; text-align: center; transition: transform 0.2s;
+  }
+  .team-score .score.bounce { animation: scoreBounce 0.3s; }
+  @keyframes scoreBounce {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+  }
+  .score-divider { font-size: 20px; opacity: 0.4; font-weight: 300; }
+  .home-score .name { color: #FDBA74; }
+  .away-score .name { color: #93C5FD; }
+  .game-controls { display: flex; align-items: center; gap: 10px; }
+  .quarter-badge { background: var(--dark-mid); padding: 6px 14px; border-radius: 6px; font-weight: 600; font-size: 14px; }
+  .clock-display { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 80px; text-align: center; letter-spacing: 1px; }
+  .btn-clock, .btn-quarter, .btn-end-game {
+    padding: 6px 14px; border: 1px solid rgba(255,255,255,0.2); background: transparent;
+    color: white; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  }
+  .btn-clock:hover, .btn-quarter:hover { background: rgba(255,255,255,0.1); }
+  .btn-clock.running { background: var(--success); border-color: var(--success); }
+  .btn-end-game { border-color: var(--danger); color: #FCA5A5; }
+  .btn-end-game:hover { background: var(--danger); color: white; }
+
+  /* Main 3-Column — wider center */
+  .game-content {
+    display: grid;
+    grid-template-columns: 1fr 340px 1fr;
+    flex: 1; min-height: 0; overflow: hidden;
+  }
+
+  /* Roster Panels */
+  .roster-panel { padding: 8px; overflow-y: auto; }
+  .roster-panel.home { background: var(--home-bg); }
+  .roster-panel.away { background: var(--away-bg); }
+  .roster-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; padding: 4px 8px; margin-bottom: 4px;
+  }
+  .roster-panel.home .roster-label { color: var(--primary-dark); }
+  .roster-panel.away .roster-label { color: #1D4ED8; }
+  .bench-divider {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-muted); padding: 6px 8px 4px; margin-top: 4px;
+    border-top: 1px dashed var(--border);
+  }
+  /* --- Player Rows --- */
+  .player-row {
+    display: flex; align-items: center; padding: 4px 6px; border-radius: 8px;
+    cursor: pointer; transition: all 0.12s; margin-bottom: 3px;
+    border: 2px solid transparent; font-size: 13px; position: relative;
+  }
+  .player-row:hover { background: rgba(0,0,0,0.04); }
+  .player-row.selected {
+    border-color: var(--primary);
+    background: white;
+    box-shadow: 0 2px 8px rgba(234,88,12,0.2);
+  }
+  .player-row.selected.away-selected {
+    border-color: #3B82F6;
+    box-shadow: 0 2px 8px rgba(59,130,246,0.2);
+  }
+
+  /* On-court players: BIG touch targets */
+  .player-row.on-court {
+    padding: 8px 8px;
+    min-height: 52px;
+  }
+
+  /* Bench players: compact */
+  .player-row.bench-player { opacity: 0.6; min-height: 34px; padding: 3px 6px; }
+
+  .player-row.sub-target {
+    border-color: var(--success);
+    background: #F0FDF4;
+    opacity: 1;
+    animation: pulse-green 1s infinite;
+  }
+  @keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0.3); }
+    50% { box-shadow: 0 0 0 6px rgba(22,163,74,0); }
+  }
+
+  /* Jersey Number Badge */
+  .jersey-num {
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; border-radius: 6px; flex-shrink: 0; margin-right: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .player-row.on-court .jersey-num {
+    width: 38px; height: 38px; font-size: 18px;
+    background: var(--dark); color: white;
+  }
+  .roster-panel.home .player-row.on-court .jersey-num {
+    background: var(--primary-dark); color: white;
+  }
+  .roster-panel.away .player-row.on-court .jersey-num {
+    background: #1D4ED8; color: white;
+  }
+  .player-row.bench-player .jersey-num {
+    width: 26px; height: 26px; font-size: 12px;
+    background: #E2E8F0; color: var(--text-secondary);
+  }
+  .player-row.selected .jersey-num {
+    box-shadow: 0 0 0 2px var(--primary);
+  }
+  .player-row.selected.away-selected .jersey-num {
+    box-shadow: 0 0 0 2px #3B82F6;
+  }
+
+  /* Player Info */
+  .player-info { flex: 1; min-width: 0; }
+  .player-info .player-name-text {
+    font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .player-row.on-court .player-info .player-name-text { font-size: 14px; }
+  .player-row.bench-player .player-info .player-name-text { font-size: 12px; font-weight: 500; }
+  .player-stats-inline {
+    display: none; font-size: 11px; color: var(--text-secondary); font-weight: 400;
+  }
+  .player-row.selected .player-stats-inline { display: block; }
+
+  /* Points & Minutes */
+  .player-pts {
+    font-weight: 700; min-width: 28px; text-align: right; color: var(--text);
+  }
+  .player-row.on-court .player-pts { font-size: 16px; }
+  .player-row.bench-player .player-pts { font-size: 12px; }
+  .player-min {
+    font-size: 10px; color: var(--text-muted); min-width: 28px; text-align: right; margin-left: 2px;
+  }
+
+  /* Foul Badges */
+  .foul-badge {
+    font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+    margin-left: 4px; flex-shrink: 0;
+  }
+  .foul-badge.foul-3 { background: #FEF3C7; color: #92400E; }
+  .foul-badge.foul-4 { background: #FEE2E2; color: #DC2626; }
+  .foul-badge.foul-5 { background: #DC2626; color: white; }
+  .player-row.fouled-out {
+    opacity: 0.35; pointer-events: none;
+  }
+  .player-row.fouled-out .jersey-num { opacity: 0.5; }
+  .player-row.fouled-out .player-name-text { text-decoration: line-through; }
+
+  /* ===== ACTION PANEL (340px wide) ===== */
+  .action-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+  }
+
+  /* (Mode toggle removed — using explicit mode only) */
+
+  /* Selected Player Indicator */
+  .selected-indicator {
+    text-align: center; font-size: 13px; color: var(--text-muted);
+    padding: 6px 8px; min-height: 36px; display: flex; align-items: center;
+    justify-content: center; border-radius: 8px; background: #F8FAFC;
+  }
+  .selected-indicator .player-selected-name {
+    font-weight: 700; font-size: 15px;
+  }
+  .selected-indicator .player-selected-name.home-sel { color: var(--primary); }
+  .selected-indicator .player-selected-name.away-sel { color: #2563EB; }
+  .selected-indicator.waiting { animation: pulse-waiting 2s ease-in-out infinite; }
+  @keyframes pulse-waiting {
+    0%, 100% { background: #F8FAFC; }
+    50% { background: #FFF7ED; }
+  }
+
+  /* Section Labels */
+  .action-group-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--text-muted); padding: 4px 2px 2px;
+  }
+
+  /* Button Grid */
+  .action-row { display: grid; gap: 6px; }
+  .action-row.cols-2 { grid-template-columns: 1fr 1fr; }
+  .action-row.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .action-row.cols-1 { grid-template-columns: 1fr; }
+
+  /* Base Button */
+  .action-btn {
+    border: 1px solid var(--border); background: var(--surface);
+    border-radius: 8px; font-weight: 600; cursor: pointer;
+    transition: all 0.12s; text-align: center; position: relative;
+    overflow: hidden; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .action-btn:active:not(:disabled) { transform: scale(0.97); }
+
+  /* Tier 1 — Scoring (largest) */
+  .action-btn.tier1 { min-height: 56px; font-size: 15px; }
+  .action-btn.tier1 .btn-sub-label { font-size: 11px; font-weight: 400; opacity: 0.8; }
+
+  /* Make buttons */
+  .action-btn.make-btn {
+    background: var(--make-bg); color: white; border-color: var(--primary-dark);
+    box-shadow: 0 2px 4px rgba(234,88,12,0.2);
+  }
+  .action-btn.make-btn:hover:not(:disabled) { background: var(--make-hover); }
+
+  /* Miss buttons */
+  .action-btn.miss-btn {
+    background: var(--miss-bg); color: var(--miss-text); border-color: var(--miss-border);
+  }
+  .action-btn.miss-btn:hover:not(:disabled) { background: #FEE2E2; border-color: #F87171; }
+
+  /* Tier 2 — High frequency stats */
+  .action-btn.tier2 {
+    min-height: 48px; font-size: 14px;
+    background: #F8FAFC; border-color: #CBD5E1; color: var(--text);
+  }
+  .action-btn.tier2:hover:not(:disabled) { background: #E2E8F0; border-color: #94A3B8; }
+  .action-btn.tier2.reb-btn { background: #FFF7ED; border-color: #FDBA74; color: var(--primary-dark); }
+  .action-btn.tier2.reb-btn:hover:not(:disabled) { background: #FFEDD5; }
+
+  /* Tier 3 — Low frequency stats */
+  .action-btn.tier3 {
+    min-height: 38px; font-size: 13px;
+    background: #FAFAFA; border-color: #E5E5E5; color: var(--text-secondary);
+  }
+  .action-btn.tier3:hover:not(:disabled) { background: #F0F0F0; }
+
+  /* Control buttons */
+  .action-btn.sub-btn {
+    min-height: 42px; font-size: 13px;
+    background: #ECFDF5; border-color: #86EFAC; color: #15803D;
+  }
+  .action-btn.sub-btn.active { background: var(--success); color: white; border-color: var(--success); }
+  .action-btn.sub-btn:hover:not(:disabled) { background: #D1FAE5; }
+
+  .action-btn.undo-btn {
+    min-height: 42px; font-size: 13px;
+    background: var(--danger-light); border-color: var(--danger-border); color: var(--danger);
+  }
+  .action-btn.undo-btn:hover:not(:disabled) { background: #FEE2E2; }
+
+  /* Action feedback flash */
+  .action-btn.flash-success { animation: btnFlash 0.35s; }
+  @keyframes btnFlash {
+    0% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }
+    50% { box-shadow: 0 0 0 6px rgba(22,163,74,0); }
+    100% { box-shadow: none; }
+  }
+
+  .action-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ===== BOTTOM PANEL ===== */
+  .bottom-panel {
+    border-top: 2px solid var(--border); flex-shrink: 0;
+    height: 200px; display: flex; flex-direction: column; background: var(--surface);
+  }
+  .bottom-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .bottom-tab {
+    flex: 1; padding: 8px; text-align: center; font-size: 13px; font-weight: 600;
+    cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-secondary);
+    background: none; border-top: none; border-left: none; border-right: none; transition: all 0.15s;
+  }
+  .bottom-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+  .bottom-tab:hover { color: var(--text); }
+  .tab-content { flex: 1; overflow-y: auto; }
+
+  /* Play-by-Play */
+  .play-log { padding: 4px 12px; }
+  .play-entry {
+    display: flex; align-items: center; padding: 5px 8px; border-radius: 4px;
+    font-size: 13px; margin-bottom: 2px; transition: background 0.15s;
+  }
+  .play-entry:hover { background: #F8FAFC; }
+  .play-entry.new-entry { animation: flash-orange 0.6s; }
+  @keyframes flash-orange { 0% { background: #FFEDD5; } 100% { background: transparent; } }
+  .play-entry .play-time { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 70px; }
+  .play-entry .play-detail { flex: 1; color: var(--text); }
+  .play-entry .play-detail .play-player { font-weight: 600; }
+  .play-entry .play-points { font-weight: 700; font-size: 13px; min-width: 60px; text-align: right; }
+  .play-entry .play-points.home-pts { color: var(--primary); }
+  .play-entry .play-points.away-pts { color: #2563EB; }
+  .play-entry .play-points.miss-pts { color: var(--text-muted); }
+  .play-entry .play-undo-btn {
+    width: 20px; height: 20px; border: none; background: transparent;
+    color: var(--text-muted); cursor: pointer; border-radius: 4px;
+    font-size: 14px; opacity: 0; transition: all 0.15s; margin-left: 4px;
+  }
+  .play-entry:hover .play-undo-btn { opacity: 1; }
+  .play-entry .play-undo-btn:hover { background: #FEF2F2; color: var(--danger); }
+  .play-entry.miss-entry { color: var(--text-muted); }
+  .play-entry.sub-entry { color: var(--success); font-style: italic; }
+  .empty-log { text-align: center; padding: 32px; color: var(--text-muted); font-size: 14px; }
+
+  /* Box Score */
+  .box-score-view { padding: 8px 12px; display: none; }
+  .box-score-team-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0; margin-top: 8px; }
+  .box-score-team-label.home { color: var(--primary-dark); }
+  .box-score-team-label.away { color: #1D4ED8; }
+  .box-score-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+  .box-score-table th { text-align: center; font-weight: 700; padding: 4px 6px; border-bottom: 2px solid var(--border); color: var(--text-secondary); font-size: 11px; }
+  .box-score-table th:first-child { text-align: left; }
+  .box-score-table td { text-align: center; padding: 3px 6px; border-bottom: 1px solid #F1F5F9; font-variant-numeric: tabular-nums; }
+  .box-score-table td:first-child { text-align: left; font-weight: 500; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .box-score-table tr.totals-row { font-weight: 700; border-top: 2px solid var(--border); }
+  .box-score-table tr.totals-row td { padding-top: 6px; }
+
+  /* ===== OVERLAYS ===== */
+  .overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    z-index: 100; align-items: center; justify-content: center;
+  }
+  .overlay.active { display: flex; }
+  .overlay-content {
+    background: var(--surface); border-radius: 16px; padding: 28px;
+    max-width: 800px; width: 90%; max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  }
+  .overlay-content h2 { font-size: 20px; margin-bottom: 4px; }
+  .overlay-content .final-score {
+    font-size: 36px; font-weight: 700; text-align: center; padding: 16px 0;
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+  }
+  .overlay-content .final-score .team-name { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+  .json-output {
+    background: #1E293B; color: #E2E8F0; border-radius: 8px; padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+    line-height: 1.5; max-height: 300px; overflow-y: auto; margin: 12px 0;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .overlay-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .overlay-buttons button {
+    padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); transition: all 0.15s;
+  }
+  .overlay-buttons button:hover { background: #F8FAFC; }
+  .overlay-buttons .btn-sync { background: var(--primary); color: white; border-color: var(--primary); }
+  .overlay-buttons .btn-sync:hover { background: var(--primary-dark); }
+  .overlay-buttons .btn-cancel { color: var(--text-secondary); }
+  .confirm-dialog { max-width: 400px; text-align: center; }
+  .confirm-dialog p { color: var(--text-secondary); margin: 12px 0 20px; font-size: 14px; }
+  .confirm-dialog .overlay-buttons { justify-content: center; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: var(--dark); color: white; padding: 10px 20px;
+    border-radius: 8px; font-size: 14px; font-weight: 500;
+    z-index: 200; transition: transform 0.3s;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+  .toast.visible { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- ===== SETUP SCREEN ===== -->
+<div class="setup-screen" id="setupScreen">
+  <h1>HoopsConnect Live Stats</h1>
+  <p class="subtitle">Courtside stat-taking system</p>
+  <div class="setup-section">
+    <h3>Home Team</h3>
+    <select id="homeTeamSelect" onchange="loadRosters()">
+      <option value="titans">Kingston Titans</option>
+      <option value="storm">Montego Bay Storm</option>
+      <option value="heat">Spanish Town Heat</option>
+      <option value="thunder">Portmore Thunder</option>
+    </select>
+  </div>
+  <div class="setup-section">
+    <h3>Away Team</h3>
+    <select id="awayTeamSelect" onchange="loadRosters()">
+      <option value="storm">Montego Bay Storm</option>
+      <option value="titans">Kingston Titans</option>
+      <option value="heat">Spanish Town Heat</option>
+      <option value="thunder">Portmore Thunder</option>
+    </select>
+  </div>
+  <div class="setup-section">
+    <h3>Select Starters (5 per team)</h3>
+    <div class="roster-select">
+      <div class="roster-column home" id="homeRosterSetup"></div>
+      <div class="roster-column away" id="awayRosterSetup"></div>
+    </div>
+  </div>
+  <button class="btn-start" id="startGameBtn" onclick="startGame()" disabled>Start Game</button>
+</div>
+
+<!-- ===== GAME SCREEN ===== -->
+<div class="game-screen" id="gameScreen">
+  <div class="score-header">
+    <div class="score-display">
+      <div class="team-score home-score">
+        <span class="name" id="headerHomeName">Titans</span>
+        <span class="score" id="headerHomeScore">0</span>
+      </div>
+      <span class="score-divider">&mdash;</span>
+      <div class="team-score away-score">
+        <span class="score" id="headerAwayScore">0</span>
+        <span class="name" id="headerAwayName">Storm</span>
+      </div>
+    </div>
+    <div class="game-controls">
+      <span class="quarter-badge" id="quarterBadge">Q1</span>
+      <span class="clock-display" id="clockDisplay">10:00</span>
+      <button class="btn-clock" id="clockBtn" onclick="toggleClock()">Start</button>
+      <button class="btn-quarter" onclick="nextQuarter()">Next Q</button>
+      <button class="btn-end-game" onclick="showEndConfirm()">End Game</button>
+    </div>
+  </div>
+
+  <div class="game-content">
+    <div class="roster-panel home" id="homeRoster"></div>
+
+    <!-- ===== REDESIGNED ACTION PANEL ===== -->
+    <div class="action-panel" id="actionPanel">
+      <!-- Selected Player -->
+      <div class="selected-indicator" id="selectedIndicator">Tap a player to begin</div>
+
+      <!-- Scoring Buttons (explicit make/miss) -->
+      <div id="scoringExplicit">
+        <div class="action-group-label">Scoring</div>
+        <div class="action-row cols-2">
+          <button class="action-btn tier1 make-btn" onclick="recordShot('2PT', false)" disabled data-action>
+            2PT<span class="btn-sub-label">&check; make +2</span>
+          </button>
+          <button class="action-btn tier1 miss-btn" onclick="recordShot('2PT', true)" disabled data-action>
+            2PT<span class="btn-sub-label">&times; miss</span>
+          </button>
+        </div>
+        <div class="action-row cols-2">
+          <button class="action-btn tier1 make-btn" onclick="recordShot('3PT', false)" disabled data-action>
+            3PT<span class="btn-sub-label">&check; make +3</span>
+          </button>
+          <button class="action-btn tier1 miss-btn" onclick="recordShot('3PT', true)" disabled data-action>
+            3PT<span class="btn-sub-label">&times; miss</span>
+          </button>
+        </div>
+        <div class="action-row cols-2">
+          <button class="action-btn tier1 make-btn" onclick="recordShot('FT', false)" disabled data-action style="min-height:48px">
+            FT<span class="btn-sub-label">&check; make +1</span>
+          </button>
+          <button class="action-btn tier1 miss-btn" onclick="recordShot('FT', true)" disabled data-action style="min-height:48px">
+            FT<span class="btn-sub-label">&times; miss</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="action-divider"></div>
+
+      <!-- Tier 2: High Frequency Stats -->
+      <div class="action-group-label">Rebounds</div>
+      <div class="action-row cols-2">
+        <button class="action-btn tier2 reb-btn" onclick="recordAction('OREB')" disabled data-action>OREB</button>
+        <button class="action-btn tier2 reb-btn" onclick="recordAction('DREB')" disabled data-action>DREB</button>
+      </div>
+      <div class="action-group-label">Stats</div>
+      <div class="action-row cols-2">
+        <button class="action-btn tier2" onclick="recordAction('AST')" disabled data-action>AST</button>
+        <button class="action-btn tier2" onclick="recordAction('TO')" disabled data-action>TO</button>
+      </div>
+      <!-- Tier 3: Lower Frequency Stats -->
+      <div class="action-row cols-3">
+        <button class="action-btn tier3" onclick="recordAction('FLS')" disabled data-action>FLS</button>
+        <button class="action-btn tier3" onclick="recordAction('STL')" disabled data-action>STL</button>
+        <button class="action-btn tier3" onclick="recordAction('BLK')" disabled data-action>BLK</button>
+      </div>
+
+      <div class="action-divider"></div>
+
+      <!-- Control -->
+      <div class="action-row cols-2">
+        <button class="action-btn sub-btn" onclick="startSub()" disabled id="btnSub" data-action>SUB</button>
+        <button class="action-btn undo-btn" onclick="undoLast()" disabled id="btnUndo">UNDO</button>
+      </div>
+    </div>
+
+    <div class="roster-panel away" id="awayRoster"></div>
+  </div>
+
+  <div class="bottom-panel">
+    <div class="bottom-tabs">
+      <button class="bottom-tab active" onclick="switchTab('pbp')" id="tabPbp">Play-by-Play</button>
+      <button class="bottom-tab" onclick="switchTab('box')" id="tabBox">Box Score</button>
+    </div>
+    <div class="tab-content">
+      <div class="play-log active" id="playLog">
+        <div class="empty-log">Game events will appear here</div>
+      </div>
+      <div class="box-score-view" id="boxScoreView"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Overlays -->
+<div class="overlay" id="foulOutOverlay">
+  <div class="overlay-content confirm-dialog" id="foulOutContent"></div>
+</div>
+<div class="overlay" id="endConfirmOverlay">
+  <div class="overlay-content confirm-dialog">
+    <h2>End Game?</h2>
+    <p>This will finalize all player minutes and generate the stat sheet for syncing.</p>
+    <div class="overlay-buttons">
+      <button class="btn-cancel" onclick="closeOverlay('endConfirmOverlay')">Cancel</button>
+      <button class="btn-sync" onclick="endGame()">End Game</button>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="endGameOverlay">
+  <div class="overlay-content" id="endGameContent"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== TEAM DATA =====
+const TEAMS = {
+  titans: {
+    id: 'titans', name: 'Kingston Titans',
+    players: [
+      {id:'p1',name:'Clarke',num:5},{id:'p2',name:'Johnson',num:12},{id:'p3',name:'Brown',num:7},
+      {id:'p4',name:'Smith',num:23},{id:'p5',name:'Edwards',num:8},{id:'p6',name:'Taylor',num:14},
+      {id:'p7',name:'Grant',num:33},{id:'p8',name:'Davis',num:3},{id:'p9',name:'Palmer',num:21},
+      {id:'p10',name:'Henry',num:11},{id:'p11',name:'Lewis',num:44},{id:'p12',name:'Robinson',num:15},
+      {id:'p13',name:'Campbell',num:10}
+    ]
+  },
+  storm: {
+    id: 'storm', name: 'Montego Bay Storm',
+    players: [
+      {id:'p14',name:'Thompson',num:11},{id:'p15',name:'Campbell',num:23},{id:'p16',name:'Mitchell',num:8},
+      {id:'p17',name:'Williams',num:15},{id:'p18',name:'Morgan',num:3},{id:'p19',name:'Reid',num:7},
+      {id:'p20',name:'Scott',num:21},{id:'p21',name:'Peters',num:32},{id:'p22',name:'Bailey',num:4},
+      {id:'p23',name:'Gordon',num:14},{id:'p24',name:'Francis',num:25},{id:'p25',name:'Stewart',num:30},
+      {id:'p26',name:'Anderson',num:9}
+    ]
+  },
+  heat: {
+    id: 'heat', name: 'Spanish Town Heat',
+    players: [
+      {id:'p27',name:'Walker',num:2},{id:'p28',name:'Harris',num:10},{id:'p29',name:'Young',num:5},
+      {id:'p30',name:'Allen',num:13},{id:'p31',name:'King',num:24},{id:'p32',name:'Wright',num:6},
+      {id:'p33',name:'Lopez',num:34},{id:'p34',name:'Hill',num:22},{id:'p35',name:'Green',num:17},
+      {id:'p36',name:'Adams',num:40},{id:'p37',name:'Baker',num:1},{id:'p38',name:'Nelson',num:20}
+    ]
+  },
+  thunder: {
+    id: 'thunder', name: 'Portmore Thunder',
+    players: [
+      {id:'p39',name:'Carter',num:0},{id:'p40',name:'Roberts',num:4},{id:'p41',name:'Turner',num:12},
+      {id:'p42',name:'Phillips',num:35},{id:'p43',name:'Parker',num:9},{id:'p44',name:'Evans',num:18},
+      {id:'p45',name:'Collins',num:31},{id:'p46',name:'Morris',num:7},{id:'p47',name:'Murphy',num:22},
+      {id:'p48',name:'Cook',num:45},{id:'p49',name:'Rogers',num:1},{id:'p50',name:'Reed',num:16},
+      {id:'p51',name:'Bell',num:50}
+    ]
+  }
+};
+
+// ===== GAME STATE =====
+let gameState = {
+  homeTeam: null, awayTeam: null,
+  quarter: 1, clockSeconds: 600, clockRunning: false,
+  plays: [], selectedPlayer: null,
+  subMode: false, subOutPlayer: null, gameEnded: false,
+  players: {}
+};
+
+let clockInterval = null;
+let setupStarters = { home: new Set(), away: new Set() };
+
+// ===== SETUP =====
+function loadRosters() {
+  const homeKey = document.getElementById('homeTeamSelect').value;
+  const awayKey = document.getElementById('awayTeamSelect').value;
+  if (homeKey === awayKey) { document.getElementById('startGameBtn').disabled = true; return; }
+  setupStarters = { home: new Set(), away: new Set() };
+  TEAMS[homeKey].players.slice(0, 5).forEach(p => setupStarters.home.add(p.id));
+  TEAMS[awayKey].players.slice(0, 5).forEach(p => setupStarters.away.add(p.id));
+  renderSetupRoster('homeRosterSetup', TEAMS[homeKey], 'home');
+  renderSetupRoster('awayRosterSetup', TEAMS[awayKey], 'away');
+  updateStartButton();
+}
+
+function renderSetupRoster(containerId, team, side) {
+  const container = document.getElementById(containerId);
+  const starters = setupStarters[side];
+  const count = starters.size;
+  let html = `<h4>${team.name} <span class="starter-count ${count===5?'ready':count>5?'over':''}">(${count}/5)</span></h4>`;
+  team.players.forEach(p => {
+    const isStarter = starters.has(p.id);
+    const cls = isStarter ? (side==='away' ? 'starter away-starter' : 'starter') : '';
+    html += `<div class="roster-player-setup ${cls}" onclick="toggleStarter('${p.id}','${side}','${team.id}')">
+      <span class="star">${isStarter?'\u2605':'\u2606'}</span><span><strong>#${p.num}</strong> ${p.name}</span></div>`;
+  });
+  container.innerHTML = html;
+}
+
+function toggleStarter(playerId, side, teamKey) {
+  const starters = setupStarters[side];
+  starters.has(playerId) ? starters.delete(playerId) : starters.add(playerId);
+  renderSetupRoster(side==='home'?'homeRosterSetup':'awayRosterSetup', TEAMS[teamKey], side);
+  updateStartButton();
+}
+
+function updateStartButton() {
+  const h = document.getElementById('homeTeamSelect').value;
+  const a = document.getElementById('awayTeamSelect').value;
+  document.getElementById('startGameBtn').disabled = !(h!==a && setupStarters.home.size===5 && setupStarters.away.size===5);
+}
+
+// ===== START GAME =====
+function startGame() {
+  const home = TEAMS[document.getElementById('homeTeamSelect').value];
+  const away = TEAMS[document.getElementById('awayTeamSelect').value];
+  gameState.homeTeam = { id: home.id, name: home.name };
+  gameState.awayTeam = { id: away.id, name: away.name };
+  gameState.players = {};
+  [home, away].forEach((team, ti) => {
+    const starters = ti===0 ? setupStarters.home : setupStarters.away;
+    team.players.forEach(p => {
+      gameState.players[p.id] = {
+        id: p.id, name: p.name, num: p.num, teamId: team.id,
+        onCourt: starters.has(p.id),
+        pts:0, reb:0, oreb:0, dreb:0, ast:0, stl:0, blk:0, fls:0, min:0,
+        minutesEnteredAt: starters.has(p.id) ? 600 : null
+      };
+    });
+  });
+  document.getElementById('setupScreen').classList.add('hidden');
+  document.getElementById('gameScreen').classList.add('active');
+  document.getElementById('headerHomeName').textContent = home.name;
+  document.getElementById('headerAwayName').textContent = away.name;
+  renderRosters();
+  renderPlayLog();
+}
+
+// ===== RENDER =====
+function renderRosters() {
+  renderTeamRoster('homeRoster', gameState.homeTeam, 'home');
+  renderTeamRoster('awayRoster', gameState.awayTeam, 'away');
+}
+
+function renderTeamRoster(containerId, team, side) {
+  const container = document.getElementById(containerId);
+  const players = Object.values(gameState.players).filter(p => p.teamId === team.id);
+  const onCourt = players.filter(p => p.onCourt);
+  const bench = players.filter(p => !p.onCourt);
+  const isAway = side === 'away';
+
+  let html = `<div class="roster-label">${team.name}</div>`;
+
+  onCourt.forEach(p => {
+    const selected = gameState.selectedPlayer === p.id;
+    const selClass = selected ? (isAway ? 'selected away-selected' : 'selected') : '';
+    const fouledOut = p.fls >= 5 ? 'fouled-out' : '';
+    const mins = getPlayerMinutes(p);
+    const statsLine = `${p.pts}pts ${p.oreb}or ${p.dreb}dr ${p.ast}a`;
+    const foulBadge = foulBadgeHTML(p.fls);
+    html += `<div class="player-row on-court ${selClass} ${fouledOut}" onclick="selectPlayer('${p.id}')">
+      <div class="jersey-num">${p.num}</div>
+      <div class="player-info">
+        <div class="player-name-text">${p.name}${foulBadge}</div>
+        ${selected ? `<div class="player-stats-inline">${statsLine}</div>` : ''}
+      </div>
+      <span class="player-min">${mins}m</span>
+      <span class="player-pts">${p.pts}p</span>
+    </div>`;
+  });
+
+  html += `<div class="bench-divider">Bench</div>`;
+  bench.forEach(p => {
+    const selected = gameState.selectedPlayer === p.id;
+    const selClass = selected ? (isAway ? 'selected away-selected' : 'selected') : '';
+    const fouledOut = p.fls >= 5 ? 'fouled-out' : '';
+    const subTarget = gameState.subMode && gameState.subOutPlayer && gameState.players[gameState.subOutPlayer]?.teamId === team.id && !fouledOut ? 'sub-target' : '';
+    const foulBadge = foulBadgeHTML(p.fls);
+    html += `<div class="player-row bench-player ${selClass} ${subTarget} ${fouledOut}" onclick="${gameState.subMode && gameState.subOutPlayer && gameState.players[gameState.subOutPlayer]?.teamId === team.id && !fouledOut ? `completeSub('${p.id}')` : `selectPlayer('${p.id}')`}">
+      <div class="jersey-num">${p.num}</div>
+      <div class="player-info">
+        <div class="player-name-text">${p.name}${foulBadge}</div>
+      </div>
+      <span class="player-min">${p.min > 0 ? p.min+'m' : ''}</span>
+      <span class="player-pts">${p.pts > 0 ? p.pts+'p' : ''}</span>
+    </div>`;
+  });
+
+  container.innerHTML = html;
+}
+
+function foulBadgeHTML(fls) {
+  if (fls >= 5) return `<span class="foul-badge foul-5">5F OUT</span>`;
+  if (fls === 4) return `<span class="foul-badge foul-4">4F</span>`;
+  if (fls === 3) return `<span class="foul-badge foul-3">3F</span>`;
+  return '';
+}
+
+function getPlayerMinutes(p) {
+  let total = p.min;
+  if (p.onCourt && p.minutesEnteredAt !== null) {
+    total += Math.max(0, Math.round((p.minutesEnteredAt - gameState.clockSeconds) / 60));
+  }
+  return total;
+}
+
+function updateScores() {
+  const players = Object.values(gameState.players);
+  const hs = players.filter(p => p.teamId === gameState.homeTeam.id).reduce((s,p) => s+p.pts, 0);
+  const as = players.filter(p => p.teamId === gameState.awayTeam.id).reduce((s,p) => s+p.pts, 0);
+  const hEl = document.getElementById('headerHomeScore');
+  const aEl = document.getElementById('headerAwayScore');
+  if (parseInt(hEl.textContent) !== hs) { hEl.textContent = hs; hEl.classList.add('bounce'); setTimeout(()=>hEl.classList.remove('bounce'),300); }
+  if (parseInt(aEl.textContent) !== as) { aEl.textContent = as; aEl.classList.add('bounce'); setTimeout(()=>aEl.classList.remove('bounce'),300); }
+}
+
+function updateSelectedIndicator() {
+  const el = document.getElementById('selectedIndicator');
+  if (gameState.subMode && gameState.subOutPlayer) {
+    const p = gameState.players[gameState.subOutPlayer];
+    el.innerHTML = `Sub out <span class="player-selected-name home-sel">${p.name}</span> — tap bench player`;
+    el.classList.remove('waiting');
+  } else if (gameState.selectedPlayer) {
+    const p = gameState.players[gameState.selectedPlayer];
+    const isHome = p.teamId === gameState.homeTeam.id;
+    el.innerHTML = `<span class="player-selected-name ${isHome?'home-sel':'away-sel'}">#${p.num} ${p.name}</span>`;
+    el.classList.add('waiting');
+  } else {
+    el.innerHTML = 'Tap a player to begin';
+    el.classList.remove('waiting');
+  }
+}
+
+function updateActionButtons() {
+  const hasSelection = gameState.selectedPlayer !== null;
+  const player = hasSelection ? gameState.players[gameState.selectedPlayer] : null;
+  const isOnCourt = player?.onCourt;
+  const isFouledOut = player && player.fls >= 5;
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    // Fouled-out players can only SUB, not record more stats
+    if (isFouledOut && isOnCourt) {
+      btn.disabled = btn.id !== 'btnSub';
+    } else {
+      btn.disabled = !isOnCourt;
+    }
+  });
+  document.getElementById('btnUndo').disabled = gameState.plays.length === 0;
+  const subBtn = document.getElementById('btnSub');
+  subBtn.classList.toggle('active', gameState.subMode);
+}
+
+// ===== PLAYER SELECTION =====
+function selectPlayer(playerId) {
+  if (gameState.subMode && gameState.subOutPlayer) return;
+  gameState.selectedPlayer = playerId;
+  gameState.subMode = false;
+  gameState.subOutPlayer = null;
+  renderRosters();
+  updateSelectedIndicator();
+  updateActionButtons();
+}
+
+// ===== SHOT RECORDING (unified for both modes) =====
+function recordShot(shotType, isMiss) {
+  if (!gameState.selectedPlayer) return;
+  const player = gameState.players[gameState.selectedPlayer];
+  if (!player || !player.onCourt) return;
+
+  const ptsMap = { '2PT': 2, '3PT': 3, 'FT': 1 };
+  const points = isMiss ? 0 : ptsMap[shotType];
+  const clockTime = formatClock(gameState.clockSeconds);
+  const teamName = player.teamId === gameState.homeTeam.id ? gameState.homeTeam.name : gameState.awayTeam.name;
+
+  if (!isMiss) player.pts += points;
+
+  const play = {
+    id: Date.now(), quarter: gameState.quarter,
+    clockSeconds: gameState.clockSeconds, clockTime,
+    playerId: player.id, playerName: player.name, playerNum: player.num, teamId: player.teamId,
+    action: shotType, isMiss,
+    description: isMiss ? `${shotType} Missed` : `${shotType} Made`,
+    points,
+    pointsLabel: isMiss ? 'MISS' : `${teamName} +${points}`,
+    entryClass: isMiss ? 'miss-entry' : '',
+    type: 'action',
+    undoData: { playerId: player.id, action: shotType, isMiss, points }
+  };
+
+  gameState.plays.unshift(play);
+  flashSuccessOnButtons();
+  updateScores();
+  renderRosters();
+  renderPlayLog();
+  updateActionButtons();
+  updateBoxScore();
+}
+
+// ===== STAT RECORDING =====
+function recordAction(action) {
+  if (!gameState.selectedPlayer) return;
+  const player = gameState.players[gameState.selectedPlayer];
+  if (!player || !player.onCourt) return;
+
+  const clockTime = formatClock(gameState.clockSeconds);
+  const actionLabels = { 'OREB':'Off. Rebound','DREB':'Def. Rebound','AST':'Assist','STL':'Steal','BLK':'Block','FLS':'Foul','TO':'Turnover' };
+  const statMap = { 'OREB':'oreb','DREB':'dreb','AST':'ast','STL':'stl','BLK':'blk','FLS':'fls' };
+
+  // FIBA foul limit: 5 fouls = fouled out
+  if (action === 'FLS' && player.fls >= 5) {
+    showToast(`${player.name} already has 5 fouls — fouled out!`);
+    return;
+  }
+
+  if (statMap[action]) player[statMap[action]]++;
+  if (action === 'OREB' || action === 'DREB') player.reb++;
+
+  const play = {
+    id: Date.now(), quarter: gameState.quarter,
+    clockSeconds: gameState.clockSeconds, clockTime,
+    playerId: player.id, playerName: player.name, playerNum: player.num, teamId: player.teamId,
+    action, isMiss: false,
+    description: actionLabels[action] || action,
+    points: 0, pointsLabel: '', entryClass: '',
+    type: 'action',
+    undoData: { playerId: player.id, action, isMiss: false, points: 0 }
+  };
+
+  gameState.plays.unshift(play);
+  flashSuccessOnButtons();
+  updateScores();
+  renderRosters();
+  renderPlayLog();
+  updateActionButtons();
+  updateBoxScore();
+
+  // Foul alerts
+  if (action === 'FLS') {
+    if (player.fls === 5) {
+      // Fouled out — auto-start sub
+      showFoulOutAlert(player);
+    } else if (player.fls === 4) {
+      showToast(`\u26a0\ufe0f ${player.name} has 4 fouls — 1 more and they foul out!`);
+    }
+  }
+}
+
+function flashSuccessOnButtons() {
+  // Brief green flash on last-clicked button area
+  const indicator = document.getElementById('selectedIndicator');
+  indicator.style.background = '#DCFCE7';
+  setTimeout(() => indicator.style.background = '', 300);
+}
+
+// ===== FOUL OUT =====
+function showFoulOutAlert(player) {
+  const overlay = document.getElementById('foulOutOverlay');
+  const content = document.getElementById('foulOutContent');
+  content.innerHTML = `
+    <h2 style="color:var(--danger)">\u26a0\ufe0f FOULED OUT</h2>
+    <p style="font-size:18px;margin:12px 0"><strong>${player.name}</strong> has committed their 5th foul.</p>
+    <p style="color:var(--text-secondary)">This player must be substituted out immediately.</p>
+    <div class="overlay-buttons" style="justify-content:center;margin-top:20px">
+      <button class="btn-sync" onclick="startFoulOutSub('${player.id}')">Sub Out ${player.name}</button>
+    </div>
+  `;
+  overlay.classList.add('active');
+}
+
+function startFoulOutSub(playerId) {
+  closeOverlay('foulOutOverlay');
+  gameState.selectedPlayer = playerId;
+  gameState.subMode = true;
+  gameState.subOutPlayer = playerId;
+  renderRosters();
+  updateSelectedIndicator();
+  updateActionButtons();
+  showToast(`Tap a bench player to sub in for ${gameState.players[playerId].name}`);
+}
+
+// ===== SUBSTITUTION =====
+function startSub() {
+  if (!gameState.selectedPlayer) return;
+  const player = gameState.players[gameState.selectedPlayer];
+  if (!player || !player.onCourt) return;
+  gameState.subMode = true;
+  gameState.subOutPlayer = player.id;
+  renderRosters();
+  updateSelectedIndicator();
+  updateActionButtons();
+  showToast(`Tap a bench player to sub in for ${player.name}`);
+}
+
+function completeSub(benchPlayerId) {
+  if (!gameState.subMode || !gameState.subOutPlayer) return;
+  const outPlayer = gameState.players[gameState.subOutPlayer];
+  const inPlayer = gameState.players[benchPlayerId];
+  if (!outPlayer || !inPlayer || outPlayer.teamId !== inPlayer.teamId) {
+    showToast('Players must be on the same team'); return;
+  }
+
+  if (outPlayer.minutesEnteredAt !== null) {
+    outPlayer.min += Math.max(0, Math.round((outPlayer.minutesEnteredAt - gameState.clockSeconds) / 60));
+  }
+  outPlayer.onCourt = false;
+  const prevEnteredAt = outPlayer.minutesEnteredAt;
+  outPlayer.minutesEnteredAt = null;
+  inPlayer.onCourt = true;
+  inPlayer.minutesEnteredAt = gameState.clockSeconds;
+
+  const clockTime = formatClock(gameState.clockSeconds);
+  const teamName = outPlayer.teamId === gameState.homeTeam.id ? gameState.homeTeam.name : gameState.awayTeam.name;
+  const minAdded = Math.max(0, Math.round(((prevEnteredAt ?? gameState.clockSeconds) - gameState.clockSeconds) / 60));
+
+  const play = {
+    id: Date.now(), quarter: gameState.quarter,
+    clockSeconds: gameState.clockSeconds, clockTime,
+    playerId: inPlayer.id, playerName: inPlayer.name, playerNum: inPlayer.num, teamId: outPlayer.teamId,
+    action: 'SUB', isMiss: false,
+    description: `#${inPlayer.num} ${inPlayer.name} IN for #${outPlayer.num} ${outPlayer.name}`,
+    points: 0, pointsLabel: teamName, entryClass: 'sub-entry',
+    type: 'sub',
+    undoData: { subIn: inPlayer.id, subOut: outPlayer.id, outMinutesEnteredAt: prevEnteredAt, outMinAdded: minAdded, inMinutesEnteredAt: gameState.clockSeconds }
+  };
+
+  gameState.plays.unshift(play);
+  gameState.subMode = false;
+  gameState.subOutPlayer = null;
+  gameState.selectedPlayer = null;
+  renderRosters();
+  renderPlayLog();
+  updateSelectedIndicator();
+  updateActionButtons();
+  updateBoxScore();
+}
+
+// ===== UNDO =====
+function undoLast() {
+  if (gameState.plays.length === 0) return;
+  const play = gameState.plays.shift();
+  if (play.type === 'sub') {
+    const inP = gameState.players[play.undoData.subIn];
+    const outP = gameState.players[play.undoData.subOut];
+    inP.onCourt = false; inP.minutesEnteredAt = null;
+    outP.onCourt = true; outP.min -= play.undoData.outMinAdded;
+    outP.minutesEnteredAt = play.undoData.outMinutesEnteredAt ?? gameState.clockSeconds;
+  } else if (play.type === 'action') {
+    const p = gameState.players[play.undoData.playerId];
+    if (!play.undoData.isMiss && play.undoData.points > 0) p.pts -= play.undoData.points;
+    if (!play.undoData.isMiss) {
+      const statMap = {'OREB':'oreb','DREB':'dreb','AST':'ast','STL':'stl','BLK':'blk','FLS':'fls'};
+      if (statMap[play.undoData.action]) p[statMap[play.undoData.action]]--;
+      if (play.undoData.action === 'OREB' || play.undoData.action === 'DREB') p.reb--;
+    }
+  }
+  updateScores(); renderRosters(); renderPlayLog(); updateActionButtons(); updateBoxScore();
+  showToast('Last play undone');
+}
+
+// ===== CLOCK =====
+function toggleClock() {
+  gameState.clockRunning = !gameState.clockRunning;
+  const btn = document.getElementById('clockBtn');
+  if (gameState.clockRunning) {
+    btn.textContent = 'Pause'; btn.classList.add('running');
+    clockInterval = setInterval(() => {
+      if (gameState.clockSeconds > 0) {
+        gameState.clockSeconds--;
+        document.getElementById('clockDisplay').textContent = formatClock(gameState.clockSeconds);
+        // Update minutes every 15s to avoid constant re-render
+        if (gameState.clockSeconds % 15 === 0) renderRosters();
+      } else { toggleClock(); showToast('Quarter ended!'); }
+    }, 1000);
+  } else {
+    btn.textContent = 'Start'; btn.classList.remove('running');
+    clearInterval(clockInterval);
+    renderRosters(); // Update minutes display on pause
+  }
+}
+
+function nextQuarter() {
+  if (gameState.quarter >= 4) { showToast('Already in Q4 — end game when ready'); return; }
+  if (gameState.clockRunning) toggleClock();
+  gameState.quarter++;
+  gameState.clockSeconds = 600;
+  document.getElementById('quarterBadge').textContent = `Q${gameState.quarter}`;
+  document.getElementById('clockDisplay').textContent = '10:00';
+  Object.values(gameState.players).forEach(p => {
+    if (p.onCourt) {
+      if (p.minutesEnteredAt !== null) p.min += Math.max(0, Math.round(p.minutesEnteredAt / 60));
+      p.minutesEnteredAt = 600;
+    }
+  });
+  renderRosters();
+  showToast(`Quarter ${gameState.quarter} started`);
+}
+
+function formatClock(seconds) {
+  return `${Math.floor(seconds/60)}:${(seconds%60).toString().padStart(2,'0')}`;
+}
+
+// ===== PLAY LOG =====
+function renderPlayLog() {
+  const container = document.getElementById('playLog');
+  if (gameState.plays.length === 0) {
+    container.innerHTML = '<div class="empty-log">Game events will appear here</div>'; return;
+  }
+  let html = '';
+  gameState.plays.forEach((play, i) => {
+    const isHome = play.teamId === gameState.homeTeam.id;
+    const ptsClass = play.isMiss ? 'miss-pts' : (isHome ? 'home-pts' : 'away-pts');
+    html += `<div class="play-entry ${play.entryClass} ${i===0?'new-entry':''}">
+      <span class="play-time">${play.clockTime} \u00b7 Q${play.quarter}</span>
+      <span class="play-detail"><span class="play-player">#${play.playerNum} ${play.playerName}</span> \u2014 ${play.description}</span>
+      <span class="play-points ${ptsClass}">${play.pointsLabel}</span>
+      <button class="play-undo-btn" onclick="undoSpecific(${i})" title="Undo">&times;</button>
+    </div>`;
+  });
+  container.innerHTML = html;
+}
+
+function undoSpecific(index) {
+  if (index === 0) undoLast();
+  else showToast('Can only undo the most recent play');
+}
+
+// ===== BOX SCORE =====
+function switchTab(tab) {
+  document.getElementById('tabPbp').classList.toggle('active', tab==='pbp');
+  document.getElementById('tabBox').classList.toggle('active', tab==='box');
+  document.getElementById('playLog').style.display = tab==='pbp' ? 'block' : 'none';
+  document.getElementById('boxScoreView').style.display = tab==='box' ? 'block' : 'none';
+  if (tab==='box') updateBoxScore();
+}
+
+function updateBoxScore() {
+  const container = document.getElementById('boxScoreView');
+  if (!gameState.homeTeam) return;
+  let html = '';
+  [gameState.homeTeam, gameState.awayTeam].forEach(team => {
+    const isHome = team.id === gameState.homeTeam.id;
+    const players = Object.values(gameState.players).filter(p => p.teamId === team.id)
+      .sort((a,b) => a.onCourt !== b.onCourt ? (a.onCourt?-1:1) : b.pts - a.pts);
+    html += `<div class="box-score-team-label ${isHome?'home':'away'}">${team.name}</div>`;
+    html += `<table class="box-score-table"><thead><tr><th>Player</th><th>MIN</th><th>PTS</th><th>OREB</th><th>DREB</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>FLS</th></tr></thead><tbody>`;
+    let totals = {min:0,pts:0,oreb:0,dreb:0,reb:0,ast:0,stl:0,blk:0,fls:0};
+    players.forEach(p => {
+      const mins = p.onCourt ? getPlayerMinutes(p) : p.min;
+      const has = mins>0||p.pts>0||p.reb>0||p.ast>0||p.stl>0||p.blk>0||p.fls>0;
+      if (!has && !p.onCourt) return;
+      totals.min+=mins;totals.pts+=p.pts;totals.oreb+=p.oreb;totals.dreb+=p.dreb;totals.reb+=p.reb;totals.ast+=p.ast;totals.stl+=p.stl;totals.blk+=p.blk;totals.fls+=p.fls;
+      html += `<tr><td>${p.onCourt?'\u2605 ':''}${p.name}</td><td>${mins}</td><td>${p.pts}</td><td>${p.oreb}</td><td>${p.dreb}</td><td>${p.reb}</td><td>${p.ast}</td><td>${p.stl}</td><td>${p.blk}</td><td>${p.fls}</td></tr>`;
+    });
+    html += `<tr class="totals-row"><td>TOTALS</td><td>${totals.min}</td><td>${totals.pts}</td><td>${totals.oreb}</td><td>${totals.dreb}</td><td>${totals.reb}</td><td>${totals.ast}</td><td>${totals.stl}</td><td>${totals.blk}</td><td>${totals.fls}</td></tr></tbody></table>`;
+  });
+  container.innerHTML = html;
+}
+
+// ===== END GAME =====
+function showEndConfirm() { document.getElementById('endConfirmOverlay').classList.add('active'); }
+function closeOverlay(id) { document.getElementById(id).classList.remove('active'); }
+
+function endGame() {
+  closeOverlay('endConfirmOverlay');
+  if (gameState.clockRunning) toggleClock();
+  gameState.gameEnded = true;
+  Object.values(gameState.players).forEach(p => {
+    if (p.onCourt && p.minutesEnteredAt !== null) {
+      p.min += Math.max(0, Math.round((p.minutesEnteredAt - gameState.clockSeconds) / 60));
+      p.minutesEnteredAt = null;
+    }
+  });
+
+  const players = Object.values(gameState.players);
+  const homeScore = players.filter(p=>p.teamId===gameState.homeTeam.id).reduce((s,p)=>s+p.pts,0);
+  const awayScore = players.filter(p=>p.teamId===gameState.awayTeam.id).reduce((s,p)=>s+p.pts,0);
+  const playerLines = {};
+  players.forEach(p => {
+    if (p.pts>0||p.reb>0||p.ast>0||p.stl>0||p.blk>0||p.fls>0||p.min>0)
+      playerLines[p.id] = {name:p.name,teamId:p.teamId,pts:p.pts,reb:p.reb,ast:p.ast,stl:p.stl,blk:p.blk,fls:p.fls,min:p.min};
+  });
+  const model = {
+    eventId:'event_'+Date.now(), seasonId:'spring-2026', divisionId:'nbl-premier',
+    homeTeamId:gameState.homeTeam.id, awayTeamId:gameState.awayTeam.id,
+    homeTeamName:gameState.homeTeam.name, awayTeamName:gameState.awayTeam.name,
+    homeScore, awayScore, status:'submitted',
+    submittedBy:'statistician_001', submittedAt:new Date().toISOString(), playerLines
+  };
+
+  document.getElementById('endGameContent').innerHTML = `
+    <h2>Game Complete</h2>
+    <div class="final-score">
+      <div><div class="team-name">${gameState.homeTeam.name}</div><div>${homeScore}</div></div>
+      <span style="color:var(--text-muted);font-size:24px">&mdash;</span>
+      <div><div class="team-name">${gameState.awayTeam.name}</div><div>${awayScore}</div></div>
+    </div>
+    ${buildEndBoxScoreHTML()}
+    <h3 style="margin-top:16px;font-size:14px;color:var(--text-secondary)">GameStatsModel JSON</h3>
+    <div class="json-output">${JSON.stringify(model,null,2)}</div>
+    <div class="overlay-buttons">
+      <button class="btn-cancel" onclick="closeOverlay('endGameOverlay')">Back</button>
+      <button class="btn-sync" onclick="syncToApp()">Sync to HoopsConnect</button>
+    </div>`;
+  document.getElementById('endGameOverlay').classList.add('active');
+}
+
+function buildEndBoxScoreHTML() {
+  let html = '';
+  [gameState.homeTeam, gameState.awayTeam].forEach(team => {
+    const isHome = team.id === gameState.homeTeam.id;
+    const players = Object.values(gameState.players)
+      .filter(p => p.teamId===team.id && (p.pts>0||p.reb>0||p.ast>0||p.stl>0||p.blk>0||p.fls>0||p.min>0))
+      .sort((a,b) => b.pts-a.pts);
+    if (!players.length) return;
+    html += `<div class="box-score-team-label ${isHome?'home':'away'}">${team.name}</div>`;
+    html += `<table class="box-score-table"><thead><tr><th>Player</th><th>MIN</th><th>PTS</th><th>OREB</th><th>DREB</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>FLS</th></tr></thead><tbody>`;
+    let t={min:0,pts:0,oreb:0,dreb:0,reb:0,ast:0,stl:0,blk:0,fls:0};
+    players.forEach(p => {
+      t.min+=p.min;t.pts+=p.pts;t.oreb+=p.oreb;t.dreb+=p.dreb;t.reb+=p.reb;t.ast+=p.ast;t.stl+=p.stl;t.blk+=p.blk;t.fls+=p.fls;
+      html += `<tr><td>${p.name}</td><td>${p.min}</td><td>${p.pts}</td><td>${p.oreb}</td><td>${p.dreb}</td><td>${p.reb}</td><td>${p.ast}</td><td>${p.stl}</td><td>${p.blk}</td><td>${p.fls}</td></tr>`;
+    });
+    html += `<tr class="totals-row"><td>TOTALS</td><td>${t.min}</td><td>${t.pts}</td><td>${t.oreb}</td><td>${t.dreb}</td><td>${t.reb}</td><td>${t.ast}</td><td>${t.stl}</td><td>${t.blk}</td><td>${t.fls}</td></tr></tbody></table>`;
+  });
+  return html;
+}
+
+function syncToApp() { closeOverlay('endGameOverlay'); showToast('Stats synced to HoopsConnect! Pending admin approval.'); }
+
+// ===== TOAST =====
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('visible');
+  setTimeout(() => t.classList.remove('visible'), 2500);
+}
+
+// ===== INIT =====
+loadRosters();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+app_identifier("com.hoopsconnect.hoopsConnect")
+apple_id("ilak_1@hotmail.com")
+team_id("8FCKSS2JB5")
+itc_team_id("8FCKSS2JB5")
+
+json_key_file(ENV["GOOGLE_PLAY_JSON_KEY_PATH"]) if ENV["GOOGLE_PLAY_JSON_KEY_PATH"]
+package_name("com.hoopsconnect.hoops_connect")

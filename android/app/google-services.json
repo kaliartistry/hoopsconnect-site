@@ -1,0 +1,78 @@
+{
+  "project_info": {
+    "project_number": "212612973375",
+    "project_id": "hoops-connect-jm",
+    "storage_bucket": "hoops-connect-jm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:212612973375:android:2b6139ac0f5ee182db498a",
+        "android_client_info": {
+          "package_name": "com.hoopsconnect.hoops_connect"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "212612973375-4qbe1hnf5cic397mmq8qt8j31aq55jjl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hoopsconnect.hoops_connect",
+            "certificate_hash": "1bf4d75b5ed7e055260f8f2cc4fdf7b3976fd5fb"
+          }
+        },
+        {
+          "client_id": "212612973375-4ss9ovk81mgpso30rb51ra9vv9339m0p.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hoopsconnect.hoops_connect",
+            "certificate_hash": "fb70488a2ade40f96a5dd7fed94e7d6f218b93db"
+          }
+        },
+        {
+          "client_id": "212612973375-ecjml7arrj8c0lgcqcr62dmrhnl5eq5t.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hoopsconnect.hoops_connect",
+            "certificate_hash": "a8d73829df496b1f6f03026454ca0ea5ee7d931b"
+          }
+        },
+        {
+          "client_id": "212612973375-nhjgubil55a1esf9dkh5n6e002macbo2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hoopsconnect.hoops_connect",
+            "certificate_hash": "0a7c024ec3dec58eadd568efe0871f663d4fb9ab"
+          }
+        },
+        {
+          "client_id": "212612973375-om04d5i86pmcfqjgvurmqr5mlgiqpsvm.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB02xmieJ4k26duJNwDL0lnBCm6WpZ29TM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "212612973375-om04d5i86pmcfqjgvurmqr5mlgiqpsvm.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "212612973375-dvk80s9vkd0cbqmoogtlv350c1htr7sc.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.hoopsconnect.hoopsConnect"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

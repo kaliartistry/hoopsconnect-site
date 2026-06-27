@@ -1,0 +1,256 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ────────────────────────────────────────────
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserRole() {
+      return getUserDoc().role;
+    }
+
+    function isSuperAdmin() {
+      return getUserRole() == 'superAdmin';
+    }
+
+    function isAdmin() {
+      return getUserRole() == 'admin' || isSuperAdmin();
+    }
+
+    function isRep() {
+      return getUserRole() == 'rep';
+    }
+
+    function isMedia() {
+      return getUserRole() == 'media';
+    }
+
+    function isStatistician() {
+      return getUserRole() == 'statistician';
+    }
+
+    function isPress() {
+      return getUserRole() == 'press' || getUserRole() == 'media';
+    }
+
+    function canEnterStats() {
+      return isAdmin() || isStatistician();
+    }
+
+    function isOwnerAccount(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.email == 'kalimccarthy@gmail.com';
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check that a field was not changed between resource and request
+    function fieldUnchanged(field) {
+      return !(field in request.resource.data.diff(resource.data).affectedKeys());
+    }
+
+    // Rate limit: require a minimum gap between writes (basic anti-spam)
+    // Checks that a timestamp field is at least N seconds in the past
+    function notTooFrequent(timestampField, minSeconds) {
+      return !('lastWriteAt' in resource.data)
+        || resource.data[timestampField] + duration.value(minSeconds, 's') < request.time;
+    }
+
+    // ── Users collection ────────────────────────────────────────────
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+
+      // Users can create their own doc during signup
+      allow create: if isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.data.role in ['media', 'rep', 'statistician', 'press', 'fan']  // Cannot self-assign admin/superAdmin
+        && request.resource.data.keys().hasAll(['email', 'displayName', 'role', 'associationId']);
+
+      // Users can update their own profile but CANNOT change role or associationId
+      // Admins can update any user (including role changes)
+      allow update: if isAuthenticated() && (
+        // Self-update: block role escalation and association change
+        (request.auth.uid == userId
+          && fieldUnchanged('role')
+          && fieldUnchanged('associationId'))
+        // Admin can update any user (but not escalate to superAdmin unless they are superAdmin)
+        || (isAdmin()
+          && (isSuperAdmin() || request.resource.data.role != 'superAdmin')
+          && (!isOwnerAccount(userId) || fieldUnchanged('role')))
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── Invite codes ────────────────────────────────────────────────
+
+    match /inviteCodes/{code} {
+      // Authenticated users can get a specific code (for validation during join flow)
+      // Only admins can list all codes
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
+
+      // Only admins can create codes; superAdmin required to create admin invite codes
+      allow create: if isAdmin()
+        && (request.resource.data.role != 'admin' || isSuperAdmin());
+      allow delete: if isAdmin();
+
+      // Consuming a code: authenticated users may ONLY decrement usesRemaining
+      // All other fields must remain unchanged
+      allow update: if isAuthenticated()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usesRemaining'])
+        && request.resource.data.usesRemaining == resource.data.usesRemaining - 1
+        && resource.data.usesRemaining > 0;
+    }
+
+    // ── Association-scoped collections ──────────────────────────────
+
+    match /associations/{assocId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+
+      // ── Seasons ─────────────────────────────────────────────────
+      match /seasons/{seasonId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      // ── Divisions ───────────────────────────────────────────────
+      match /divisions/{divisionId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      // ── Teams ───────────────────────────────────────────────────
+      match /teams/{teamId} {
+        allow read: if isAuthenticated();
+        allow create: if isAdmin();
+        allow update: if isAdmin()
+          || (isRep() && resource.data.repIds.hasAny([request.auth.uid]));
+        allow delete: if isAdmin();
+      }
+
+      // ── Posts ───────────────────────────────────────────────────
+      match /posts/{postId} {
+        allow read: if isAuthenticated();
+
+        // Only admin or rep can create posts
+        allow create: if isAuthenticated()
+          && (isAdmin() || isRep())
+          && request.resource.data.keys().hasAll(['authorId', 'title', 'body', 'type', 'createdAt'])
+          && request.resource.data.authorId == request.auth.uid;
+
+        allow update: if isAuthenticated() && (
+          // Admin can update any post
+          isAdmin()
+          // Author can update their own post (but not ack fields)
+          || (request.auth.uid == resource.data.authorId
+            && fieldUnchanged('ackStatus')
+            && fieldUnchanged('expectedAcks'))
+          // Reps can acknowledge posts (only updating ackStatus field)
+          || (isRep()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ackStatus']))
+        );
+
+        allow delete: if isAdmin();
+      }
+
+      // ── Events / Schedule ───────────────────────────────────────
+      match /events/{eventId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      // ── Game Stats ──────────────────────────────────────────────
+      match /gameStats/{gameId} {
+        allow read: if isAuthenticated();
+
+        // Admins and statisticians can create game stat entries
+        allow create: if canEnterStats();
+
+        // Admins and statisticians can update; but only admins can approve
+        allow update: if canEnterStats()
+          && validateGameStatsUpdate();
+
+        allow delete: if isAdmin();
+
+        // Per-action play-by-play log. Append-only by design — the client
+        // tombstones via update with `revoked: true` rather than deleting.
+        match /events/{eventId} {
+          allow read: if isAuthenticated();
+          allow create, update: if canEnterStats();
+          allow delete: if false;
+        }
+      }
+
+      // ── Player Season Stats ──
+      match /playerSeasonStats/{statId} {
+        allow read: if isAuthenticated();
+        // Admins can add/remove players from rosters.
+        // Cloud Functions (Admin SDK) also write these and bypass rules.
+        allow create, update, delete: if isAdmin();
+      }
+
+      // ── Leaderboards (written by Cloud Functions via Admin SDK) ──
+      match /leaderboard/{boardId} {
+        allow read: if isAuthenticated();
+        // Only Cloud Functions (Admin SDK) should write these.
+        allow write: if false;
+      }
+
+      // ── Standings ───────────────────────────────────────────────
+      match /standings/{standingId} {
+        allow read: if isAuthenticated();
+        // Standings are updated by Cloud Functions via Admin SDK.
+        allow write: if false;
+      }
+
+      // ── Team Season Stats (written by Cloud Functions via Admin SDK) ──
+      match /teamSeasonStats/{statId} {
+        allow read: if isAuthenticated();
+        // Only Cloud Functions (Admin SDK) should write these.
+        allow write: if false;
+      }
+    }
+
+    // ── Validation functions ──────────────────────────────────────
+
+    function validateGameStatsUpdate() {
+      let data = request.resource.data;
+
+      // Status transitions: validate allowed values. `draft` is kept for
+      // backwards-compatibility with pre-v1 docs but new code should use
+      // `inProgress`.
+      let statusValid = !('status' in request.resource.data.diff(resource.data).affectedKeys())
+        || data.status in ['draft', 'notStarted', 'inProgress', 'submitted', 'approved', 'rejected'];
+
+      // Only admins can set status to 'approved' or 'rejected'
+      // (statisticians can move between editable states + submit but not adjudicate).
+      let approvalAllowed = (data.status != 'approved' && data.status != 'rejected') || isAdmin();
+
+      // If approving, must set approvedBy to the current user.
+      let approvalValid = data.status != 'approved'
+        || data.approvedBy == request.auth.uid;
+
+      // If rejecting, must set rejectedBy to the current user.
+      let rejectionValid = data.status != 'rejected'
+        || data.rejectedBy == request.auth.uid;
+
+      // Validate score fields are non-negative
+      let scoresValid = data.homeScore >= 0 && data.awayScore >= 0;
+
+      return statusValid && approvalAllowed && approvalValid && rejectionValid && scoresValid;
+    }
+
+    // ── Catch-all: deny unmatched paths ──────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

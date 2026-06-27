@@ -1,0 +1,23 @@
+JA HoopsConnect is the official app for the Jamaica Basketball Association (JBA). Stay connected with your league, track stats, and manage your team — all in one place.
+
+FEATURES:
+
+Board & Announcements
+Stay up to date with the latest league news, announcements, and urgent communications from the JBA. Team reps can post updates and acknowledge important notices.
+
+Live Stats & Box Scores
+Follow game stats in real time. View detailed box scores, player performance breakdowns, and game-by-game results across all divisions.
+
+Leaderboards & Player Cards
+See who's leading the league in points, rebounds, assists, and more. Tap into detailed player cards with season averages and game logs.
+
+Team Management
+View rosters, team schedules, and division standings. Team reps can manage their squad and stay on top of league communications.
+
+Calendar & Schedule
+Never miss a game. View the full season calendar with dates, times, venues, and results for every matchup.
+
+Push Notifications
+Get notified about new announcements, upcoming games, stat approvals, and acknowledgment deadlines.
+
+Built for the JBA community — players, coaches, team reps, statisticians, media, and fans.

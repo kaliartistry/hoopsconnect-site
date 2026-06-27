@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "hoops-connect-jm"
+  },
+  "targets": {
+    "hoops-connect-jm": {
+      "storage": {
+        "rules": [
+          "hoops-connect-jm.firebasestorage.app"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

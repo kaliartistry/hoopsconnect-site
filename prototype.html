@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HoopsConnect — Role-Based Prototype (with Stat-Taking Flow)</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f3f4f6; color:#111827; }
+
+  .app-container { max-width:430px; margin:20px auto; background:#fff; border-radius:20px; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.12); min-height:780px; display:flex; flex-direction:column; position:relative; }
+  .status-bar { height:28px; background:#EA580C; display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:600; }
+  .app-bar { background:#EA580C; color:#fff; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; }
+  .app-bar h1 { font-size:18px; font-weight:700; }
+  .app-bar .avatar { width:32px; height:32px; border-radius:50%; background:rgba(255,255,255,.25); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; cursor:pointer; }
+  .content { flex:1; overflow-y:auto; padding-bottom:60px; }
+  .bottom-nav { position:absolute; bottom:0; left:0; right:0; background:#fff; border-top:1px solid #e5e7eb; display:flex; height:56px; z-index:10; }
+  .nav-item { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; color:#9ca3af; font-size:10px; font-weight:500; gap:2px; transition:color .15s; }
+  .nav-item.active { color:#EA580C; }
+  .nav-item:hover { color:#EA580C; }
+
+  .role-switcher { max-width:430px; margin:20px auto 0; display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
+  .role-btn { padding:8px 14px; border-radius:20px; border:2px solid #d1d5db; background:#fff; cursor:pointer; font-size:12px; font-weight:600; transition:all .15s; }
+  .role-btn.active { border-color:#EA580C; background:#EA580C; color:#fff; }
+  .role-btn:hover { border-color:#EA580C; }
+  .role-label { text-align:center; max-width:430px; margin:8px auto 0; font-size:11px; color:#6b7280; }
+
+  .screen { display:none; }
+  .screen.active { display:block; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; margin:12px 16px; padding:16px; }
+  .section-title { font-size:13px; font-weight:700; color:#374151; margin:16px 16px 8px; text-transform:uppercase; letter-spacing:.5px; }
+
+  .credential-card { background:linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius:14px; margin:12px 16px; padding:20px; color:#fff; position:relative; overflow:hidden; }
+  .credential-card::after { content:'🏀'; position:absolute; right:16px; top:16px; font-size:40px; opacity:.2; }
+  .credential-badge { display:inline-block; background:#EA580C; color:#fff; font-size:9px; font-weight:800; letter-spacing:1.5px; padding:4px 10px; border-radius:4px; margin-bottom:12px; }
+  .credential-name { font-size:20px; font-weight:700; margin-bottom:2px; }
+  .credential-org { font-size:12px; color:#94a3b8; margin-bottom:8px; }
+  .credential-season { font-size:11px; color:#64748b; background:rgba(255,255,255,.08); display:inline-block; padding:3px 8px; border-radius:4px; }
+  .credential-divider { height:1px; background:rgba(255,255,255,.1); margin:12px 0; }
+  .credential-id { font-size:10px; color:#64748b; font-family:monospace; }
+
+  .game-result { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f3f4f6; }
+  .game-result:last-child { border-bottom:none; }
+  .game-team { flex:1; text-align:center; }
+  .game-team-name { font-size:12px; font-weight:600; color:#374151; }
+  .game-score { font-size:18px; font-weight:800; color:#111827; }
+  .game-vs { font-size:10px; color:#9ca3af; font-weight:600; margin:0 4px; }
+  .game-meta { font-size:10px; color:#9ca3af; text-align:center; margin-top:2px; }
+  .winner .game-score { color:#EA580C; }
+
+  .schedule-item { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f3f4f6; gap:12px; }
+  .schedule-item:last-child { border-bottom:none; }
+  .schedule-time { font-size:12px; font-weight:700; color:#EA580C; min-width:50px; }
+  .schedule-teams { font-size:13px; font-weight:600; color:#374151; }
+  .schedule-venue { font-size:11px; color:#9ca3af; }
+
+  .leader-row { display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #f3f4f6; gap:10px; }
+  .leader-row:last-child { border-bottom:none; }
+  .leader-rank { width:24px; height:24px; border-radius:50%; background:#fef3c7; color:#92400e; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; }
+  .leader-info { flex:1; }
+  .leader-name { font-size:13px; font-weight:600; color:#111827; }
+  .leader-team { font-size:11px; color:#9ca3af; }
+  .leader-stat { font-size:16px; font-weight:800; color:#EA580C; }
+  .leader-label { font-size:9px; color:#9ca3af; text-transform:uppercase; }
+
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 20px; border-radius:10px; border:none; font-size:13px; font-weight:700; cursor:pointer; transition:all .15s; }
+  .btn-primary { background:#EA580C; color:#fff; }
+  .btn-primary:hover { background:#dc4a04; }
+  .btn-outline { background:#fff; color:#EA580C; border:2px solid #EA580C; }
+  .btn-sm { padding:6px 12px; font-size:11px; border-radius:8px; }
+  .btn-full { width:calc(100% - 32px); margin:12px 16px; }
+
+  .summary-headline { font-size:18px; font-weight:800; color:#111827; line-height:1.3; padding:16px; }
+  .summary-narrative { font-size:14px; color:#374151; line-height:1.6; padding:0 16px 16px; }
+  .summary-actions { display:flex; gap:8px; padding:0 16px 16px; }
+
+  .performer-row { display:flex; align-items:center; padding:10px 16px; border-bottom:1px solid #f3f4f6; }
+  .performer-pts { min-width:40px; height:40px; border-radius:10px; background:#EA580C; color:#fff; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:800; margin-right:12px; }
+  .performer-name { font-size:14px; font-weight:600; color:#111827; }
+  .performer-team { font-size:11px; color:#9ca3af; }
+  .performer-stats { font-size:11px; color:#6b7280; margin-top:1px; }
+
+  .milestone { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; margin-left:6px; }
+  .milestone-dd { background:#fef3c7; color:#92400e; }
+  .milestone-pts { background:#fee2e2; color:#991b1b; }
+
+  .h2h-header { display:flex; align-items:stretch; margin:12px 16px; border-radius:12px; overflow:hidden; }
+  .h2h-team { flex:1; padding:16px; text-align:center; }
+  .h2h-team.home { background:#EA580C; color:#fff; }
+  .h2h-team.away { background:#1e293b; color:#fff; }
+  .h2h-team-name { font-size:14px; font-weight:700; }
+  .h2h-record { font-size:11px; opacity:.8; margin-top:2px; }
+  .h2h-vs { background:#f3f4f6; display:flex; align-items:center; justify-content:center; padding:0 8px; font-size:11px; font-weight:800; color:#9ca3af; }
+  .h2h-stat-row { display:flex; align-items:center; padding:10px 16px; border-bottom:1px solid #f3f4f6; }
+  .h2h-stat-label { flex:1; text-align:center; font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; }
+  .h2h-stat-val { width:70px; text-align:center; font-size:15px; font-weight:700; }
+  .h2h-stat-val.winning { color:#EA580C; }
+
+  .toggle-bar { display:flex; margin:12px 16px; background:#f3f4f6; border-radius:10px; padding:3px; }
+  .toggle-btn { flex:1; padding:8px; text-align:center; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; color:#6b7280; transition:all .15s; }
+  .toggle-btn.active { background:#fff; color:#111827; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+
+  .post-card { margin:12px 16px; border:1px solid #e5e7eb; border-radius:12px; padding:14px; }
+  .post-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .post-avatar { width:28px; height:28px; border-radius:50%; background:#EA580C; display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:700; }
+  .post-author { font-size:12px; font-weight:600; color:#374151; }
+  .post-time { font-size:10px; color:#9ca3af; }
+  .post-title { font-size:14px; font-weight:700; color:#111827; margin-bottom:4px; }
+  .post-body { font-size:13px; color:#6b7280; line-height:1.5; }
+  .post-badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:9px; font-weight:700; margin-top:8px; }
+  .post-badge.ack { background:#fef3c7; color:#92400e; }
+  .post-badge.urgent { background:#fee2e2; color:#991b1b; }
+  .ack-btn { margin-top:10px; padding:6px 16px; background:#EA580C; color:#fff; border:none; border-radius:8px; font-size:11px; font-weight:700; cursor:pointer; }
+
+  .standings-table { width:100%; font-size:11px; border-collapse:collapse; }
+  .standings-table th { padding:8px 6px; text-align:left; color:#9ca3af; font-weight:600; border-bottom:2px solid #e5e7eb; font-size:10px; text-transform:uppercase; }
+  .standings-table td { padding:8px 6px; border-bottom:1px solid #f3f4f6; }
+  .standings-table .team-col { font-weight:600; color:#111827; cursor:pointer; }
+  .standings-table .team-col:hover { color:#EA580C; }
+  .standings-table .num-col { text-align:center; color:#6b7280; }
+  .standings-table .highlight { color:#EA580C; font-weight:700; }
+
+  .stat-status { font-size:9px; font-weight:700; padding:3px 8px; border-radius:6px; }
+  .stat-status.pending { background:#fef3c7; color:#92400e; }
+  .stat-status.submitted { background:#d1fae5; color:#065f46; }
+
+  .export-bar { display:flex; gap:8px; padding:8px 16px; }
+  .export-btn { display:flex; align-items:center; gap:4px; padding:6px 12px; border-radius:8px; border:1px solid #d1d5db; background:#fff; font-size:11px; font-weight:600; color:#374151; cursor:pointer; }
+  .export-btn:hover { background:#f9fafb; border-color:#EA580C; color:#EA580C; }
+
+  .toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%); background:#1e293b; color:#fff; padding:10px 20px; border-radius:10px; font-size:13px; font-weight:500; z-index:100; opacity:0; transition:opacity .3s; pointer-events:none; }
+  .toast.show { opacity:1; }
+
+  /* ─── Full-Screen Live Stats ─── */
+  .live-overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:#f3f4f6; z-index:200; overflow-y:auto; }
+  .live-overlay.show { display:block; }
+  .live-topbar { background:#1e293b; color:#fff; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; }
+  .live-topbar .back { cursor:pointer; font-size:14px; opacity:.7; }
+  .live-topbar .back:hover { opacity:1; }
+  .live-topbar h2 { font-size:15px; font-weight:700; }
+
+  /* Setup screen */
+  .setup-section { max-width:500px; margin:0 auto; padding:16px; }
+  .setup-card { background:#fff; border-radius:12px; border:1px solid #e5e7eb; padding:16px; margin-bottom:12px; }
+  .setup-card h3 { font-size:14px; font-weight:700; margin-bottom:10px; color:#374151; }
+  .player-pick { display:flex; align-items:center; padding:8px 0; border-bottom:1px solid #f3f4f6; gap:10px; cursor:pointer; }
+  .player-pick:last-child { border-bottom:none; }
+  .player-num { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800; color:#fff; }
+  .player-pick-name { font-size:13px; font-weight:600; color:#374151; flex:1; }
+  .player-pick .star { font-size:18px; opacity:.2; }
+  .player-pick.selected .star { opacity:1; }
+
+  /* Game screen (3-col on wide, stacked on narrow) */
+  .live-game-container { max-width:900px; margin:0 auto; }
+  .live-score-bar { background:#1e293b; color:#fff; padding:12px 20px; display:flex; align-items:center; justify-content:space-between; }
+  .live-score-team { text-align:center; flex:1; }
+  .live-score-name { font-size:11px; color:#94a3b8; font-weight:600; }
+  .live-score-pts { font-size:32px; font-weight:900; }
+  .live-clock-area { text-align:center; min-width:80px; }
+  .live-clock { font-size:24px; font-weight:800; font-family:monospace; }
+  .live-quarter { font-size:10px; color:#94a3b8; margin-top:2px; }
+  .live-3col { display:flex; gap:0; min-height:400px; }
+  .live-roster { flex:1; background:#fff; border:1px solid #e5e7eb; overflow-y:auto; }
+  .live-roster-header { background:#f9fafb; padding:8px 12px; font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; border-bottom:1px solid #e5e7eb; }
+  .live-action-col { width:280px; background:#f9fafb; border:1px solid #e5e7eb; padding:12px; display:flex; flex-direction:column; gap:6px; }
+
+  .live-player { display:flex; align-items:center; padding:6px 10px; gap:8px; cursor:pointer; border-bottom:1px solid #f3f4f6; transition:background .1s; }
+  .live-player:hover { background:#fef3c7; }
+  .live-player.selected { background:#EA580C15; outline:2px solid #EA580C; outline-offset:-2px; }
+  .live-player.oncourt { min-height:44px; }
+  .live-player.bench { min-height:30px; opacity:.55; font-size:12px; }
+  .live-player .jersey { min-width:28px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#fff; }
+  .live-player.bench .jersey { min-width:22px; height:22px; font-size:10px; border-radius:4px; }
+  .live-player .pname { font-size:12px; font-weight:600; color:#374151; flex:1; }
+  .live-player .pstat { font-size:11px; color:#9ca3af; min-width:30px; text-align:right; }
+  .live-player .foul-badge { font-size:9px; font-weight:800; padding:1px 5px; border-radius:4px; margin-left:4px; }
+  .foul-yellow { background:#fef3c7; color:#92400e; }
+  .foul-red { background:#fee2e2; color:#991b1b; }
+
+  .action-btn { border:none; border-radius:8px; font-weight:700; cursor:pointer; color:#fff; transition:all .1s; text-align:center; }
+  .action-btn:active { transform:scale(.95); }
+  .action-btn.t1 { height:48px; font-size:13px; }
+  .action-btn.t2 { height:40px; font-size:12px; }
+  .action-btn.t3 { height:34px; font-size:11px; }
+  .action-btn.make { background:#EA580C; }
+  .action-btn.miss { background:#dc2626; }
+  .action-btn.stat { background:#475569; }
+  .action-btn.ctrl { background:#64748b; }
+  .action-btn.disabled { opacity:.3; pointer-events:none; }
+  .action-row { display:flex; gap:4px; }
+  .action-row > * { flex:1; }
+  .action-section-label { font-size:9px; font-weight:700; color:#9ca3af; text-transform:uppercase; margin-top:4px; }
+
+  .live-playlog { max-width:900px; margin:0 auto; background:#fff; border:1px solid #e5e7eb; }
+  .playlog-header { background:#f9fafb; padding:8px 12px; font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; }
+  .play-entry { padding:6px 12px; border-bottom:1px solid #f3f4f6; font-size:12px; display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .play-entry:hover { background:#fef3c7; }
+  .play-time { font-size:10px; color:#9ca3af; font-family:monospace; min-width:50px; }
+  .play-desc { flex:1; color:#374151; }
+  .play-pts { font-weight:800; color:#EA580C; min-width:30px; text-align:right; }
+
+  .end-game-dialog { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:300; }
+  .end-game-dialog.show { display:flex; }
+  .end-dialog-box { background:#fff; border-radius:16px; padding:24px; max-width:360px; width:90%; text-align:center; }
+  .end-dialog-box h3 { font-size:18px; font-weight:800; margin-bottom:8px; }
+  .end-dialog-box p { font-size:13px; color:#6b7280; margin-bottom:16px; }
+  .end-dialog-score { display:flex; justify-content:center; gap:20px; margin-bottom:16px; }
+  .end-dialog-team { text-align:center; }
+  .end-dialog-team .tn { font-size:12px; color:#6b7280; }
+  .end-dialog-team .ts { font-size:28px; font-weight:900; }
+  .end-dialog-btns { display:flex; gap:8px; justify-content:center; }
+
+  .submitted-banner { max-width:500px; margin:20px auto; background:#d1fae5; border:2px solid #16a34a; border-radius:12px; padding:20px; text-align:center; }
+  .submitted-banner .icon { font-size:36px; }
+  .submitted-banner h3 { font-size:16px; font-weight:700; color:#065f46; margin:8px 0 4px; }
+  .submitted-banner p { font-size:12px; color:#047857; }
+
+  @media(max-width:600px) {
+    .live-3col { flex-direction:column; }
+    .live-action-col { width:100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="role-switcher">
+  <button class="role-btn active" onclick="switchRole('superAdmin',this)">Super Admin</button>
+  <button class="role-btn" onclick="switchRole('admin',this)">Admin</button>
+  <button class="role-btn" onclick="switchRole('statistician',this)">Statistician</button>
+  <button class="role-btn" onclick="switchRole('rep',this)">Team Rep</button>
+  <button class="role-btn" onclick="switchRole('press',this)">Press</button>
+</div>
+<div class="role-label" id="roleDescription">Full system control — manages league, approves stats, all access</div>
+
+<div class="app-container">
+  <div class="status-bar">HoopsConnect</div>
+  <div class="app-bar">
+    <h1 id="screenTitle">Board</h1>
+    <div class="avatar" id="appAvatar" onclick="showToast('Profile → Settings, Sign Out')">A</div>
+  </div>
+
+  <div class="content" id="mainContent">
+
+    <!-- BOARD -->
+    <div class="screen active" id="screen-board">
+      <div class="post-card">
+        <div class="post-header"><div class="post-avatar">JB</div><div><div class="post-author">JBA Admin</div><div class="post-time">2 hours ago</div></div></div>
+        <div class="post-title">Updated Game Schedule — Week 12</div>
+        <div class="post-body">Please note the venue change for Saturday's games. All Premier Division games will now be held at the National Indoor Sports Centre.</div>
+        <span class="post-badge ack">⚡ ACK REQUIRED</span>
+        <div id="ackBtnArea"></div>
+      </div>
+      <div class="post-card">
+        <div class="post-header"><div class="post-avatar" style="background:#1e293b">CT</div><div><div class="post-author">Coach Thompson</div><div class="post-time">Yesterday</div></div></div>
+        <div class="post-title">Kingston Titans Roster Update</div>
+        <div class="post-body">Marcus Williams has been added to our roster for the remainder of the season. Jersey #24.</div>
+      </div>
+      <div class="post-card">
+        <div class="post-header"><div class="post-avatar">JB</div><div><div class="post-author">JBA Admin</div><div class="post-time">3 days ago</div></div></div>
+        <div class="post-title">All-Star Weekend Announcement</div>
+        <div class="post-body">The 2026 JBA All-Star Weekend will be held March 28-29 at the National Indoor Sports Centre.</div>
+        <span class="post-badge urgent">🔴 URGENT</span>
+      </div>
+      <div id="createPostBtn"></div>
+    </div>
+
+    <!-- STANDINGS -->
+    <div class="screen" id="screen-standings">
+      <div style="padding:12px 16px">
+        <div style="display:flex;gap:6px;margin-bottom:12px">
+          <span class="btn btn-sm btn-primary">All</span>
+          <span class="btn btn-sm btn-outline">NBL Premier</span>
+          <span class="btn btn-sm btn-outline">Women's</span>
+        </div>
+        <div style="overflow-x:auto">
+        <table class="standings-table">
+          <thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>PCT</th><th>GB</th><th>PPF</th><th>PPA</th><th>STRK</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td class="team-col" onclick="showToast('→ Team View: Titans')">Kingston Titans</td><td class="num-col highlight">18</td><td class="num-col">4</td><td class="num-col">.818</td><td class="num-col">—</td><td class="num-col">87.3</td><td class="num-col">74.1</td><td class="num-col" style="color:#16a34a">W5</td></tr>
+            <tr><td>2</td><td class="team-col" onclick="showToast('→ Team View: Storm')">Montego Bay Storm</td><td class="num-col highlight">15</td><td class="num-col">7</td><td class="num-col">.682</td><td class="num-col">3</td><td class="num-col">82.1</td><td class="num-col">76.4</td><td class="num-col" style="color:#16a34a">W2</td></tr>
+            <tr><td>3</td><td class="team-col" onclick="showToast('→ Team View: Heat')">Spanish Town Heat</td><td class="num-col highlight">12</td><td class="num-col">10</td><td class="num-col">.545</td><td class="num-col">6</td><td class="num-col">79.6</td><td class="num-col">78.2</td><td class="num-col" style="color:#dc2626">L1</td></tr>
+            <tr><td>4</td><td class="team-col" onclick="showToast('→ Team View: Thunder')">Portmore Thunder</td><td class="num-col highlight">10</td><td class="num-col">12</td><td class="num-col">.455</td><td class="num-col">8</td><td class="num-col">75.8</td><td class="num-col">79.5</td><td class="num-col" style="color:#dc2626">L3</td></tr>
+            <tr><td>5</td><td class="team-col" onclick="showToast('→ Team View: Magic')">Mandeville Magic</td><td class="num-col highlight">8</td><td class="num-col">14</td><td class="num-col">.364</td><td class="num-col">10</td><td class="num-col">72.4</td><td class="num-col">81.3</td><td class="num-col" style="color:#16a34a">W1</td></tr>
+            <tr><td>6</td><td class="team-col" onclick="showToast('→ Team View: Waves')">Ocho Rios Waves</td><td class="num-col highlight">5</td><td class="num-col">17</td><td class="num-col">.227</td><td class="num-col">13</td><td class="num-col">68.9</td><td class="num-col">84.7</td><td class="num-col" style="color:#dc2626">L4</td></tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATS -->
+    <div class="screen" id="screen-stats">
+      <div class="toggle-bar">
+        <div class="toggle-btn active">PTS</div><div class="toggle-btn">REB</div><div class="toggle-btn">AST</div><div class="toggle-btn">STL</div><div class="toggle-btn">BLK</div>
+      </div>
+      <div id="exportBarStats"></div>
+      <div class="leader-row"><div class="leader-rank" style="background:#fef3c7;color:#92400e">1</div><div class="leader-info"><div class="leader-name">Devon Clarke <span class="milestone milestone-pts">30+ PTS</span></div><div class="leader-team">Kingston Titans · 22 GP</div></div><div style="text-align:right"><div class="leader-stat">22.5</div><div class="leader-label">PPG</div></div></div>
+      <div class="leader-row"><div class="leader-rank" style="background:#e5e7eb;color:#4b5563">2</div><div class="leader-info"><div class="leader-name">Andre Brown</div><div class="leader-team">Montego Bay Storm · 20 GP</div></div><div style="text-align:right"><div class="leader-stat">19.3</div><div class="leader-label">PPG</div></div></div>
+      <div class="leader-row"><div class="leader-rank" style="background:#fde68a;color:#78350f">3</div><div class="leader-info"><div class="leader-name">Marcus Johnson <span class="milestone milestone-dd">Double-Double</span></div><div class="leader-team">Spanish Town Heat · 21 GP</div></div><div style="text-align:right"><div class="leader-stat">18.7</div><div class="leader-label">PPG</div></div></div>
+      <div class="leader-row"><div class="leader-rank" style="background:#f3f4f6;color:#6b7280">4</div><div class="leader-info"><div class="leader-name">Tyrone Williams</div><div class="leader-team">Portmore Thunder · 19 GP</div></div><div style="text-align:right"><div class="leader-stat">17.2</div><div class="leader-label">PPG</div></div></div>
+      <div class="leader-row"><div class="leader-rank" style="background:#f3f4f6;color:#6b7280">5</div><div class="leader-info"><div class="leader-name">Kyle Roberts</div><div class="leader-team">Kingston Titans · 22 GP</div></div><div style="text-align:right"><div class="leader-stat">16.8</div><div class="leader-label">PPG</div></div></div>
+    </div>
+
+    <!-- SCHEDULE -->
+    <div class="screen" id="screen-schedule">
+      <div class="section-title">Today — March 14</div>
+      <div class="card">
+        <div class="schedule-item"><div class="schedule-time">7:00 PM</div><div style="flex:1"><div class="schedule-teams">Kingston Titans vs Montego Bay Storm</div><div class="schedule-venue">National Indoor Sports Centre</div></div><span class="stat-status pending">PENDING</span></div>
+        <div id="recordStatsBtn1"></div>
+      </div>
+      <div class="card">
+        <div class="schedule-item"><div class="schedule-time">8:30 PM</div><div style="flex:1"><div class="schedule-teams">Spanish Town Heat vs Portmore Thunder</div><div class="schedule-venue">National Indoor Sports Centre</div></div><span class="stat-status pending">PENDING</span></div>
+        <div id="recordStatsBtn2"></div>
+      </div>
+      <div class="section-title">Completed</div>
+      <div class="card">
+        <div class="schedule-item"><div style="flex:1"><div class="schedule-teams">Kingston Titans 87 - Portmore Thunder 72</div><div class="schedule-venue">Mar 12 · National Indoor Sports Centre</div></div><span class="stat-status submitted" style="cursor:pointer" onclick="switchTab('screen-summary')">BOX SCORE</span></div>
+      </div>
+    </div>
+
+    <!-- ADMIN -->
+    <div class="screen" id="screen-admin">
+      <div class="section-title">Stats Management</div>
+      <div class="card" onclick="openLive()" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#fef3c7;display:flex;align-items:center;justify-content:center;font-size:18px">📊</div><div><div style="font-weight:600;font-size:13px">Stat Entry & Approval</div><div style="font-size:11px;color:#9ca3af">Enter, review, and approve game stats</div></div></div></div>
+      <div class="card" onclick="showToast('→ Ack Tracker')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#dbeafe;display:flex;align-items:center;justify-content:center;font-size:18px">✅</div><div><div style="font-weight:600;font-size:13px">Ack Tracker</div><div style="font-size:11px;color:#9ca3af">Track post acknowledgments from reps</div></div></div></div>
+      <div id="superAdminSection"></div>
+    </div>
+
+    <!-- PRESS DASHBOARD -->
+    <div class="screen" id="screen-press">
+      <div class="credential-card">
+        <div class="credential-badge">ACCREDITED PRESS</div>
+        <div class="credential-name">Michael Chen</div>
+        <div class="credential-org">Jamaica Basketball Association</div>
+        <div class="credential-divider"></div>
+        <div class="credential-season">🏀 Season 2025-26 · NBL Premier</div>
+        <div class="credential-id" style="margin-top:8px">ID: PRESS-2026-0042</div>
+      </div>
+      <div class="section-title">Recent Results</div>
+      <div class="card">
+        <div class="game-result" onclick="switchTab('screen-summary')" style="cursor:pointer">
+          <div class="game-team winner"><div class="game-team-name">Kingston Titans</div><div class="game-score">87</div></div>
+          <div class="game-vs">FINAL</div>
+          <div class="game-team"><div class="game-team-name">Portmore Thunder</div><div class="game-score">72</div></div>
+        </div>
+        <div class="game-meta">Mar 12 · National Indoor Sports Centre</div>
+        <div class="game-result" style="margin-top:8px" onclick="showToast('→ Box Score')"><div class="game-team"><div class="game-team-name">MoBay Storm</div><div class="game-score">78</div></div><div class="game-vs">FINAL</div><div class="game-team winner"><div class="game-team-name">Spanish Town</div><div class="game-score">81</div></div></div>
+        <div class="game-meta">Mar 10 · Catherine Hall</div>
+      </div>
+      <div class="section-title">Today's Games</div>
+      <div class="card">
+        <div class="schedule-item"><div class="schedule-time">7:00 PM</div><div style="flex:1"><div class="schedule-teams">Titans vs Storm</div><div class="schedule-venue">National Indoor Sports Centre</div></div></div>
+        <div class="schedule-item"><div class="schedule-time">8:30 PM</div><div style="flex:1"><div class="schedule-teams">Heat vs Thunder</div><div class="schedule-venue">National Indoor Sports Centre</div></div></div>
+      </div>
+      <div class="section-title">Season Leaders</div>
+      <div class="card">
+        <div class="leader-row"><div class="leader-rank">🏆</div><div class="leader-info"><div class="leader-name">Devon Clarke</div><div class="leader-team">PPG Leader · Titans</div></div><div style="text-align:right"><div class="leader-stat">22.5</div></div></div>
+        <div class="leader-row"><div class="leader-rank">🏆</div><div class="leader-info"><div class="leader-name">Marcus Johnson</div><div class="leader-team">RPG Leader · Heat</div></div><div style="text-align:right"><div class="leader-stat">10.2</div></div></div>
+        <div class="leader-row"><div class="leader-rank">🏆</div><div class="leader-info"><div class="leader-name">Kyle Roberts</div><div class="leader-team">APG Leader · Titans</div></div><div style="text-align:right"><div class="leader-stat">7.8</div></div></div>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="switchTab('screen-h2h')">📊 Head-to-Head Compare</button>
+    </div>
+
+    <!-- GAME SUMMARY -->
+    <div class="screen" id="screen-summary">
+      <div style="background:#1e293b;padding:16px;display:flex;align-items:center;justify-content:space-around">
+        <div style="text-align:center"><div style="color:#94a3b8;font-size:11px">Kingston Titans</div><div style="color:#fff;font-size:28px;font-weight:800">87</div></div>
+        <div style="color:#94a3b8;font-size:11px;font-weight:600">FINAL</div>
+        <div style="text-align:center"><div style="color:#94a3b8;font-size:11px">Portmore Thunder</div><div style="color:#fff;font-size:28px;font-weight:800">72</div></div>
+      </div>
+      <div class="summary-headline">Kingston Titans defeat Portmore Thunder 87-72</div>
+      <div class="summary-narrative">Devon Clarke led all scorers with 25 points as the Kingston Titans defeated the Portmore Thunder 87-72 at the National Indoor Sports Centre. Kyle Roberts added 18 points and 8 assists for the Titans. For the Thunder, Tyrone Williams had 20 points in the losing effort.</div>
+      <div id="summaryActions"></div>
+      <div class="section-title">Top Performers</div>
+      <div class="performer-row"><div class="performer-pts">25</div><div><div class="performer-name">Devon Clarke <span class="milestone milestone-pts">20+ PTS</span></div><div class="performer-team">Kingston Titans</div><div class="performer-stats">8 REB · 4 AST · 2 STL</div></div></div>
+      <div class="performer-row"><div class="performer-pts" style="background:#f59e0b">20</div><div><div class="performer-name">Tyrone Williams <span class="milestone milestone-dd">Double-Double</span></div><div class="performer-team">Portmore Thunder</div><div class="performer-stats">20 PTS · 11 REB · 3 AST</div></div></div>
+      <div class="performer-row"><div class="performer-pts" style="background:#64748b">18</div><div><div class="performer-name">Kyle Roberts</div><div class="performer-team">Kingston Titans</div><div class="performer-stats">18 PTS · 3 REB · 8 AST</div></div></div>
+      <button class="btn btn-outline btn-full" onclick="showToast('→ Full Box Score')" style="margin-bottom:16px">View Full Box Score →</button>
+    </div>
+
+    <!-- H2H -->
+    <div class="screen" id="screen-h2h">
+      <div class="toggle-bar" id="h2hToggle">
+        <div class="toggle-btn active" onclick="showTeamH2H(this)">Teams</div>
+        <div class="toggle-btn" onclick="showPlayerH2H(this)">Players</div>
+      </div>
+      <div id="h2hContent">
+        <div class="h2h-header"><div class="h2h-team home"><div class="h2h-team-name">Kingston Titans</div><div class="h2h-record">18-4 · 1st</div></div><div class="h2h-vs">VS</div><div class="h2h-team away"><div class="h2h-team-name">MoBay Storm</div><div class="h2h-record">15-7 · 2nd</div></div></div>
+        <div class="section-title">Season Stats</div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="h2h-stat-row"><div class="h2h-stat-val winning">87.3</div><div class="h2h-stat-label">PPG</div><div class="h2h-stat-val">82.1</div></div>
+          <div class="h2h-stat-row"><div class="h2h-stat-val winning">42.1</div><div class="h2h-stat-label">RPG</div><div class="h2h-stat-val">38.7</div></div>
+          <div class="h2h-stat-row"><div class="h2h-stat-val winning">21.4</div><div class="h2h-stat-label">APG</div><div class="h2h-stat-val">18.9</div></div>
+          <div class="h2h-stat-row"><div class="h2h-stat-val">7.2</div><div class="h2h-stat-label">SPG</div><div class="h2h-stat-val winning">8.1</div></div>
+          <div class="h2h-stat-row"><div class="h2h-stat-val winning">4.5</div><div class="h2h-stat-label">BPG</div><div class="h2h-stat-val">3.8</div></div>
+        </div>
+        <div class="section-title">H2H This Season</div>
+        <div class="card">
+          <div style="text-align:center;font-size:18px;font-weight:800;color:#EA580C;margin-bottom:8px">Titans lead 2-1</div>
+          <div class="game-result"><div class="game-team winner"><div class="game-team-name">Titans</div><div class="game-score">92</div></div><div class="game-vs">Mar 5</div><div class="game-team"><div class="game-team-name">Storm</div><div class="game-score">85</div></div></div>
+          <div class="game-result"><div class="game-team"><div class="game-team-name">Titans</div><div class="game-score">78</div></div><div class="game-vs">Feb 14</div><div class="game-team winner"><div class="game-team-name">Storm</div><div class="game-score">83</div></div></div>
+          <div class="game-result"><div class="game-team winner"><div class="game-team-name">Titans</div><div class="game-score">95</div></div><div class="game-vs">Jan 20</div><div class="game-team"><div class="game-team-name">Storm</div><div class="game-score">88</div></div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <div class="bottom-nav" id="bottomNav"></div>
+</div>
+
+<!-- ═══ LIVE STATS OVERLAY (Full-screen, replaces app) ═══ -->
+<div class="live-overlay" id="liveOverlay">
+
+  <!-- STEP 1: SETUP -->
+  <div id="liveSetup">
+    <div class="live-topbar">
+      <span class="back" onclick="closeLive()">← Back to App</span>
+      <h2>Game Setup</h2>
+      <span></span>
+    </div>
+    <div class="setup-section">
+      <div style="background:#EA580C;color:#fff;border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:13px">
+        <strong>Kingston Titans vs Montego Bay Storm</strong><br>
+        <span style="font-size:11px;opacity:.8">Tonight 7:00 PM · National Indoor Sports Centre</span>
+      </div>
+
+      <div class="setup-card">
+        <h3>🟠 Kingston Titans — Pick 5 Starters</h3>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#EA580C">#5</div><div class="player-pick-name">Devon Clarke</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#EA580C">#12</div><div class="player-pick-name">Kyle Roberts</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#EA580C">#24</div><div class="player-pick-name">Marcus Williams</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#EA580C">#7</div><div class="player-pick-name">Andre Thompson</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#EA580C">#33</div><div class="player-pick-name">Damian Stewart</div><div class="star">⭐</div></div>
+        <div class="player-pick" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#d1d5db;color:#6b7280">#10</div><div class="player-pick-name" style="color:#9ca3af">Ryan Bennett</div><div class="star">⭐</div></div>
+        <div class="player-pick" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#d1d5db;color:#6b7280">#15</div><div class="player-pick-name" style="color:#9ca3af">Jordan Palmer</div><div class="star">⭐</div></div>
+      </div>
+
+      <div class="setup-card">
+        <h3>🔵 Montego Bay Storm — Pick 5 Starters</h3>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#1e40af">#11</div><div class="player-pick-name">Andre Brown</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#1e40af">#23</div><div class="player-pick-name">Trevor Simpson</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#1e40af">#8</div><div class="player-pick-name">Kevin Grant</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#1e40af">#3</div><div class="player-pick-name">Shawn Davis</div><div class="star">⭐</div></div>
+        <div class="player-pick selected" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#1e40af">#44</div><div class="player-pick-name">Brian Taylor</div><div class="star">⭐</div></div>
+        <div class="player-pick" onclick="this.classList.toggle('selected')"><div class="player-num" style="background:#d1d5db;color:#6b7280">#6</div><div class="player-pick-name" style="color:#9ca3af">Chris Morgan</div><div class="star">⭐</div></div>
+      </div>
+
+      <button class="btn btn-primary" style="width:100%;height:50px;font-size:15px" onclick="startGame()">🏀 Start Game</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: LIVE GAME -->
+  <div id="liveGame" style="display:none">
+    <div class="live-score-bar">
+      <div class="live-score-team"><div class="live-score-name">Kingston Titans</div><div class="live-score-pts" id="homeScore">0</div></div>
+      <div class="live-clock-area">
+        <div class="live-clock" id="gameClock">10:00</div>
+        <div class="live-quarter" id="gameQuarter">Q1</div>
+        <button onclick="toggleClock()" style="margin-top:4px;padding:4px 12px;border-radius:6px;border:none;background:#16a34a;color:#fff;font-size:10px;font-weight:700;cursor:pointer" id="clockBtn">▶ START</button>
+      </div>
+      <div class="live-score-team"><div class="live-score-name">Montego Bay Storm</div><div class="live-score-pts" id="awayScore">0</div></div>
+    </div>
+
+    <div class="live-3col">
+      <!-- HOME ROSTER -->
+      <div class="live-roster">
+        <div class="live-roster-header">🟠 Kingston Titans</div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'home')" data-id="h1">
+          <div class="jersey" style="background:#EA580C">#5</div>
+          <div class="pname">Clarke</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'home')" data-id="h2">
+          <div class="jersey" style="background:#EA580C">#12</div>
+          <div class="pname">Roberts</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'home')" data-id="h3">
+          <div class="jersey" style="background:#EA580C">#24</div>
+          <div class="pname">Williams</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'home')" data-id="h4">
+          <div class="jersey" style="background:#EA580C">#7</div>
+          <div class="pname">Thompson</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'home')" data-id="h5">
+          <div class="jersey" style="background:#EA580C">#33</div>
+          <div class="pname">Stewart</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-roster-header" style="font-size:10px;color:#9ca3af">BENCH</div>
+        <div class="live-player bench" onclick="selectPlayer(this,'home')" data-id="h6">
+          <div class="jersey" style="background:#9ca3af">#10</div>
+          <div class="pname">Bennett</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player bench" onclick="selectPlayer(this,'home')" data-id="h7">
+          <div class="jersey" style="background:#9ca3af">#15</div>
+          <div class="pname">Palmer</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+      </div>
+
+      <!-- ACTION PANEL -->
+      <div class="live-action-col">
+        <div id="selectedIndicator" style="text-align:center;font-size:12px;color:#9ca3af;padding:4px;background:#fff;border-radius:6px;border:1px dashed #d1d5db">Tap a player to start</div>
+
+        <div class="action-section-label">Scoring</div>
+        <div class="action-row"><button class="action-btn t1 make disabled" onclick="recordAction('2PT_MAKE',2)">2PT ✓</button><button class="action-btn t1 miss disabled" onclick="recordAction('2PT_MISS',0)">2PT ✗</button></div>
+        <div class="action-row"><button class="action-btn t1 make disabled" onclick="recordAction('3PT_MAKE',3)">3PT ✓</button><button class="action-btn t1 miss disabled" onclick="recordAction('3PT_MISS',0)">3PT ✗</button></div>
+        <div class="action-row"><button class="action-btn t1 make disabled" onclick="recordAction('FT_MAKE',1)">FT ✓</button><button class="action-btn t1 miss disabled" onclick="recordAction('FT_MISS',0)">FT ✗</button></div>
+
+        <div class="action-section-label">Rebounds & Assists</div>
+        <div class="action-row"><button class="action-btn t2 stat disabled" onclick="recordAction('OREB',0)">OREB</button><button class="action-btn t2 stat disabled" onclick="recordAction('DREB',0)">DREB</button></div>
+        <div class="action-row"><button class="action-btn t2 stat disabled" onclick="recordAction('AST',0)">AST</button><button class="action-btn t2 stat disabled" onclick="recordAction('TO',0)">TO</button></div>
+
+        <div class="action-section-label">Other</div>
+        <div class="action-row"><button class="action-btn t3 stat disabled" onclick="recordAction('FLS',0)">FLS</button><button class="action-btn t3 stat disabled" onclick="recordAction('STL',0)">STL</button><button class="action-btn t3 stat disabled" onclick="recordAction('BLK',0)">BLK</button></div>
+
+        <div class="action-section-label">Controls</div>
+        <div class="action-row">
+          <button class="action-btn t3 ctrl" onclick="showToast('Select on-court player → SUB → tap bench player')" style="background:#16a34a">SUB</button>
+          <button class="action-btn t3 ctrl" onclick="undoLast()" style="background:#dc2626">UNDO</button>
+        </div>
+
+        <button class="action-btn t3" style="background:#7c3aed;margin-top:8px;height:38px;font-size:12px" onclick="showEndDialog()">🏁 End Game</button>
+      </div>
+
+      <!-- AWAY ROSTER -->
+      <div class="live-roster">
+        <div class="live-roster-header">🔵 Montego Bay Storm</div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'away')" data-id="a1">
+          <div class="jersey" style="background:#1e40af">#11</div>
+          <div class="pname">Brown</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'away')" data-id="a2">
+          <div class="jersey" style="background:#1e40af">#23</div>
+          <div class="pname">Simpson</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'away')" data-id="a3">
+          <div class="jersey" style="background:#1e40af">#8</div>
+          <div class="pname">Grant</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'away')" data-id="a4">
+          <div class="jersey" style="background:#1e40af">#3</div>
+          <div class="pname">Davis</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-player oncourt" onclick="selectPlayer(this,'away')" data-id="a5">
+          <div class="jersey" style="background:#1e40af">#44</div>
+          <div class="pname">Taylor</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+        <div class="live-roster-header" style="font-size:10px;color:#9ca3af">BENCH</div>
+        <div class="live-player bench" onclick="selectPlayer(this,'away')" data-id="a6">
+          <div class="jersey" style="background:#9ca3af">#6</div>
+          <div class="pname">Morgan</div>
+          <div class="pstat" data-pts="0">0 pts</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLAY LOG -->
+    <div class="live-playlog">
+      <div class="playlog-header"><span>Play-by-Play</span><span id="playCount">0 plays</span></div>
+      <div id="playLog">
+        <div style="text-align:center;padding:20px;color:#9ca3af;font-size:12px">Tap a player, then tap an action to record a play</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: SUBMITTED -->
+  <div id="liveSubmitted" style="display:none">
+    <div class="live-topbar">
+      <span></span>
+      <h2>Game Complete</h2>
+      <span></span>
+    </div>
+    <div class="submitted-banner">
+      <div class="icon">✅</div>
+      <h3>Stats Submitted Successfully</h3>
+      <p>Game stats have been saved and are awaiting admin approval.</p>
+      <p style="margin-top:8px;font-size:11px;color:#065f46">Status: <strong>SUBMITTED</strong> → Admin will review and approve</p>
+    </div>
+    <div style="max-width:500px;margin:0 auto;padding:0 16px">
+      <div style="background:#1e293b;border-radius:12px;padding:16px;color:#fff;display:flex;align-items:center;justify-content:space-around;margin-bottom:16px">
+        <div style="text-align:center"><div style="font-size:11px;color:#94a3b8">Kingston Titans</div><div style="font-size:28px;font-weight:900" id="finalHome">0</div></div>
+        <div style="font-size:11px;color:#94a3b8;font-weight:600">FINAL</div>
+        <div style="text-align:center"><div style="font-size:11px;color:#94a3b8">Montego Bay Storm</div><div style="font-size:28px;font-weight:900" id="finalAway">0</div></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" style="flex:1" onclick="showToast('→ Box Score Screen')">View Box Score</button>
+        <button class="btn btn-primary" style="flex:1" onclick="closeLive()">Back to App</button>
+      </div>
+      <div style="margin-top:16px;background:#fef3c7;border-radius:10px;padding:12px;font-size:12px;color:#92400e">
+        <strong>What happens next:</strong><br>
+        An admin will review and approve these stats. Once approved, player averages, team stats, leaderboards, and standings will update automatically.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- END GAME DIALOG -->
+<div class="end-game-dialog" id="endDialog">
+  <div class="end-dialog-box">
+    <h3>End Game?</h3>
+    <p>This will submit the stats for admin approval.</p>
+    <div class="end-dialog-score">
+      <div class="end-dialog-team"><div class="tn">Titans</div><div class="ts" id="dialogHome">0</div></div>
+      <div style="align-self:center;color:#9ca3af;font-weight:700">—</div>
+      <div class="end-dialog-team"><div class="tn">Storm</div><div class="ts" id="dialogAway">0</div></div>
+    </div>
+    <div class="end-dialog-btns">
+      <button class="btn btn-outline" onclick="hideEndDialog()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitGame()">Submit Stats</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const roles={superAdmin:{label:'Super Admin',desc:'Full system control — manages league, approves stats, all access',avatar:'A',tabs:['board','standings','stats','schedule','admin'],canCreatePost:true,canAck:false,canRecordStats:true,canExport:true,showSuperAdmin:true,canSummary:true},admin:{label:'Admin',desc:'League operations — enters/approves stats, manages posts & ack tracking',avatar:'J',tabs:['board','standings','stats','schedule','admin'],canCreatePost:true,canAck:false,canRecordStats:true,canExport:true,showSuperAdmin:false,canSummary:true},statistician:{label:'Statistician',desc:'Courtside scorer — records live stats during games, cannot approve or manage',avatar:'S',tabs:['board','standings','stats','schedule'],canCreatePost:false,canAck:false,canRecordStats:true,canExport:false,showSuperAdmin:false,canSummary:false},rep:{label:'Team Rep',desc:'Team manager — posts updates, acknowledges league communications',avatar:'T',tabs:['board','standings','stats','schedule'],canCreatePost:true,canAck:true,canRecordStats:false,canExport:false,showSuperAdmin:false,canSummary:false},press:{label:'Press',desc:'Accredited journalist — press dashboard, auto summaries, exports, H2H comparisons',avatar:'M',tabs:['board','standings','stats','schedule','press'],canCreatePost:false,canAck:false,canRecordStats:false,canExport:true,showSuperAdmin:false,canSummary:true}};
+const tabCfg={board:{icon:'📋',label:'Board',screen:'screen-board',title:'Board'},standings:{icon:'🏆',label:'Standings',screen:'screen-standings',title:'Standings'},stats:{icon:'📊',label:'Stats',screen:'screen-stats',title:'Leaderboard'},schedule:{icon:'📅',label:'Schedule',screen:'screen-schedule',title:'Schedule'},admin:{icon:'⚙️',label:'Admin',screen:'screen-admin',title:'Admin Panel'},press:{icon:'📰',label:'Press',screen:'screen-press',title:'Press Dashboard'}};
+let curRole='superAdmin',curTab='board';
+
+function switchRole(r,el){curRole=r;const c=roles[r];document.querySelectorAll('.role-btn').forEach(b=>b.classList.remove('active'));if(el)el.classList.add('active');document.getElementById('roleDescription').textContent=c.desc;document.getElementById('appAvatar').textContent=c.avatar;buildNav(c.tabs);switchTab(tabCfg[c.tabs[0]].screen);updateUI();}
+
+function buildNav(tabs){const n=document.getElementById('bottomNav');n.innerHTML='';tabs.forEach(t=>{const tc=tabCfg[t],d=document.createElement('div');d.className='nav-item'+(t===curTab?' active':'');d.innerHTML=`<span style="font-size:18px">${tc.icon}</span><span>${tc.label}</span>`;d.onclick=()=>switchTab(tc.screen);n.appendChild(d);});}
+
+function switchTab(sid){for(const[k,tc]of Object.entries(tabCfg)){if(tc.screen===sid){curTab=k;document.getElementById('screenTitle').textContent=tc.title;break;}}
+if(sid==='screen-summary')document.getElementById('screenTitle').textContent='Game Summary';
+if(sid==='screen-h2h')document.getElementById('screenTitle').textContent='Head-to-Head';
+document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));const el=document.getElementById(sid);if(el)el.classList.add('active');
+const c=roles[curRole];document.querySelectorAll('.nav-item').forEach((it,i)=>it.classList.toggle('active',c.tabs[i]===curTab));updateUI();}
+
+function updateUI(){const c=roles[curRole];
+document.getElementById('createPostBtn').innerHTML=c.canCreatePost?'<button class="btn btn-primary btn-full" onclick="showToast(\'→ Create Post Screen\')">+ Create Post</button>':'';
+document.getElementById('ackBtnArea').innerHTML=c.canAck?'<button class="ack-btn" onclick="this.textContent=\'✓ Acknowledged\';this.style.background=\'#16a34a\'">Acknowledge</button>':'';
+['recordStatsBtn1','recordStatsBtn2'].forEach(id=>{document.getElementById(id).innerHTML=c.canRecordStats?'<button class="btn btn-primary btn-sm" style="margin:8px 0 0" onclick="openLive()">🏀 Record Stats</button>':'';});
+document.getElementById('superAdminSection').innerHTML=c.showSuperAdmin?`<div class="section-title">League Management</div><div class="card" onclick="showToast('→ Teams & Rosters')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#dbeafe;display:flex;align-items:center;justify-content:center;font-size:18px">👥</div><div><div style="font-weight:600;font-size:13px">Teams & Rosters</div><div style="font-size:11px;color:#9ca3af">Manage teams and player rosters</div></div></div></div><div class="card" onclick="showToast('→ User Management')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;font-size:18px">🔑</div><div><div style="font-weight:600;font-size:13px">User Management</div><div style="font-size:11px;color:#9ca3af">Manage roles and permissions</div></div></div></div><div class="card" onclick="showToast('→ Invite Codes')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#d1fae5;display:flex;align-items:center;justify-content:center;font-size:18px">🎟️</div><div><div style="font-weight:600;font-size:13px">Invite Codes</div><div style="font-size:11px;color:#9ca3af">Generate codes for rep, press, statistician</div></div></div></div><div class="card" onclick="showToast('→ Divisions')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#fef3c7;display:flex;align-items:center;justify-content:center;font-size:18px">🏟️</div><div><div style="font-weight:600;font-size:13px">Divisions</div><div style="font-size:11px;color:#9ca3af">Manage leagues and divisions</div></div></div></div><div class="card" onclick="showToast('→ Schedule Generator')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:10px;background:#fee2e2;display:flex;align-items:center;justify-content:center;font-size:18px">📅</div><div><div style="font-weight:600;font-size:13px">Game Schedule</div><div style="font-size:11px;color:#9ca3af">Create and manage game schedule</div></div></div></div>`:'';
+document.getElementById('exportBarStats').innerHTML=c.canExport?'<div class="export-bar"><button class="export-btn" onclick="showToast(\'Leaderboard copied to clipboard!\')">📋 Copy</button><button class="export-btn" onclick="showToast(\'Sharing...\')">📤 Share</button></div>':'';
+document.getElementById('summaryActions').innerHTML=c.canSummary?'<div class="summary-actions"><button class="btn btn-primary btn-sm" onclick="showToast(\'Summary copied to clipboard!\')">📋 Copy Summary</button><button class="btn btn-outline btn-sm" onclick="showToast(\'Sharing...\')">📤 Share</button></div>':'';}
+
+function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000);}
+function showTeamH2H(el){document.querySelectorAll('#h2hToggle .toggle-btn').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('h2hContent').innerHTML='<div class="h2h-header"><div class="h2h-team home"><div class="h2h-team-name">Kingston Titans</div><div class="h2h-record">18-4 · 1st</div></div><div class="h2h-vs">VS</div><div class="h2h-team away"><div class="h2h-team-name">MoBay Storm</div><div class="h2h-record">15-7 · 2nd</div></div></div><div class="section-title">Season Stats</div><div class="card" style="padding:0;overflow:hidden"><div class="h2h-stat-row"><div class="h2h-stat-val winning">87.3</div><div class="h2h-stat-label">PPG</div><div class="h2h-stat-val">82.1</div></div><div class="h2h-stat-row"><div class="h2h-stat-val winning">42.1</div><div class="h2h-stat-label">RPG</div><div class="h2h-stat-val">38.7</div></div><div class="h2h-stat-row"><div class="h2h-stat-val winning">21.4</div><div class="h2h-stat-label">APG</div><div class="h2h-stat-val">18.9</div></div><div class="h2h-stat-row"><div class="h2h-stat-val">7.2</div><div class="h2h-stat-label">SPG</div><div class="h2h-stat-val winning">8.1</div></div><div class="h2h-stat-row"><div class="h2h-stat-val winning">4.5</div><div class="h2h-stat-label">BPG</div><div class="h2h-stat-val">3.8</div></div></div><div class="section-title">H2H This Season</div><div class="card"><div style="text-align:center;font-size:18px;font-weight:800;color:#EA580C;margin-bottom:8px">Titans lead 2-1</div><div class="game-result"><div class="game-team winner"><div class="game-team-name">Titans</div><div class="game-score">92</div></div><div class="game-vs">Mar 5</div><div class="game-team"><div class="game-team-name">Storm</div><div class="game-score">85</div></div></div><div class="game-result"><div class="game-team"><div class="game-team-name">Titans</div><div class="game-score">78</div></div><div class="game-vs">Feb 14</div><div class="game-team winner"><div class="game-team-name">Storm</div><div class="game-score">83</div></div></div><div class="game-result"><div class="game-team winner"><div class="game-team-name">Titans</div><div class="game-score">95</div></div><div class="game-vs">Jan 20</div><div class="game-team"><div class="game-team-name">Storm</div><div class="game-score">88</div></div></div></div>';}
+function showPlayerH2H(el){document.querySelectorAll('#h2hToggle .toggle-btn').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('h2hContent').innerHTML='<div class="h2h-header"><div class="h2h-team home"><div class="h2h-team-name">#5 Devon Clarke</div><div class="h2h-record">Kingston Titans</div></div><div class="h2h-vs">VS</div><div class="h2h-team away"><div class="h2h-team-name">#12 Andre Brown</div><div class="h2h-record">MoBay Storm</div></div></div><div class="section-title">Season Averages</div><div class="card" style="padding:0;overflow:hidden"><div class="h2h-stat-row"><div class="h2h-stat-val winning">22.5</div><div class="h2h-stat-label">PPG</div><div class="h2h-stat-val">19.3</div></div><div class="h2h-stat-row"><div class="h2h-stat-val">6.2</div><div class="h2h-stat-label">RPG</div><div class="h2h-stat-val winning">8.4</div></div><div class="h2h-stat-row"><div class="h2h-stat-val winning">5.1</div><div class="h2h-stat-label">APG</div><div class="h2h-stat-val">3.7</div></div><div class="h2h-stat-row"><div class="h2h-stat-val winning">1.8</div><div class="h2h-stat-label">SPG</div><div class="h2h-stat-val">1.2</div></div><div class="h2h-stat-row"><div class="h2h-stat-val">0.4</div><div class="h2h-stat-label">BPG</div><div class="h2h-stat-val winning">1.1</div></div></div><div class="section-title">Games Played</div><div class="card" style="text-align:center;font-size:13px;color:#6b7280">Clarke: 22 GP · Brown: 20 GP</div>';}
+
+switchRole('superAdmin',document.querySelector('.role-btn'));
+
+// ─── Live Stats Logic ───
+let selectedEl=null, selectedTeam=null, homeScore=0, awayScore=0, plays=[], clockInterval=null, clockSecs=600, clockRunning=false;
+
+function openLive(){
+  document.getElementById('liveOverlay').classList.add('show');
+  document.getElementById('liveSetup').style.display='block';
+  document.getElementById('liveGame').style.display='none';
+  document.getElementById('liveSubmitted').style.display='none';
+  homeScore=0;awayScore=0;plays=[];clockSecs=600;clockRunning=false;
+}
+
+function closeLive(){
+  document.getElementById('liveOverlay').classList.remove('show');
+  if(clockInterval)clearInterval(clockInterval);
+  clockRunning=false;
+}
+
+function startGame(){
+  document.getElementById('liveSetup').style.display='none';
+  document.getElementById('liveGame').style.display='block';
+  homeScore=0;awayScore=0;
+  document.getElementById('homeScore').textContent='0';
+  document.getElementById('awayScore').textContent='0';
+  document.getElementById('gameClock').textContent='10:00';
+  document.getElementById('gameQuarter').textContent='Q1';
+  document.getElementById('playLog').innerHTML='<div style="text-align:center;padding:20px;color:#9ca3af;font-size:12px">Tap a player, then tap an action</div>';
+  plays=[];
+  document.getElementById('playCount').textContent='0 plays';
+}
+
+function selectPlayer(el,team){
+  document.querySelectorAll('.live-player').forEach(p=>p.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedEl=el;selectedTeam=team;
+  const name=el.querySelector('.pname').textContent;
+  const num=el.querySelector('.jersey').textContent;
+  document.getElementById('selectedIndicator').innerHTML=`<strong style="color:#EA580C">${num} ${name}</strong> selected`;
+  document.querySelectorAll('.action-btn.make,.action-btn.miss,.action-btn.stat').forEach(b=>b.classList.remove('disabled'));
+}
+
+function recordAction(action,pts){
+  if(!selectedEl)return;
+  const name=selectedEl.querySelector('.pname').textContent;
+  const num=selectedEl.querySelector('.jersey').textContent;
+  const pstat=selectedEl.querySelector('.pstat');
+  let curPts=parseInt(pstat.dataset.pts)||0;
+
+  if(pts>0){
+    curPts+=pts;
+    pstat.dataset.pts=curPts;
+    pstat.textContent=curPts+' pts';
+    if(selectedTeam==='home'){homeScore+=pts;document.getElementById('homeScore').textContent=homeScore;}
+    else{awayScore+=pts;document.getElementById('awayScore').textContent=awayScore;}
+  }
+
+  const labels={'2PT_MAKE':'2PT Made ✓','2PT_MISS':'2PT Missed ✗','3PT_MAKE':'3PT Made ✓','3PT_MISS':'3PT Missed ✗','FT_MAKE':'FT Made ✓','FT_MISS':'FT Missed ✗','OREB':'Off. Rebound','DREB':'Def. Rebound','AST':'Assist','TO':'Turnover','FLS':'Foul','STL':'Steal','BLK':'Block'};
+  const m=Math.floor(clockSecs/60),s=clockSecs%60;
+  const timeStr=m+':'+(s<10?'0':'')+s;
+
+  const entry=document.createElement('div');
+  entry.className='play-entry';
+  entry.innerHTML=`<span class="play-time">Q1 ${timeStr}</span><span class="play-desc"><strong>${num} ${name}</strong> — ${labels[action]||action}</span>${pts>0?`<span class="play-pts">+${pts}</span>`:''}`;
+  entry.onclick=()=>{
+    if(confirm(`Delete play: ${num} ${name} — ${labels[action]}?`)){
+      entry.remove();
+      if(pts>0){
+        curPts-=pts;pstat.dataset.pts=curPts;pstat.textContent=curPts+' pts';
+        if(selectedTeam==='home'){homeScore-=pts;document.getElementById('homeScore').textContent=homeScore;}
+        else{awayScore-=pts;document.getElementById('awayScore').textContent=awayScore;}
+      }
+      plays.pop();
+      document.getElementById('playCount').textContent=plays.length+' plays';
+      showToast('Play deleted');
+    }
+  };
+
+  const log=document.getElementById('playLog');
+  if(plays.length===0)log.innerHTML='';
+  log.insertBefore(entry,log.firstChild);
+  plays.push({action,name,num,pts});
+  document.getElementById('playCount').textContent=plays.length+' plays';
+}
+
+function undoLast(){
+  if(plays.length===0){showToast('Nothing to undo');return;}
+  const log=document.getElementById('playLog');
+  if(log.firstChild)log.removeChild(log.firstChild);
+  const last=plays.pop();
+  if(last.pts>0){
+    if(last.num){/* simplified: just adjust score */}
+    // Adjust scores
+    // Find the player and reduce - simplified for prototype
+  }
+  document.getElementById('playCount').textContent=plays.length+' plays';
+  showToast('Last play undone');
+}
+
+function toggleClock(){
+  const btn=document.getElementById('clockBtn');
+  if(clockRunning){
+    clearInterval(clockInterval);clockRunning=false;
+    btn.textContent='▶ START';btn.style.background='#16a34a';
+  } else {
+    clockRunning=true;
+    btn.textContent='⏸ PAUSE';btn.style.background='#f59e0b';
+    clockInterval=setInterval(()=>{
+      if(clockSecs>0){clockSecs--;
+        const m=Math.floor(clockSecs/60),s=clockSecs%60;
+        document.getElementById('gameClock').textContent=m+':'+(s<10?'0':'')+s;
+      } else { clearInterval(clockInterval);clockRunning=false;btn.textContent='▶ START';btn.style.background='#16a34a';showToast('Quarter ended!');}
+    },1000);
+  }
+}
+
+function showEndDialog(){
+  document.getElementById('dialogHome').textContent=homeScore;
+  document.getElementById('dialogAway').textContent=awayScore;
+  document.getElementById('endDialog').classList.add('show');
+}
+function hideEndDialog(){document.getElementById('endDialog').classList.remove('show');}
+
+function submitGame(){
+  hideEndDialog();
+  if(clockInterval)clearInterval(clockInterval);
+  document.getElementById('liveGame').style.display='none';
+  document.getElementById('liveSubmitted').style.display='block';
+  document.getElementById('finalHome').textContent=homeScore;
+  document.getElementById('finalAway').textContent=awayScore;
+}
+</script>
+</body>
+</html>
