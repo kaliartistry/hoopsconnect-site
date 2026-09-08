@@ -66,9 +66,9 @@ jobs:
         working-directory: functions
         run: npm run build
 
-      - name: Audit production Functions dependencies
+      - name: Audit Functions dependencies
         working-directory: functions
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
 
       - name: Build web
         run: flutter build web --release
