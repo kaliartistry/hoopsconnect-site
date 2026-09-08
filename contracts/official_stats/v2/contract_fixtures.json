@@ -1,0 +1,190 @@
+{
+  "contractVersion": "official-stat-contract-v2",
+  "versions": {
+    "authorizationSchemaVersion": 2,
+    "canonicalEncodingVersion": "official-stat-canonical-json-v1",
+    "commandSchemaVersion": 2,
+    "dataSchemaVersion": 2,
+    "domainSchemaVersion": 2,
+    "projectionSchemaVersion": 2,
+    "requiredPinnedVersions": [
+      "brandingVersion",
+      "calculatorVersion",
+      "identityResolutionVersion",
+      "policyVersion",
+      "privacyPolicyVersion",
+      "projectionVersion",
+      "rulesetVersion"
+    ]
+  },
+  "states": {
+    "play": ["scheduled", "postponed", "inProgress", "suspended", "completed", "cancelled", "administrativelyTerminated"],
+    "review": ["draft", "submitted", "underReview", "changesRequested", "certified"],
+    "publication": ["absent", "published", "superseded", "retracted"],
+    "resultDisposition": ["played", "forfeit", "default", "annulled", "otherAdjudicated"],
+    "statisticsDisposition": ["complete", "resultOnly", "excluded"],
+    "privacy": ["unknown", "permitted", "denied", "revoked"],
+    "legacyClassification": ["evidenced", "unverified", "synthetic", "orphaned", "contradictory", "duplicateCandidate", "privacyRestricted"]
+  },
+  "transitions": {
+    "play": [
+      ["scheduled", "postponed"],
+      ["scheduled", "inProgress"],
+      ["scheduled", "cancelled"],
+      ["scheduled", "administrativelyTerminated"],
+      ["postponed", "scheduled"],
+      ["inProgress", "suspended"],
+      ["inProgress", "completed"],
+      ["inProgress", "administrativelyTerminated"],
+      ["suspended", "inProgress"],
+      ["suspended", "administrativelyTerminated"],
+      ["completed", "administrativelyTerminated"]
+    ],
+    "review": [
+      ["draft", "submitted"],
+      ["submitted", "underReview"],
+      ["submitted", "changesRequested"],
+      ["underReview", "changesRequested"],
+      ["underReview", "certified"],
+      ["changesRequested", "submitted"]
+    ],
+    "publication": [
+      ["absent", "published"],
+      ["published", "superseded"],
+      ["published", "retracted"]
+    ]
+  },
+  "factSemantics": {
+    "knownZero": {"state": "known", "value": 0},
+    "unknown": {"reasonCode": "not_recorded", "state": "unknown", "value": null},
+    "notApplicable": {"reasonCode": "result_only", "state": "notApplicable", "value": null},
+    "prohibitions": ["unknown_to_zero", "unknown_minutes", "jersey_numeric_coercion"]
+  },
+  "canonicalCases": [
+    {
+      "name": "key-order-null-and-safe-integer",
+      "input": {"z": null, "count": 0, "active": true, "a": "value"},
+      "canonical": "{\"a\":\"value\",\"active\":true,\"count\":0,\"z\":null}",
+      "sha256": "da1564a4f71dec4ff53de99a64bcbafa617ce4d3352b0a446a7b06afcc0f0862"
+    },
+    {
+      "name": "unicode-nfc",
+      "input": {"displayName": "Cafe\u0301"},
+      "canonical": "{\"displayName\":\"Café\"}",
+      "sha256": "20961f6a555aba6dde3df6a4c2cc36f516f8e3d0e21c2eb3a00b902d948c31e6"
+    },
+    {
+      "name": "nested-order",
+      "input": {"scope": {"seasonId": "season_2026", "associationId": "jba", "competitionId": "nbl"}, "jerseys": ["0", "00"]},
+      "canonical": "{\"jerseys\":[\"0\",\"00\"],\"scope\":{\"associationId\":\"jba\",\"competitionId\":\"nbl\",\"seasonId\":\"season_2026\"}}",
+      "sha256": "b9487509a40bf0155972b63287e09eea35afdf2446dfa11a0368341b2c2b232c"
+    }
+  ],
+  "timestampCases": [
+    {"input": "2026-10-01T01:02:03.456789-05:00", "canonical": "2026-10-01T06:02:03.456Z"}
+  ],
+  "invalidCanonicalKinds": ["floatingPoint", "unsafeInteger", "unorderedSet", "nonAsciiKey"],
+  "entities": [
+    "competition",
+    "season",
+    "rulesProfile",
+    "policyVersion",
+    "teamIdentity",
+    "person",
+    "player",
+    "playerAlias",
+    "teamEntry",
+    "rosterMembership",
+    "rosterMembershipVersion",
+    "rosterAssertion",
+    "game",
+    "scheduleRevision",
+    "gameAssignment",
+    "rosterSnapshot",
+    "workspace",
+    "journalOperation",
+    "journalCheckpoint",
+    "statRevision",
+    "statRevisionPart",
+    "review",
+    "certificate",
+    "certificateAction",
+    "correction",
+    "projectionBuild",
+    "publicSelection",
+    "aggregateRelease",
+    "publicationReleaseHead",
+    "privacyRelease",
+    "publicProjectionRow"
+  ],
+  "commandErrors": {
+    "invalidArgument": "never",
+    "invalidIdentifier": "never",
+    "unsupportedSchemaVersion": "never",
+    "policyNotActivated": "never",
+    "unauthenticated": "refreshAuthenticationThenRetrySameCommand",
+    "permissionDenied": "never",
+    "scopeMismatch": "never",
+    "assignmentRequired": "operatorResolutionRequired",
+    "staleAuthority": "refreshStateThenCreateNewCommand",
+    "staleControlVersion": "refreshStateThenCreateNewCommand",
+    "staleRevision": "refreshStateThenCreateNewCommand",
+    "payloadKeyConflict": "never",
+    "sequenceGap": "retrySameCommand",
+    "sequenceConflict": "operatorResolutionRequired",
+    "staleWriterEpoch": "operatorResolutionRequired",
+    "writerTransferRequired": "operatorResolutionRequired",
+    "lifecycleTransitionDenied": "refreshStateThenCreateNewCommand",
+    "invariantViolation": "never",
+    "evidenceRequired": "operatorResolutionRequired",
+    "conflictBranchPreserved": "operatorResolutionRequired",
+    "resourceExhausted": "operatorResolutionRequired",
+    "rateLimited": "retrySameCommand",
+    "transientUnavailable": "retrySameCommand",
+    "deadlineExceeded": "retrySameCommand",
+    "internal": "retrySameCommand"
+  },
+  "commandErrorIdempotency": {
+    "invalidArgument": "notAccepted",
+    "invalidIdentifier": "notAccepted",
+    "unsupportedSchemaVersion": "notAccepted",
+    "policyNotActivated": "notAccepted",
+    "unauthenticated": "notAccepted",
+    "permissionDenied": "notAccepted",
+    "scopeMismatch": "notAccepted",
+    "assignmentRequired": "notAccepted",
+    "staleAuthority": "notAccepted",
+    "staleControlVersion": "notAccepted",
+    "staleRevision": "notAccepted",
+    "payloadKeyConflict": "sameKeyDifferentPayloadRejected",
+    "sequenceGap": "notAccepted",
+    "sequenceConflict": "conflictBranchPreserved",
+    "staleWriterEpoch": "conflictBranchPreserved",
+    "writerTransferRequired": "notAccepted",
+    "lifecycleTransitionDenied": "notAccepted",
+    "invariantViolation": "notAccepted",
+    "evidenceRequired": "notAccepted",
+    "conflictBranchPreserved": "conflictBranchPreserved",
+    "resourceExhausted": "notAccepted",
+    "rateLimited": "notAccepted",
+    "transientUnavailable": "safeReplayReturnsOriginalResult",
+    "deadlineExceeded": "safeReplayReturnsOriginalResult",
+    "internal": "safeReplayReturnsOriginalResult"
+  },
+  "activationGates": [
+    "rules.jba_nbl_adopted_edition",
+    "rules.fiba_2024_or_2026_10_01",
+    "competition.standings_qualification_tiebreakers",
+    "competition.forfeit_default_abandonment",
+    "eligibility.registration_transfer_policy",
+    "certification.named_certifiers",
+    "certification.exceptional_self_certification",
+    "privacy.player_minor_names",
+    "privacy.player_minor_photos",
+    "operations.staging_ownership",
+    "operations.backup_retention_restore",
+    "operations.recovery_rpo_rto",
+    "operations.rollout_ownership",
+    "operations.cost_ownership"
+  ]
+}

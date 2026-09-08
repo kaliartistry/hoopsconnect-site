@@ -1,0 +1,104 @@
+{
+  "contractVersion": "official-stat-contract-v2",
+  "activationAllowed": false,
+  "gates": [
+    {
+      "id": "rules.jba_nbl_adopted_edition",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Pin a named immutable ruleset; never select rules from the runtime date.",
+      "requiredEvidence": "JBA/NBL competition regulations naming the adopted playing-rule edition and exceptions.",
+      "owner": null
+    },
+    {
+      "id": "rules.fiba_2024_or_2026_10_01",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Represent the FIBA 2024 and FIBA rules effective 2026-10-01 as distinct references.",
+      "requiredEvidence": "Explicit season/game adoption decision from JBA; latest-by-date is not sufficient.",
+      "owner": null
+    },
+    {
+      "id": "competition.standings_qualification_tiebreakers",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Versioned deterministic policy with no alphabetical or ID-based sporting decision.",
+      "requiredEvidence": "Approved NBL standings, qualification, playoff, tie-group, deduction, and unresolved-tie rules.",
+      "owner": null
+    },
+    {
+      "id": "competition.forfeit_default_abandonment",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Keep played statistics, awarded outcome, standings treatment, and player-statistics treatment separate.",
+      "requiredEvidence": "Approved forfeit, default, abandonment, annulment, and result-only inclusion policy.",
+      "owner": null
+    },
+    {
+      "id": "eligibility.registration_transfer_policy",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Half-open temporal membership intervals with no overlapping eligibility by accident.",
+      "requiredEvidence": "Eligibility authority, registration deadlines, transfer windows, exceptions, and effective-date rules.",
+      "owner": null
+    },
+    {
+      "id": "certification.named_certifiers",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Separate submitter/substantive editor from reviewer and certifier.",
+      "requiredEvidence": "Named authorized certifiers and their competition/season scope.",
+      "owner": null
+    },
+    {
+      "id": "certification.exceptional_self_certification",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "Disabled.",
+      "requiredEvidence": "Approved exception types, actors, reasons, evidence, audit requirements, and expiry/review policy.",
+      "owner": null
+    },
+    {
+      "id": "privacy.player_minor_names",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "No individual public name when permission is unknown, especially for minors.",
+      "requiredEvidence": "Field-level authority for public player and minor names, including revocation handling.",
+      "owner": null
+    },
+    {
+      "id": "privacy.player_minor_photos",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "No public player photo or permanent download-token URL when permission is unknown.",
+      "requiredEvidence": "Field-level photo/publicity authority, asset delivery rules, expiry, and revocation handling.",
+      "owner": null
+    },
+    {
+      "id": "operations.staging_ownership",
+      "status": "pendingOperationalProof",
+      "engineeringDefault": "No production activation before an isolated staging rehearsal.",
+      "requiredEvidence": "Named staging owner, environment inventory, access controls, and successful end-to-end rehearsal.",
+      "owner": null
+    },
+    {
+      "id": "operations.backup_retention_restore",
+      "status": "pendingOperationalProof",
+      "engineeringDefault": "No automatic deletion of canonical history, journals, certificates, or correction evidence.",
+      "requiredEvidence": "Approved retention schedule, backup owner/region/cost, Storage coverage, and successful restore drill.",
+      "owner": null
+    },
+    {
+      "id": "operations.recovery_rpo_rto",
+      "status": "pendingOperationalProof",
+      "engineeringDefault": "Preserve accepted work and recover by validated restore/replay; never reopen vulnerable legacy access.",
+      "requiredEvidence": "Approved RPO/RTO, recovery owner, escalation path, and rehearsal result.",
+      "owner": null
+    },
+    {
+      "id": "operations.rollout_ownership",
+      "status": "pendingOperationalProof",
+      "engineeringDefault": "Ship compatible code disabled, then shadow, stage, and activate through explicit gates.",
+      "requiredEvidence": "Named release authority, old-client rejection plan, rollback decision owner, and launch sequence.",
+      "owner": null
+    },
+    {
+      "id": "operations.cost_ownership",
+      "status": "pendingAuthoritativeDecision",
+      "engineeringDefault": "No paid service or capacity commitment is implied by this contract.",
+      "requiredEvidence": "Named budget owner and approved cost/alert thresholds for storage, functions, public delivery, backup, and monitoring.",
+      "owner": null
+    }
+  ]
+}
