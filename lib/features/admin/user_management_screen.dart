@@ -6,7 +6,9 @@ import '../../providers/auth_providers.dart';
 
 /// Provider to fetch all users.
 final allUsersProvider = FutureProvider<List<UserModel>>((ref) {
-  return ref.read(authRepositoryProvider).getAllUsers();
+  final associationId = ref.watch(currentAssociationIdProvider);
+  if (associationId == null) return Future.value([]);
+  return ref.read(authRepositoryProvider).getAllUsers(associationId);
 });
 
 class UserManagementScreen extends ConsumerStatefulWidget {
@@ -253,9 +255,9 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
 
     setState(() => _saving = true);
     try {
-      await ref.read(authRepositoryProvider).updateUser(widget.user.id, {
-        'role': newRole.name,
-      });
+      await ref
+          .read(authRepositoryProvider)
+          .setMemberRole(widget.user.id, newRole);
       setState(() => _currentRole = newRole);
       ref.invalidate(allUsersProvider);
       if (mounted) {

@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/invite_code_model.dart';
-import '../../models/user_model.dart';
 import '../../providers/auth_providers.dart';
 
 class JoinScreen extends ConsumerStatefulWidget {
@@ -83,33 +82,42 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
       _error = null;
     });
 
+    var authCreated = false;
     try {
       // Create Firebase Auth account
-      final cred = await ref.read(authRepositoryProvider).signUp(
+      await ref
+          .read(authRepositoryProvider)
+          .signUp(
             email: _emailController.text.trim(),
             password: _passwordController.text,
           );
+      authCreated = true;
 
-      // Create user document
-      final user = UserModel(
-        id: cred.user!.uid,
-        email: _emailController.text.trim(),
-        displayName: _nameController.text.trim(),
-        associationId: _validatedCode!.associationId,
-        teamId: _validatedCode!.teamId,
-        role: UserRole.values.byName(_validatedCode!.role),
-      );
-      await ref.read(authRepositoryProvider).createUserDoc(user);
-
-      // Consume the invite code
       await ref
           .read(inviteCodeRepositoryProvider)
-          .consumeCode(_validatedCode!.code);
+          .redeemCode(_validatedCode!.code, _nameController.text.trim());
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (authCreated) {
+        await ref.read(authRepositoryProvider).deleteCurrentAuthUser();
+      }
+      if (mounted) setState(() => _error = _friendlyInviteError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  String _friendlyInviteError(Object error) {
+    final text = error.toString();
+    if (text.contains('failed-precondition') || text.contains('not-found')) {
+      return 'This invite is invalid, expired, revoked, or already used.';
+    }
+    if (text.contains('already-exists')) {
+      return 'This account already has a league membership.';
+    }
+    if (text.contains('email-already-in-use')) {
+      return 'An account already exists with that email. Sign in first.';
+    }
+    return text.replaceAll(RegExp(r'\[.*?\]'), '').trim();
   }
 
   @override
@@ -144,10 +152,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Join Jamaica HoopsConnect',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 const Text(
@@ -184,10 +189,11 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                   ),
                   decoration: InputDecoration(
                     border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppSizes.radiusMd),
-                      borderSide:
-                          const BorderSide(color: AppColors.primary, width: 2),
+                      borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                      borderSide: const BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
                     ),
                   ),
                   onSubmitted: (_) => _validateCode(),
@@ -203,9 +209,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                           ? const SizedBox(
                               height: 20,
                               width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Text('Verify Code'),
                     ),
@@ -218,11 +222,8 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: AppColors.infoBg,
-                      border: Border.all(
-                        color: AppColors.infoBorder,
-                      ),
-                      borderRadius:
-                          BorderRadius.circular(AppSizes.radiusMd),
+                      border: Border.all(color: AppColors.infoBorder),
+                      borderRadius: BorderRadius.circular(AppSizes.radiusMd),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

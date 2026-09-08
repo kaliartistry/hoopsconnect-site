@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
-import '../../models/user_model.dart';
 import '../../providers/auth_providers.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -40,21 +39,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       if (_isSignUp) {
         // Create account
-        final cred = await ref
+        await ref
             .read(authRepositoryProvider)
-            .signUp(
+            .signUpFan(
               email: _emailController.text.trim(),
               password: _passwordController.text,
+              displayName: _nameController.text.trim(),
             );
-        // Create user doc with the public self-signup role.
-        final user = UserModel(
-          id: cred.user!.uid,
-          email: _emailController.text.trim(),
-          displayName: _nameController.text.trim(),
-          associationId: AppDefaults.defaultAssociationId,
-          role: AppDefaults.defaultSignupRole,
-        );
-        await ref.read(authRepositoryProvider).createUserDoc(user);
       } else {
         // Sign in
         await ref

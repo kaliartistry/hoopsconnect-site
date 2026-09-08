@@ -38,7 +38,9 @@ import '../app_shell.dart';
 
 // Navigator keys — one per StatefulShellBranch to preserve tab state
 final _boardNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'board');
-final _standingsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'standings');
+final _standingsNavigatorKey = GlobalKey<NavigatorState>(
+  debugLabel: 'standings',
+);
 final _statsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'stats');
 final _scheduleNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'schedule');
 final _adminNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'admin');
@@ -58,9 +60,10 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       final isLoggedIn = authState.value != null;
       final userDoc = currentUser.value;
-      final isAuthRoute = state.matchedLocation == '/login' ||
-          state.matchedLocation == '/join';
-      final isPublicRoute = state.matchedLocation.startsWith('/legal') ||
+      final isAuthRoute =
+          state.matchedLocation == '/login' || state.matchedLocation == '/join';
+      final isPublicRoute =
+          state.matchedLocation.startsWith('/legal') ||
           state.matchedLocation == '/about';
       final isLoadingRoute = state.matchedLocation == '/loading';
 
@@ -69,7 +72,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         return (isAuthRoute || isPublicRoute) ? null : '/login';
       }
 
-      // Logged in but on auth or loading page? Go to board
+      // An authenticated invitee may not have a profile until the callable
+      // redemption transaction succeeds. Keep that recovery path reachable.
+      if (isLoggedIn && userDoc == null) {
+        return state.matchedLocation == '/join' ? null : '/join';
+      }
+
+      // Logged in with a profile but on auth or loading page? Go to board
       if (isLoggedIn && (isAuthRoute || isLoadingRoute)) {
         return '/board';
       }
@@ -108,7 +117,8 @@ final routerProvider = Provider<GoRouter>((ref) {
 
         // Press summary: accessible to press users and admins who can approve stats
         if (loc.startsWith('/press/summary/') &&
-            !userDoc.canAccessPressTools && !userDoc.canApproveStats) {
+            !userDoc.canAccessPressTools &&
+            !userDoc.canApproveStats) {
           return '/board';
         }
 
@@ -126,25 +136,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
 
       // Auth routes (no shell)
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
-      ),
-      GoRoute(
-        path: '/join',
-        builder: (context, state) => const JoinScreen(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(path: '/join', builder: (context, state) => const JoinScreen()),
 
       // Info & Legal (no auth required for legal from login screen)
-      GoRoute(
-        path: '/about',
-        builder: (context, state) => const AboutScreen(),
-      ),
+      GoRoute(path: '/about', builder: (context, state) => const AboutScreen()),
       GoRoute(
         path: '/legal/:type',
-        builder: (context, state) => LegalScreen(
-          type: state.pathParameters['type']!,
-        ),
+        builder: (context, state) =>
+            LegalScreen(type: state.pathParameters['type']!),
       ),
 
       // Main app with bottom nav — StatefulShellRoute preserves tab state
@@ -158,9 +158,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/board',
-                pageBuilder: (context, state) => const NoTransitionPage(
-                  child: BoardScreen(),
-                ),
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: BoardScreen()),
               ),
             ],
           ),
@@ -171,9 +170,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/standings',
-                pageBuilder: (context, state) => const NoTransitionPage(
-                  child: StandingsScreen(),
-                ),
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: StandingsScreen()),
               ),
             ],
           ),
@@ -184,9 +182,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/leaderboard',
-                pageBuilder: (context, state) => const NoTransitionPage(
-                  child: LeaderboardScreen(),
-                ),
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: LeaderboardScreen()),
               ),
             ],
           ),
@@ -197,9 +194,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/calendar',
-                pageBuilder: (context, state) => const NoTransitionPage(
-                  child: CalendarScreen(),
-                ),
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: CalendarScreen()),
               ),
             ],
           ),
@@ -210,9 +206,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/admin',
-                pageBuilder: (context, state) => const NoTransitionPage(
-                  child: AdminPanelScreen(),
-                ),
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: AdminPanelScreen()),
               ),
             ],
           ),
@@ -223,9 +218,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/press',
-                pageBuilder: (context, state) => const NoTransitionPage(
-                  child: PressDashboardScreen(),
-                ),
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: PressDashboardScreen()),
               ),
             ],
           ),
@@ -248,9 +242,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/board/post/:postId',
-        builder: (context, state) => AckDetailScreen(
-          postId: state.pathParameters['postId']!,
-        ),
+        builder: (context, state) =>
+            AckDetailScreen(postId: state.pathParameters['postId']!),
       ),
 
       // Admin sub-screens
@@ -267,9 +260,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/admin/stats/:eventId',
-        builder: (context, state) => StatEntryScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            StatEntryScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/admin/ack-tracker',
@@ -307,9 +299,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Press sub-screens (pushed on top, no bottom nav)
       GoRoute(
         path: '/press/summary/:eventId',
-        builder: (context, state) => GameSummaryScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            GameSummaryScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/press/head-to-head',
@@ -321,9 +312,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Board edit
       GoRoute(
         path: '/board/edit/:postId',
-        builder: (context, state) => EditPostScreen(
-          postId: state.pathParameters['postId']!,
-        ),
+        builder: (context, state) =>
+            EditPostScreen(postId: state.pathParameters['postId']!),
       ),
 
       // Live stats (accessible to anyone with canEnterStats)
@@ -338,15 +328,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Stats detail screens
       GoRoute(
         path: '/box-score/:eventId',
-        builder: (context, state) => BoxScoreScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            BoxScoreScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/stats/player/:playerId',
-        builder: (context, state) => PlayerCardScreen(
-          playerId: state.pathParameters['playerId']!,
-        ),
+        builder: (context, state) =>
+            PlayerCardScreen(playerId: state.pathParameters['playerId']!),
       ),
 
       // Profile & Settings
@@ -362,9 +350,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Team detail
       GoRoute(
         path: '/team/:teamId',
-        builder: (context, state) => TeamViewScreen(
-          teamId: state.pathParameters['teamId']!,
-        ),
+        builder: (context, state) =>
+            TeamViewScreen(teamId: state.pathParameters['teamId']!),
       ),
     ],
   );

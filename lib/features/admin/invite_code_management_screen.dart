@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,8 +32,13 @@ class _InviteCodeManagementScreenState
       _error = null;
     });
     try {
-      final codes =
-          await ref.read(inviteCodeRepositoryProvider).getAllCodes();
+      final associationId = ref.read(currentAssociationIdProvider);
+      if (associationId == null) {
+        throw StateError('No association is available for this account.');
+      }
+      final codes = await ref
+          .read(inviteCodeRepositoryProvider)
+          .getAllCodes(associationId);
       if (mounted) setState(() => _codes = codes);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -43,15 +47,8 @@ class _InviteCodeManagementScreenState
     }
   }
 
-  String _generateCode() {
-    const chars = AppDefaults.inviteCodeCharset;
-    final rng = Random.secure();
-    return List.generate(8, (_) => chars[rng.nextInt(chars.length)]).join();
-  }
-
   void _showCreateDialog() {
     String role = 'rep';
-    int uses = AppDefaults.inviteCodeDefaultMaxUses;
     int daysValid = AppDefaults.inviteCodeDefaultDaysValid;
     final teamIdController = TextEditingController();
 
@@ -77,38 +74,32 @@ class _InviteCodeManagementScreenState
                 items: const [
                   DropdownMenuItem(value: 'rep', child: Text('Rep')),
                   DropdownMenuItem(value: 'media', child: Text('Media')),
-                  DropdownMenuItem(value: 'statistician', child: Text('Statistician')),
+                  DropdownMenuItem(
+                    value: 'statistician',
+                    child: Text('Statistician'),
+                  ),
                 ],
                 onChanged: (v) => setDialogState(() => role = v!),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: uses,
-                      decoration: const InputDecoration(labelText: 'Max Uses'),
-                      items: AppDefaults.inviteCodeMaxUsesOptions
-                          .map((n) =>
-                              DropdownMenuItem(value: n, child: Text('$n')))
-                          .toList(),
-                      onChanged: (v) => setDialogState(() => uses = v!),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: daysValid,
-                      decoration:
-                          const InputDecoration(labelText: 'Expires (days)'),
-                      items: AppDefaults.inviteCodeDaysValidOptions
-                          .map((n) => DropdownMenuItem(
-                              value: n, child: Text('$n days')))
-                          .toList(),
-                      onChanged: (v) => setDialogState(() => daysValid = v!),
-                    ),
-                  ),
-                ],
+              DropdownButtonFormField<int>(
+                initialValue: daysValid,
+                decoration: const InputDecoration(labelText: 'Expires (days)'),
+                items: AppDefaults.inviteCodeDaysValidOptions
+                    .where((days) => days <= 30)
+                    .map(
+                      (days) => DropdownMenuItem(
+                        value: days,
+                        child: Text('$days days'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setDialogState(() => daysValid = value!),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Each code is single-use. Role and team assignment are applied by the server when redeemed.',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
           ),
@@ -120,25 +111,23 @@ class _InviteCodeManagementScreenState
             ElevatedButton(
               onPressed: () async {
                 final teamId = teamIdController.text.trim();
-                if (teamId.isEmpty) return;
+                if (role == 'rep' && teamId.isEmpty) return;
 
-                final assocId =
-                    ref.read(currentAssociationIdProvider) ?? AppDefaults.defaultAssociationId;
-                final code = InviteCodeModel(
-                  code: _generateCode(),
-                  teamId: teamId,
-                  role: role,
-                  usesRemaining: uses,
-                  expiresAt:
-                      DateTime.now().add(Duration(days: daysValid)),
-                  associationId: assocId,
-                );
-
-                await ref
+                final code = await ref
                     .read(inviteCodeRepositoryProvider)
-                    .createCode(code);
+                    .createCode(
+                      role: role,
+                      teamId: teamId.isEmpty ? null : teamId,
+                      daysValid: daysValid,
+                    );
+                await Clipboard.setData(ClipboardData(text: code.code));
                 if (ctx.mounted) Navigator.pop(ctx);
                 _loadCodes();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('${code.code} created and copied')),
+                  );
+                }
               },
               child: const Text('Generate'),
             ),
@@ -157,50 +146,55 @@ class _InviteCodeManagementScreenState
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(color: AppColors.primary))
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
           : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : _codes == null || _codes!.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.vpn_key_outlined,
-                              size: 48, color: AppColors.textMuted),
-                          SizedBox(height: 12),
-                          Text(
-                            'No invite codes',
-                            style: TextStyle(
-                                color: AppColors.textSecondary, fontSize: 16),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'Tap + to generate a code',
-                            style: TextStyle(
-                                color: AppColors.textMuted, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _loadCodes,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _codes!.length,
-                        itemBuilder: (context, index) {
-                          final code = _codes![index];
-                          return _CodeCard(
-                            code: code,
-                            onDelete: () async {
-                              await ref
-                                  .read(inviteCodeRepositoryProvider)
-                                  .deleteCode(code.code);
-                              _loadCodes();
-                            },
-                          );
-                        },
-                      ),
+          ? Center(child: Text('Error: $_error'))
+          : _codes == null || _codes!.isEmpty
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.vpn_key_outlined,
+                    size: 48,
+                    color: AppColors.textMuted,
+                  ),
+                  SizedBox(height: 12),
+                  Text(
+                    'No invite codes',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 16,
                     ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Tap + to generate a code',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                  ),
+                ],
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _loadCodes,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: _codes!.length,
+                itemBuilder: (context, index) {
+                  final code = _codes![index];
+                  return _CodeCard(
+                    code: code,
+                    onDelete: () async {
+                      await ref
+                          .read(inviteCodeRepositoryProvider)
+                          .deleteCode(code.code);
+                      _loadCodes();
+                    },
+                  );
+                },
+              ),
+            ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateDialog,
         child: const Icon(Icons.add),
@@ -219,15 +213,22 @@ class _CodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final expired = !code.isValid;
     final statusColor = expired ? AppColors.urgent : AppColors.success;
-    final statusText = expired
-        ? (code.usesRemaining <= 0 ? 'USED UP' : 'EXPIRED')
-        : 'ACTIVE';
+    final statusText = switch (code.status) {
+      'revoked' => 'REVOKED',
+      'redeemed' => 'REDEEMED',
+      _ when code.usesRemaining <= 0 => 'USED UP',
+      _ when DateTime.now().isAfter(code.expiresAt) => 'EXPIRED',
+      _ when code.isValid => 'ACTIVE',
+      _ => 'INVALID',
+    };
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        border: Border.all(color: expired ? Theme.of(context).dividerColor : statusColor),
+        border: Border.all(
+          color: expired ? Theme.of(context).dividerColor : statusColor,
+        ),
         borderRadius: BorderRadius.circular(AppSizes.radiusMd),
       ),
       child: ListTile(
@@ -247,8 +248,7 @@ class _CodeCard extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: statusColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(4),
@@ -266,8 +266,7 @@ class _CodeCard extends StatelessWidget {
         ),
         subtitle: Text(
           '${code.role.toUpperCase()} · ${code.usesRemaining} uses left · Expires ${DateFormat('MMM d').format(code.expiresAt)}',
-          style:
-              const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -276,21 +275,25 @@ class _CodeCard extends StatelessWidget {
               icon: const Icon(Icons.copy, size: 18),
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: code.code));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Code copied')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('Code copied')));
               },
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline,
-                  size: 18, color: AppColors.urgent),
+              icon: const Icon(
+                Icons.delete_outline,
+                size: 18,
+                color: AppColors.urgent,
+              ),
               onPressed: () {
                 showDialog(
                   context: context,
                   builder: (ctx) => AlertDialog(
-                    title: const Text('Delete Code'),
-                    content:
-                        Text('Delete invite code "${code.code}"?'),
+                    title: const Text('Revoke Code'),
+                    content: Text(
+                      'Revoke invite code "${code.code}"? It cannot be used afterward.',
+                    ),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(ctx),
@@ -298,12 +301,13 @@ class _CodeCard extends StatelessWidget {
                       ),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.urgent),
+                          backgroundColor: AppColors.urgent,
+                        ),
                         onPressed: () {
                           Navigator.pop(ctx);
                           onDelete();
                         },
-                        child: const Text('Delete'),
+                        child: const Text('Revoke'),
                       ),
                     ],
                   ),

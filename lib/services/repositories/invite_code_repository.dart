@@ -1,42 +1,66 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/invite_code_model.dart';
 
 class InviteCodeRepository {
+  static const int authorizationSchemaVersion = 1;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
   Future<InviteCodeModel?> validateCode(String code) async {
-    final snap = await _db
-        .doc(FirestorePaths.inviteCode(code.toUpperCase()))
-        .get();
-    if (!snap.exists) return null;
-
-    final model = InviteCodeModel.fromFirestore(snap);
-    if (!model.isValid) return null;
-
-    return model;
+    try {
+      final result = await _functions
+          .httpsCallable('inspectPrivilegedInvite')
+          .call<Map<String, dynamic>>({
+            'code': code,
+            'authorizationSchemaVersion': authorizationSchemaVersion,
+          });
+      return InviteCodeModel.fromCallable(result.data);
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'not-found' || error.code == 'invalid-argument') {
+        return null;
+      }
+      rethrow;
+    }
   }
 
-  Future<void> consumeCode(String code) {
-    return _db.doc(FirestorePaths.inviteCode(code.toUpperCase())).update({
-      'usesRemaining': FieldValue.increment(-1),
+  Future<void> redeemCode(String code, String displayName) async {
+    await _functions.httpsCallable('redeemPrivilegedInvite').call<void>({
+      'code': code,
+      'displayName': displayName,
+      'authorizationSchemaVersion': authorizationSchemaVersion,
     });
   }
 
-  Future<void> createCode(InviteCodeModel code) {
-    return _db
-        .doc(FirestorePaths.inviteCode(code.code))
-        .set(code.toFirestore());
+  Future<InviteCodeModel> createCode({
+    required String role,
+    String? teamId,
+    required int daysValid,
+  }) async {
+    final result = await _functions
+        .httpsCallable('createPrivilegedInvite')
+        .call<Map<String, dynamic>>({
+          'role': role,
+          'teamId': teamId,
+          'daysValid': daysValid,
+          'authorizationSchemaVersion': authorizationSchemaVersion,
+        });
+    return InviteCodeModel.fromCallable(result.data);
   }
 
-  Future<List<InviteCodeModel>> getAllCodes() async {
-    final snap = await _db.collection(FirestorePaths.inviteCodes()).get();
-    return snap.docs
-        .map((doc) => InviteCodeModel.fromFirestore(doc))
-        .toList();
+  Future<List<InviteCodeModel>> getAllCodes(String associationId) async {
+    final snap = await _db
+        .collection(FirestorePaths.inviteCodes())
+        .where('associationId', isEqualTo: associationId)
+        .get();
+    return snap.docs.map((doc) => InviteCodeModel.fromFirestore(doc)).toList();
   }
 
-  Future<void> deleteCode(String code) {
-    return _db.doc(FirestorePaths.inviteCode(code)).delete();
+  Future<void> deleteCode(String code) async {
+    await _functions.httpsCallable('revokePrivilegedInvite').call<void>({
+      'code': code,
+      'authorizationSchemaVersion': authorizationSchemaVersion,
+    });
   }
 }

@@ -12,7 +12,6 @@ import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/role_preview_provider.dart';
 import '../../providers/post_providers.dart';
-import '../../providers/team_providers.dart';
 import 'widgets/post_card.dart';
 import 'widgets/post_detail_panel.dart';
 
@@ -65,20 +64,11 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
     final currentUser = ref.watch(effectiveUserProvider); // permissions
     final realUser = ref.watch(currentUserProvider).value; // identity for acks
     final assocId = ref.watch(currentAssociationIdProvider);
-    final teams = ref.watch(teamsStreamProvider).valueOrNull ?? [];
     final desktop = isDesktop(context);
 
     // Local board filters are post-type filters. League scope is handled globally.
     final filters = <String?>[null, 'announcements'];
     final filterLabels = <String>['All Posts', 'Announcements'];
-
-    // Resolve user's team name for acknowledge
-    final userTeamName = realUser?.teamId != null
-        ? teams
-              .where((t) => t.id == realUser!.teamId)
-              .map((t) => t.name)
-              .firstOrNull
-        : null;
 
     final filterBar = SizedBox(
       height: 48,
@@ -197,9 +187,6 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                           .acknowledge(
                             assocId,
                             post.id,
-                            realUser.id,
-                            realUser.displayName,
-                            userTeamName ?? '',
                           );
                     }
                   },

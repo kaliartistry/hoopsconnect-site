@@ -126,7 +126,6 @@ export const onPostCreatedWithAck = onDocumentCreated(
         expectedAcks[doc.id] = {
           name: user.displayName || "Unknown",
           teamName: user.teamId || "",
-          phone: undefined,
         };
 
         if (user.fcmTokens && Array.isArray(user.fcmTokens) && user.fcmTokens.length > 0) {
@@ -182,13 +181,16 @@ export const onAckWrite = onDocumentUpdated(
     if (!after.requiresAck) return;
     if ((after as PostDoc & { archived?: boolean }).archived === true) return;
 
-    const expected = Object.keys(after.expectedAcks || {}).length;
-    const acked = Object.keys(after.ackStatus || {}).length;
-    const ackedBefore = Object.keys(before.ackStatus || {}).length;
+    const expectedIds = Object.keys(after.expectedAcks || {});
+    const ackedIds = new Set(Object.keys(after.ackStatus || {}));
+    const beforeAckedIds = new Set(Object.keys(before.ackStatus || {}));
+    const expected = expectedIds.length;
+    const acked = expectedIds.filter((id) => ackedIds.has(id)).length;
+    const ackedBefore = expectedIds.filter((id) => beforeAckedIds.has(id)).length;
 
     // Only act on the *transition* to fully-acked, not subsequent writes.
     if (expected === 0) return;
-    if (acked < expected) return;
+    if (!expectedIds.every((id) => ackedIds.has(id))) return;
     if (ackedBefore >= expected) return;
 
     const assocId = event.params.assocId;

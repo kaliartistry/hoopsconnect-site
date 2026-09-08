@@ -100,4 +100,16 @@ test('refuses a non-local emulator host', () => {
       }),
     /must point to localhost/,
   );
+  assert.throws(
+    () =>
+      guardFirestoreTarget({
+        argv: ['--confirm-delete=demo-hoopsconnect:associations/jba'],
+        env: {
+          FIRESTORE_EMULATOR_HOST: 'localhost:8080@evil.example:80',
+        },
+        mode: 'destructive',
+        destructiveScope: 'associations/jba',
+      }),
+    /must point to localhost/,
+  );
 });

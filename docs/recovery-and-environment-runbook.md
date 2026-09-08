@@ -19,10 +19,18 @@ Read-only GCP/Firebase inspection on 2026-09-08 found:
   roles/firebase.admin member.
 - The authenticated Firebase project list contains no separate HoopsConnect
   staging project.
+- The aggregate Firestore authorization audit found three users (two with
+  privileged legacy roles), zero membership records, and three users requiring
+  reviewed membership creation.
+- Both known static privileged invite documents, NBL-ADMIN and ADMIN-2026,
+  exist in production.
+- All 11 existing posts lack an explicit visibility field; none are marked as
+  public posts containing acknowledgments.
 
 These are current observations, not completion claims. The single Owner,
-disabled PITR/delete protection, and absent scheduled backup are production
-release blockers.
+disabled PITR/delete protection, absent scheduled backup, missing memberships,
+known static invites, and legacy post visibility are production release
+blockers.
 
 ## Local and CI environments
 
@@ -53,9 +61,16 @@ Run:
 ~~~bash
 npm --prefix scripts test
 node scripts/check_repository_safety.js
+node scripts/audit_production_foundation.js \
+  --project=hoops-connect-jm \
+  --allow-production-read=hoops-connect-jm
 firebase emulators:exec --project demo-hoopsconnect --only firestore \
   "npm --prefix functions run test:rules"
 ~~~
+
+The production audit is read-only and emits aggregate counts only. Any missing
+membership, association conflict, known static invite, or post without explicit
+visibility/acknowledgment fields blocks the authorization rollout.
 
 The safety check rejects tracked private keys, service-account JSON,
 environment files, signing files, a production default alias, and unguarded

@@ -13,3 +13,13 @@ export {
   ackDeadlineChecker,
   statDeadlineReminder,
 } from "./notifications";
+
+// ── Identity, membership, and privileged invitations ─────────────────
+export {
+  provisionFanProfile,
+  inspectPrivilegedInvite,
+  redeemPrivilegedInvite,
+  createPrivilegedInvite,
+  revokePrivilegedInvite,
+  setMemberRole,
+} from "./membership";

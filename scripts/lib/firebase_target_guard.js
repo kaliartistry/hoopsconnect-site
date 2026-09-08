@@ -12,14 +12,27 @@ function readFlag(argv, name) {
 
 function localEmulatorHost(value) {
   if (!value) return null;
-  const host = value.replace(/^https?:\/\//, '');
-  const hostname = host.startsWith('[')
-    ? host.slice(1, host.indexOf(']'))
-    : host.split(':')[0];
-  if (!['localhost', '127.0.0.1', '::1'].includes(hostname)) {
+  if (value.includes('://')) {
+    throw new Error('FIRESTORE_EMULATOR_HOST must use host:port syntax.');
+  }
+  let parsed;
+  try {
+    parsed = new URL(`http://${value}`);
+  } catch {
+    throw new Error('FIRESTORE_EMULATOR_HOST must be a valid local host and port.');
+  }
+  if (
+    parsed.username
+    || parsed.password
+    || parsed.pathname !== '/'
+    || parsed.search
+    || parsed.hash
+    || !parsed.port
+    || !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+  ) {
     throw new Error('FIRESTORE_EMULATOR_HOST must point to localhost.');
   }
-  return host;
+  return parsed.host;
 }
 
 function guardFirestoreTarget({
