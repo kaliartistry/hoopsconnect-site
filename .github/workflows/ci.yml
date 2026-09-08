@@ -58,6 +58,11 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Run canonical encoding browser regression
+        run: >-
+          flutter test --platform chrome
+          test/models/official_stats/canonical_encoding_web_test.dart
+
       - name: Build Functions
         working-directory: functions
         run: npm run build
