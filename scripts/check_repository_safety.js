@@ -56,6 +56,7 @@ for (const relativePath of [
   'scripts/seed_season_games.js',
   'scripts/backfill_pending_game_stats.js',
   'scripts/audit_storage_migration.js',
+  'scripts/audit_production_readiness_data.js',
 ]) {
   const content = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
   if (!content.includes('guardFirestoreTarget')) {

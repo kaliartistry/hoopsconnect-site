@@ -1,0 +1,34 @@
+{
+  "manifestVersion": 1,
+  "projectId": "PROTECTED_PRODUCTION_PROJECT",
+  "associationId": "APPROVED_ASSOCIATION",
+  "sourceSnapshotSha256": "REQUIRED",
+  "planSha256": "REQUIRED",
+  "preconditions": {
+    "exportUriDigest": "REQUIRED_AFTER_APPROVED_EXPORT",
+    "stagingRestoreEvidenceDigest": "REQUIRED",
+    "approvedWindow": "REQUIRED",
+    "rollbackOwner": "REQUIRED"
+  },
+  "expectedDeltas": {
+    "membershipsCreatedOrReplaced": 0,
+    "postsDefaultedInternal": 0,
+    "legacyInvitesRevoked": 0,
+    "storageObjectsCopiedThenRetired": 0,
+    "legacyUrlReferencesReplaced": 0
+  },
+  "postconditions": {
+    "productionFoundationBlockers": 0,
+    "storageMigrationBlockers": 0,
+    "membershipCapabilityMismatches": 0,
+    "legacyInvites": 0,
+    "postsMissingVisibility": 0
+  },
+  "rollback": {
+    "previousFunctionsRevision": "REQUIRED",
+    "previousFirestoreRuleset": "REQUIRED",
+    "previousStorageRuleset": "REQUIRED",
+    "previousIndexManifestDigest": "REQUIRED",
+    "minimumClientVersion": "REQUIRED"
+  }
+}
