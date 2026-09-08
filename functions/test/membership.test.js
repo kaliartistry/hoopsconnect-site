@@ -186,6 +186,13 @@ test('invite issuance is high-entropy, hash-addressed, idempotent, and never per
   assertRawAbsent(first.code, securityDocuments);
   assertNoSecretFields(securityDocuments);
 
+  await db.doc('memberships/root').update({status: 'suspended'});
+  await assert.rejects(
+    createPrivilegedInviteHandler(request('root', 'root@example.com', payload)),
+    (error) => error.code === 'permission-denied',
+  );
+  await db.doc('memberships/root').update({status: 'active'});
+
   await assert.rejects(
     createPrivilegedInviteHandler(request('root', 'root@example.com', {
       ...payload, role: 'media',
@@ -287,6 +294,12 @@ test('revocation and role changes re-check active capability authority transacti
   assert.equal((await db.doc('inviteCodes/' + issued.inviteId).get()).get('status'), 'revoked');
 
   await seedMember('target', 'media');
+  await db.doc('users/target').update({role: 'admin'});
+  await assert.rejects(
+    setMemberRoleHandler(request('root', 'root@example.com', {userId: 'target', role: 'statistician'})),
+    (error) => error.code === 'failed-precondition',
+  );
+  await db.doc('users/target').update({role: 'media'});
   await db.doc('memberships/root').update({capabilities: []});
   await assert.rejects(
     setMemberRoleHandler(request('root', 'root@example.com', {userId: 'target', role: 'admin'})),

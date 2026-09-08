@@ -55,6 +55,10 @@ async function seedFirestore() {
     await setDoc(doc(db, 'associations/other/posts/other-post'), {
       authorId: 'other', visibility: 'internal', requiresAck: false,
     });
+    await setDoc(doc(db, 'associations/jba/teams/team-1'), {name: 'Team One'});
+    await setDoc(doc(db, 'associations/jba/documents/rules'), {
+      visibility: 'internal',
+    });
   });
 }
 
@@ -157,6 +161,11 @@ test('team and internal-document media enforce capability, metadata, and CRUD bo
     {...teamMeta, contentType: 'image/png'},
   ));
   await assertFails(uploadBytes(
+    storageRef(storage('manager'), 'associations/jba/teams/missing/logo.png'),
+    bytes,
+    {contentType: 'image/png', customMetadata: {associationId: 'jba', teamId: 'missing'}},
+  ));
+  await assertFails(uploadBytes(
     teamObject,
     bytes,
     {contentType: 'image/webp', customMetadata: {associationId: 'other', teamId: 'team-1'}},
@@ -176,6 +185,14 @@ test('team and internal-document media enforce capability, metadata, and CRUD bo
     storageRef(storage('manager'), 'associations/jba/documents/rules/forged.pdf'),
     bytes,
     {...documentMeta, customMetadata: {...documentMeta.customMetadata, associationId: 'other'}},
+  ));
+  await assertFails(uploadBytes(
+    storageRef(storage('manager'), 'associations/jba/documents/missing/file.pdf'),
+    bytes,
+    {
+      contentType: 'application/pdf',
+      customMetadata: {associationId: 'jba', documentId: 'missing', visibility: 'internal'},
+    },
   ));
   await assertSucceeds(deleteObject(documentObject));
 });

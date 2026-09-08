@@ -62,6 +62,7 @@ test('private ack targeting excludes legacy, suspended, revoked, demoted, and cr
   await seed('cross-tenant-profile', {userAssociationId: 'other'});
   await seed('other-association', {associationId: 'other'});
   await seed('opted-out', {prefs: {ackReminders: false}});
+  await seed('new-post-opted-out', {prefs: {newPosts: false}});
 
   const recipients = await loadAuthorizedRecipients(
     db,
@@ -69,7 +70,14 @@ test('private ack targeting excludes legacy, suspended, revoked, demoted, and cr
     'posts.acknowledge',
     {divisionId: 'd1'},
   );
-  assert.deepEqual(recipients.map((recipient) => recipient.uid), ['allowed', 'opted-out']);
+  assert.deepEqual(
+    recipients.map((recipient) => recipient.uid),
+    ['allowed', 'new-post-opted-out', 'opted-out'],
+  );
+  assert.equal(
+    recipients.filter((recipient) => recipient.notificationPrefs.newPosts !== false).length,
+    2,
+  );
 
   const overdue = await loadAuthorizedRecipients(
     db,

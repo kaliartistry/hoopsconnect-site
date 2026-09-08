@@ -2,7 +2,10 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const {evaluateProductionFoundationBlockers} = require('../audit_production_foundation');
+const {
+  capabilitiesMatchRole,
+  evaluateProductionFoundationBlockers,
+} = require('../audit_production_foundation');
 
 function result(overrides = {}) {
   return Object.assign({
@@ -11,6 +14,7 @@ function result(overrides = {}) {
     invalidUserAuthorizationSchemas: 0,
     inactiveMemberships: 0,
     invalidMembershipAuthorizationSchemas: 0,
+    invalidMembershipCapabilities: 0,
     conflictingUserMembershipScopes: 0,
     postsMissingVisibility: 0,
     postsMissingRequiresAck: 0,
@@ -21,6 +25,12 @@ function result(overrides = {}) {
 
 test('production audit classifies clean evidence as non-blocking', () => {
   assert.deepEqual(evaluateProductionFoundationBlockers(result()), []);
+  assert.equal(capabilitiesMatchRole('fan', ['association.read']), true);
+  assert.equal(
+    capabilitiesMatchRole('fan', ['association.read', 'association.manage']),
+    false,
+  );
+  assert.equal(capabilitiesMatchRole('fan', ['association.read', 'association.read']), false);
 });
 
 test('production audit makes every unsafe migration condition blocking', () => {
@@ -30,11 +40,12 @@ test('production audit makes every unsafe migration condition blocking', () => {
     invalidUserAuthorizationSchemas: 3,
     inactiveMemberships: 4,
     invalidMembershipAuthorizationSchemas: 5,
-    conflictingUserMembershipScopes: 6,
-    postsMissingVisibility: 7,
-    postsMissingRequiresAck: 8,
-    publicPostsContainingAcknowledgments: 9,
-    legacyInviteDocuments: 10,
+    invalidMembershipCapabilities: 6,
+    conflictingUserMembershipScopes: 7,
+    postsMissingVisibility: 8,
+    postsMissingRequiresAck: 9,
+    publicPostsContainingAcknowledgments: 10,
+    legacyInviteDocuments: 11,
   }));
-  assert.equal(blockers.length, 9);
+  assert.equal(blockers.length, 10);
 });

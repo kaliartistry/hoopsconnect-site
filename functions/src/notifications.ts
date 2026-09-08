@@ -97,7 +97,7 @@ export const onPostCreatedWithAck = onDocumentCreated(
         db,
         assocId,
         capabilities.postsAcknowledge,
-        {divisionId: postData.divisionFilter, preference: "newPosts"},
+        {divisionId: postData.divisionFilter},
       );
       const expectedAcks: Record<string, AckExpectedEntry> = {};
       const allTokens: string[] = [];
@@ -107,7 +107,9 @@ export const onPostCreatedWithAck = onDocumentCreated(
           name: recipient.displayName,
           teamName: recipient.teamId || "",
         };
-        allTokens.push(...recipient.fcmTokens);
+        if (recipient.notificationPrefs.newPosts !== false) {
+          allTokens.push(...recipient.fcmTokens);
+        }
       }
 
       // Update the post with expectedAcks

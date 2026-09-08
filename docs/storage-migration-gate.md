@@ -4,7 +4,7 @@ The scoped Storage rules are a deployment candidate, not a declaration that live
 
 Before any Storage rules deployment:
 
-1. Run `scripts/audit_storage_migration.js` in explicit read-only mode with the exact project and bucket confirmations. Preserve only its aggregate JSON; do not save object names or download tokens.
+1. Run `scripts/audit_storage_migration.js` in explicit read-only mode with the exact project and bucket confirmations. Preserve only its aggregate JSON; do not save object names or download tokens. Require zero invalid paths, MIME/size/metadata mismatches, missing or conflicting source documents, retained download tokens, and URL references.
 2. Stop if it reports any legacy, unclassified, or URL-referenced objects. Attribute each object to an association and source record offline; quarantine anything that cannot be attributed.
 3. Copy approved objects into `associations/{associationId}/...`, attach the required immutable metadata, replace Firestore download URLs with authenticated SDK object paths, and verify public/internal behavior for every role.
 4. Revoke old download tokens and deny the legacy roots. Storage Rules cannot invalidate an already-issued token URL by themselves.

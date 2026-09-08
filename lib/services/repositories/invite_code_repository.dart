@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/invite_code_model.dart';
 
@@ -29,6 +31,19 @@ InviteFailureDisposition inviteFailureDisposition(Object error) {
     if (ambiguousCodes.contains(error.code)) {
       return InviteFailureDisposition.ambiguous;
     }
+  }
+  if (error is FirebaseAuthException) {
+    const ambiguousCodes = {
+      'network-request-failed',
+      'too-many-requests',
+      'web-context-cancelled',
+    };
+    if (ambiguousCodes.contains(error.code)) {
+      return InviteFailureDisposition.ambiguous;
+    }
+  }
+  if (error is TimeoutException) {
+    return InviteFailureDisposition.ambiguous;
   }
   return InviteFailureDisposition.terminal;
 }

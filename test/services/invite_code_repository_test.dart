@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/services/repositories/invite_code_repository.dart';
 
@@ -70,6 +71,32 @@ void main() {
         shouldDeletePendingAuthIdentity(
           ownsPendingIdentity: true,
           error: terminal,
+        ),
+        true,
+      );
+      final authTransport = FirebaseAuthException(
+        code: 'network-request-failed',
+        message: 'account creation response was not confirmed',
+      );
+      expect(
+        inviteFailureDisposition(authTransport),
+        InviteFailureDisposition.ambiguous,
+      );
+      expect(
+        shouldDeletePendingAuthIdentity(
+          ownsPendingIdentity: true,
+          error: authTransport,
+        ),
+        false,
+      );
+      final authTerminal = FirebaseAuthException(
+        code: 'weak-password',
+        message: 'rejected before account creation',
+      );
+      expect(
+        shouldDeletePendingAuthIdentity(
+          ownsPendingIdentity: true,
+          error: authTerminal,
         ),
         true,
       );

@@ -526,6 +526,7 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
   const expiresAt = Timestamp.fromMillis(Date.now() + requestedDays * 24 * 60 * 60 * 1000);
 
   const result = await db.runTransaction(async (transaction) => {
+    const authority = await getAuthorityInTransaction(transaction, caller.uid, capabilities.invitesManage);
     const receiptSnap = await transaction.get(receiptRef);
     if (receiptSnap.exists) {
       const receipt = receiptSnap.data() ?? {};
@@ -534,13 +535,13 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
         || receipt.operation !== "invite.create"
         || receipt.requestFingerprint !== fingerprint
         || receipt.inviteId !== inviteId
+        || receipt.associationId !== authority.associationId
       ) {
         throw new HttpsError("failed-precondition", "Operation identifier was already used for a different request.");
       }
       return receipt.result as Record<string, unknown>;
     }
 
-    const authority = await getAuthorityInTransaction(transaction, caller.uid, capabilities.invitesManage);
     if (!canGrantRole(authority.role, role)) {
       throw new HttpsError("permission-denied", "The requested role is outside your grant authority.");
     }
@@ -669,8 +670,16 @@ export async function setMemberRoleHandler(request: CallableRequest<unknown>) {
     if (
       userSnap.get("associationId") !== authority.associationId
       || membershipSnap.get("associationId") !== authority.associationId
+      || userSnap.get("authorizationSchemaVersion") !== AUTHORIZATION_SCHEMA_VERSION
       || membershipSnap.get("authorizationSchemaVersion") !== AUTHORIZATION_SCHEMA_VERSION
       || membershipSnap.get("status") !== "active"
+      || !isRole(membershipSnap.get("role"))
+      || userSnap.get("role") !== membershipSnap.get("role")
+      || (userSnap.get("teamId") ?? null) !== (membershipSnap.get("teamId") ?? null)
+      || (userSnap.get("divisionId") ?? null) !== (membershipSnap.get("divisionId") ?? null)
+      || !Array.isArray(membershipSnap.get("capabilities"))
+      || JSON.stringify([...membershipSnap.get("capabilities")].sort())
+        !== JSON.stringify(capabilitiesForRole(membershipSnap.get("role")).sort())
     ) {
       throw new HttpsError("failed-precondition", "User authorization records are inactive or have conflicting scope.");
     }

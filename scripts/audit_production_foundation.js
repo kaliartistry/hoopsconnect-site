@@ -3,6 +3,17 @@
 
 const admin = require('../functions/node_modules/firebase-admin');
 const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
+const authorizationSchema = require('../functions/src/authorization_schema_v1.json');
+
+function capabilitiesMatchRole(role, value) {
+  const expected = authorizationSchema.roles[role];
+  if (!expected || !Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    return false;
+  }
+  const actual = [...new Set(value)].sort();
+  return actual.length === value.length
+    && JSON.stringify(actual) === JSON.stringify([...expected].sort());
+}
 
 async function main() {
   const target = guardFirestoreTarget({mode: 'read'});
@@ -31,6 +42,7 @@ async function main() {
           'teamId',
           'divisionId',
           'status',
+          'capabilities',
           'authorizationSchemaVersion',
         )
         .get(),
@@ -69,6 +81,7 @@ async function main() {
   let membershipsMissingUsers = 0;
   let inactiveMemberships = 0;
   let invalidMembershipSchemas = 0;
+  let invalidMembershipCapabilities = 0;
   for (const membershipDoc of membershipsSnap.docs) {
     const membership = membershipDoc.data();
     if (!usersSnap.docs.some((userDoc) => userDoc.id === membershipDoc.id)) {
@@ -77,6 +90,9 @@ async function main() {
     if (membership.status !== 'active') inactiveMemberships += 1;
     if (membership.authorizationSchemaVersion !== 1) {
       invalidMembershipSchemas += 1;
+    }
+    if (!capabilitiesMatchRole(membership.role, membership.capabilities)) {
+      invalidMembershipCapabilities += 1;
     }
   }
 
@@ -103,6 +119,7 @@ async function main() {
     invalidUserAuthorizationSchemas: invalidUserSchemas,
     inactiveMemberships,
     invalidMembershipAuthorizationSchemas: invalidMembershipSchemas,
+    invalidMembershipCapabilities,
     conflictingUserMembershipScopes: conflictingScopes,
     posts: postsSnap.size,
     postsMissingVisibility,
@@ -126,6 +143,7 @@ function evaluateProductionFoundationBlockers(result) {
     'membershipsMissingUsers',
     'invalidUserAuthorizationSchemas',
     'invalidMembershipAuthorizationSchemas',
+    'invalidMembershipCapabilities',
     'conflictingUserMembershipScopes',
     'postsMissingVisibility',
     'postsMissingRequiresAck',
@@ -155,4 +173,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = {evaluateProductionFoundationBlockers};
+module.exports = {capabilitiesMatchRole, evaluateProductionFoundationBlockers};

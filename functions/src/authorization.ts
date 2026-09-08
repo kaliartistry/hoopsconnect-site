@@ -1,4 +1,6 @@
-export const AUTHORIZATION_SCHEMA_VERSION = 1;
+import authorizationSchema from "./authorization_schema_v1.json";
+
+export const AUTHORIZATION_SCHEMA_VERSION = authorizationSchema.schemaVersion;
 export const PUBLIC_ASSOCIATION_ID = "jba";
 
 export const roles = [
@@ -32,47 +34,7 @@ export const capabilities = {
   pressRead: "press.read",
 } as const;
 
-const allCapabilities = Object.values(capabilities);
-
-const roleCapabilities: Record<Role, readonly string[]> = {
-  superAdmin: allCapabilities,
-  admin: [
-    capabilities.associationRead,
-    capabilities.teamsManage,
-    capabilities.postsCreate,
-    capabilities.postsManage,
-    capabilities.postsInternalRead,
-    capabilities.statsEnter,
-    capabilities.statsApprove,
-    capabilities.statsExport,
-    capabilities.pressRead,
-  ],
-  statistician: [
-    capabilities.associationRead,
-    capabilities.postsInternalRead,
-    capabilities.statsEnter,
-  ],
-  rep: [
-    capabilities.associationRead,
-    capabilities.teamsRepresent,
-    capabilities.postsCreate,
-    capabilities.postsInternalRead,
-    capabilities.postsAcknowledge,
-  ],
-  media: [
-    capabilities.associationRead,
-    capabilities.postsInternalRead,
-    capabilities.statsExport,
-    capabilities.pressRead,
-  ],
-  press: [
-    capabilities.associationRead,
-    capabilities.postsInternalRead,
-    capabilities.statsExport,
-    capabilities.pressRead,
-  ],
-  fan: [capabilities.associationRead],
-};
+const roleCapabilities = authorizationSchema.roles as Record<Role, readonly string[]>;
 
 export function isRole(value: unknown): value is Role {
   return typeof value === "string" && (roles as readonly string[]).includes(value);
