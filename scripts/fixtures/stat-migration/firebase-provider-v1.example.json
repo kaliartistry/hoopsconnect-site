@@ -1,0 +1,54 @@
+{
+  "manifestSchemaVersion": "stat-migration-source-v1",
+  "canonicalEncodingVersion": "official-stat-canonical-json-v1",
+  "mapperVersion": "stat-migration-mapper-v1",
+  "classificationRulesVersion": "stat-migration-classification-v1",
+  "source": {
+    "projectOrExportId": "demo-hoopsconnect",
+    "exportIdentifier": "explicit-read-session-id",
+    "associationId": "jba"
+  },
+  "syntheticRules": [
+    {
+      "generatorId": "backfill_pending_game_stats",
+      "ruleVersion": "legacy-generator-rule-v1"
+    }
+  ],
+  "records": [],
+  "providerCollections": [
+    {
+      "collectionPath": "associations/jba/teams",
+      "sourceCollection": "teams",
+      "entityType": "legacyTeam",
+      "scope": {
+        "associationId": "jba",
+        "competitionId": "nbl",
+        "seasonId": "season_2026",
+        "divisionId": "division_requires_review"
+      },
+      "referenceFields": [],
+      "embeddedArrays": [
+        {
+          "field": "roster",
+          "sourceCollection": "teams.roster",
+          "entityType": "legacyRosterEntry",
+          "parentRelation": "team",
+          "parentEntityType": "legacyTeam",
+          "referenceFields": [],
+          "temporalEvidence": {
+            "effectiveFrom": {
+              "state": "unknown",
+              "value": null,
+              "reasonCode": "not_recorded"
+            },
+            "effectiveTo": {
+              "state": "unknown",
+              "value": null,
+              "reasonCode": "not_recorded"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
