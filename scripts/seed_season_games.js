@@ -98,7 +98,7 @@ async function request(method, urlPath, body) {
   const url = new URL(`${BASE_URL}${urlPath}`);
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: url.hostname, path: url.pathname + url.search, method,
+      hostname: url.hostname, port: url.port, path: url.pathname + url.search, method,
       headers: {
         ...(token ? {'Authorization': `Bearer ${token}`} : {}),
         'Content-Type': 'application/json',

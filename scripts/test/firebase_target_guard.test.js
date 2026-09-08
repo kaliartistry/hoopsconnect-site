@@ -113,3 +113,30 @@ test('refuses a non-local emulator host', () => {
     /must point to localhost/,
   );
 });
+
+test('rejects credentials, duplicate target flags, and missing values in emulator mode', () => {
+  assert.throws(
+    () => guardFirestoreTarget({
+      argv: [],
+      env: {
+        FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+        GOOGLE_APPLICATION_CREDENTIALS: '/tmp/credential.json',
+      },
+    }),
+    /Credential environment variable GOOGLE_APPLICATION_CREDENTIALS is forbidden/,
+  );
+  assert.throws(
+    () => guardFirestoreTarget({
+      argv: ['--project=demo-one', '--project', 'demo-two'],
+      env: {FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080'},
+    }),
+    /Duplicate --project flags/,
+  );
+  assert.throws(
+    () => guardFirestoreTarget({
+      argv: ['--project', '--allow-remote-nonprod=x'],
+      env: {},
+    }),
+    /--project requires a value/,
+  );
+});

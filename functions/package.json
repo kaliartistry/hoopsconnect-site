@@ -11,9 +11,13 @@
     "logs": "firebase functions:log",
     "lint": "eslint --ext .ts src/",
     "test:functions": "npm run build && node --test test/membership.test.js",
+    "test:functions:no-build": "node --test test/membership.test.js",
+    "test:notifications": "node --test test/notification_authorization.test.js",
     "test:callable": "node --test test/callable.integration.test.js",
     "test:rules": "node --test test/firestore.rules.test.js",
-    "test:security": "npm run test:functions && npm run test:callable && npm run test:rules"
+    "test:storage": "node --test test/storage.rules.test.js",
+    "test:security": "npm run build && npm run test:security:no-build",
+    "test:security:no-build": "npm run test:functions:no-build && npm run test:notifications && npm run test:callable && npm run test:rules && npm run test:storage"
   },
   "engines": {
     "node": "22"

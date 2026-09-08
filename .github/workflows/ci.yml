@@ -50,11 +50,7 @@ jobs:
           node scripts/check_repository_safety.js
 
       - name: Run authorization Functions and Firestore rules tests
-        run: >-
-          firebase emulators:exec
-          --project demo-hoopsconnect
-          --only auth,firestore,functions
-          "npm --prefix functions run test:security"
+        run: node scripts/run_security_emulators.js
 
       - name: Analyze code
         run: flutter analyze --no-fatal-infos

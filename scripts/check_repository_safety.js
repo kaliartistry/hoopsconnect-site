@@ -55,10 +55,23 @@ for (const relativePath of [
   'scripts/seed_nbl.js',
   'scripts/seed_season_games.js',
   'scripts/backfill_pending_game_stats.js',
+  'scripts/audit_storage_migration.js',
 ]) {
   const content = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
   if (!content.includes('guardFirestoreTarget')) {
     failures.push('Firebase data script is missing target guard: ' + relativePath);
+  }
+}
+
+for (const relativePath of [
+  'scripts/seed_firestore.js',
+  'scripts/seed_mock_league.js',
+  'scripts/seed_nbl.js',
+  'scripts/seed_season_games.js',
+]) {
+  const content = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+  if (!/port:\s*url\.port/.test(content)) {
+    failures.push('REST script drops configured emulator port: ' + relativePath);
   }
 }
 
