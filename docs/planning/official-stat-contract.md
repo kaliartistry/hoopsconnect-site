@@ -72,7 +72,8 @@ Packet 01 leaves authority mode effectively disabled.
 - `TeamIdentityContract` is the durable team. It is not a season registration.
 - `SeasonTeamEntryContract` places one durable team in one season/division with a seasonal name/branding version and registration state.
 - `RosterMembershipContract` links one player to one season team entry through a versioned eligibility spell.
-- Effective intervals are half-open: `[effectiveFrom, effectiveTo)`. `recordedAt` is separate from the effective time. A release, transfer, suspension, or correction creates history; it never deletes identity or prior membership.
+- Effective intervals are half-open: `[effectiveFrom, effectiveTo)`. A known end must be after the start. Only `notApplicable` with the exact reason code `open_ended` means unbounded; unknown remains indeterminate and blank or alternate not-applicable reasons are invalid. `recordedAt` is separate from the effective time. A release, transfer, suspension, or correction creates history; it never deletes identity or prior membership.
+- Packets 03–04 must make an unknown historical `effectiveFrom` representable as an explicit fact or equivalent import-evidence shape. Packet 01 does not invent a timestamp or change operational interval membership before that import design exists.
 - Player aliases are reviewed append-only mappings. Neither names nor emails nor jerseys merge identities.
 - Jerseys are strings. `"0"` and `"00"` are distinct and must round-trip unchanged.
 - `GameParticipantSnapshotContract` copies exact participant, player, membership/version, team entry, jersey, display-name version, eligibility state, and evidence into a game-owned immutable snapshot. Later roster, transfer, rename, team archive, or identity resolution does not rewrite it.
@@ -124,6 +125,8 @@ createdBy, createdAt
 
 Revision parts have fixed schemas and a maximum encoded size of 128 KiB. The server creates parts before the manifest and must prove complete counts/hashes first.
 
+`inputParts` is never omitted. Its allowed `kind` values, in canonical order, are `playerInputs`, `teamOnlyInputs`, `periods`, `discipline`, and optional `lineups`. Descriptors sort first by that enum order and then by ASCII `partId`; IDs are unique, `count` is an integer from 1 through `9,007,199,254,740,991`, and `sha256` is lowercase 64-character hex. Every revision includes `teamOnlyInputs` so result/outcome facts have a sealed source. A `complete` revision additionally includes `playerInputs`, `periods`, and `discipline`. Multiple chunks of one kind are allowed. `inputHash` is SHA-256 over the canonical encoded descriptor list, so a missing, reordered, duplicated, or altered part changes the revision identity.
+
 Required first-release player inputs are participant/player/membership/team-entry identity; entered-play, starter, active/DNP/inactive status; time and provenance; 2PM/2PA, 3PM/3PA, FTM/FTA; offensive/defensive rebounds; assists, steals, blocks, turnovers; typed discipline; departure state; and plus-minus only when complete validated lineup/scoring evidence exists. Required team/game inputs include team-only rebounds and turnovers, player/coach/bench/team incidents, period team-foul/penalty derivation, repeatable overtime periods, played versus awarded score, official score reconciliation, actual start/suspension/resumption/completion evidence, and field coverage/provenance.
 
 Derived values are `FGM = 2PM + 3PM`, `FGA = 2PA + 3PA`, `PTS = 2×2PM + 3×3PM + FTM`, and `REB = OREB + DREB`. Counters are finite nonnegative integers; makes cannot exceed attempts. Team totals equal player sums plus explicitly permitted team-only categories. Period, played, and attributed scores must reconcile under the pinned rules. There is no balance-score field.
@@ -159,7 +162,11 @@ They do not manufacture player points.
 
 ## 7. Journal, idempotency, and writer fencing
 
-`JournalOperationContract` fixes the future local/server operation vocabulary: operation/command IDs, full scope, workspace, actor, device session, writer epoch, local sequence, previous-operation hash, expected server head, operation/reducer/ruleset versions, typed operation and payload hash, basketball ordering metadata, observation time, delivery state, retry state, and receipt.
+`JournalOperationContract` fixes the future local/server operation vocabulary: operation/command IDs, full scope, workspace, actor, device session, writer epoch, local sequence, previous-operation hash, expected server head, operation/reducer/ruleset versions, typed operation and payload, basketball ordering metadata, observation time, semantic hash, and request hash. Stable operation kinds are `setParticipantStatus`, `setPlayerCounter`, `setTeamOnlyCounter`, `setPeriodScore`, `setClock`, `recordDiscipline`, `setLineup`, and `attachEvidence`. Every operation carries explicit `periodNumber`, `clockRemainingMs`, and nonnegative `logicalPlayOrder`; period/clock absence uses explicit fact state rather than a magic value.
+
+The semantic hash contains exactly `clockRemainingMs`, `logicalPlayOrder`, `operationSchemaVersion`, `operationType`, `payload`, `periodNumber`, `reducerVersion`, `rulesetVersion`, full `scope`, and `workspaceId`. The request/idempotency hash then binds `actorAccountId`, `deviceSessionId`, `expectedServerHead`, `localSequence`, `operationId`, `previousOperationHash`, that semantic hash, and `writerEpoch`. `commandId` is the key over which idempotency is evaluated, so it is not part of the value it keys. `clientObservedAt` is immutable observation metadata but is excluded from both identities.
+
+Mutable device-local delivery state is a separate `JournalDeliveryContract`, with states `savedOnDevice`, `queued`, `sending`, `accepted`, and `needsAttention`, plus retry count, next-attempt fact, last-error fact, and receipt fact. None participates in semantic or request hashing. An accepted delivery requires a known immutable `OperationReceiptContract` binding receipt/operation/command IDs, actor, full scope and workspace, command kind, request hash, server sequence, accepted journal head/hash, writer epoch, and acceptance time.
 
 Later packets must save the local operation and checkpoint transactionally before displaying “Saved on this device.” Native uses transactional SQLite; web/PWA uses IndexedDB transactions behind one Dart repository interface. Firestore cache is not the pending-operation authority.
 
@@ -201,7 +208,7 @@ releaseId = SHA256(
 )
 ```
 
-One small final transaction rechecks current membership/grants, game/revision/certificate state, control epochs, publication head, privacy epoch, and pinned policies. It advances the season release head to exactly one sealed release. A retraction atomically makes the head absent. Do not construct a hybrid release in that transaction.
+One small final transaction rechecks current membership/grants, game/revision/certificate state, control epochs, publication head, privacy epoch, and pinned policies. The one release-head wire schema is `associationId`, `competitionId`, `seasonId`, `state`, explicit-fact `activeReleaseId`, `certificateEpoch`, `publicationEpoch`, and `privacyEpoch`. `active` requires a known lowercase SHA-256 release ID; `absent` requires `notApplicable(not_activated)`; `retracted` requires `notApplicable(retracted)`. It advances the season release head to exactly one sealed release. A retraction atomically removes the active pointer while preserving the `retracted` state. Do not construct a hybrid release in that transaction.
 
 V2 public Firestore is server-only. Public clients use bounded HTTP projections with one pinned release per screen/export. Every delivery coherently checks release and privacy authority; changed releases return `409`, retracted content `410`, and unknown/private identity `404`. There is no private-model fallback. Initially responses/assets use `Cache-Control: no-store` and no permanent Firebase download-token URL may bypass revocation.
 
@@ -211,8 +218,8 @@ Privacy is field-specific. Permission for name never implies photo, bio, birthda
 
 `official-stat-canonical-json-v1` is UTF-8 JSON with these rules:
 
-1. Allowed values are explicit null, boolean, Unicode string, cross-runtime safe integer (`±9,007,199,254,740,991`), UTC timestamp, ordered list, and string-keyed map.
-2. Floating point, NaN/infinity, unsafe integers, sets, arbitrary objects, and implicit/undefined values are rejected.
+1. Allowed values are explicit null, boolean, Unicode string, mathematical cross-runtime safe integer (`±9,007,199,254,740,991`), UTC timestamp, ordered list, and string-keyed map. Runtime values parsed from `1`, `1.0`, or `1e0` have the same integer meaning and encode as `1`; negative zero has the same mathematical meaning as zero and encodes as `0`. Source token spelling is not semantic after JSON parsing.
+2. Fractional values, NaN/infinity, unsafe integers, sets, sparse arrays, arrays with extra properties, arbitrary/class/custom objects, non-enumerable/accessor/symbol properties, and implicit/undefined values are rejected. TypeScript accepts only ordinary dense arrays, plain records with `Object.prototype` or null prototype, and unmodified valid `Date` instances as timestamps. Dart accepts the corresponding dense lists, maps, and `DateTime` values.
 3. Schema keys are nonempty printable ASCII and sorted ascending by ASCII code point at every map level.
 4. Text values normalize to Unicode NFC before JSON escaping. Case and meaningful whitespace are preserved; identifiers use their stricter ASCII grammar.
 5. Timestamps use years 0001–9999 and normalize to RFC 3339 UTC with exactly millisecond precision, e.g. `2026-10-01T06:02:03.456Z`.
@@ -222,6 +229,8 @@ Privacy is field-specific. Permission for name never implies photo, bio, birthda
 9. The encoding version is pinned alongside any persisted content identity. A change requires a new encoding version and golden fixtures.
 
 Dart and TypeScript execute the same Unicode, timestamp, nested-key, jersey, and SHA-256 fixtures.
+
+Packet 06 remains responsible for ingress resource limits. It must cap every identifier/string input explicitly, retain the 25-operation/128-KiB batch limits, and apply operation-specific payload key allowlists plus size/count bounds before persistence. Packet 01 records those requirements but does not prematurely implement an ingress handler.
 
 ## 11. Activation gates
 

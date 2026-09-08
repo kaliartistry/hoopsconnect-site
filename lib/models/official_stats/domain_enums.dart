@@ -59,6 +59,37 @@ enum WorkspaceStatus {
 
 enum CaptureMode { liveCapture, officialSheet, historicalImport }
 
+/// Stable v2 journal vocabulary. Adding or reinterpreting a value requires a
+/// new operation-schema version.
+enum JournalOperationType {
+  setParticipantStatus,
+  setPlayerCounter,
+  setTeamOnlyCounter,
+  setPeriodScore,
+  setClock,
+  recordDiscipline,
+  setLineup,
+  attachEvidence,
+}
+
+/// Fixed revision-part schemas. Multiple chunks of one kind are permitted and
+/// are ordered by part ID inside this enum order.
+enum BoxScorePartKind {
+  playerInputs,
+  teamOnlyInputs,
+  periods,
+  discipline,
+  lineups,
+}
+
+enum JournalDeliveryState {
+  savedOnDevice,
+  queued,
+  sending,
+  accepted,
+  needsAttention,
+}
+
 enum ResultDisposition {
   played,
   forfeit,

@@ -7,8 +7,11 @@ import 'contract_versions.dart';
 
 /// Deterministic canonical JSON used for hashes, idempotency keys, and fencing.
 ///
-/// Contract v1 permits null, booleans, strings, safe integers, UTC timestamps,
-/// lists, and maps with ASCII schema keys. Floating point values and unordered
+/// Contract v1 permits null, booleans, strings, mathematical safe integers,
+/// UTC timestamps, lists, and maps with ASCII schema keys. Integer-valued Dart
+/// doubles are normalized to integers because JSON does not retain whether a
+/// number was written as `1`, `1.0`, or `1e0`; negative zero likewise
+/// canonicalizes to `0`. Fractional and non-finite numbers and unordered
 /// collections are rejected. Map keys are sorted by ASCII code point. Text is
 /// normalized to Unicode NFC and timestamps to UTC millisecond precision.
 abstract final class OfficialStatCanonicalEncoding {
@@ -29,15 +32,26 @@ abstract final class OfficialStatCanonicalEncoding {
     if (value == null || value is bool) return value;
     if (value is String) return unicode.nfc(value);
     if (value is int) {
-      if (value.abs() > maxSafeInteger) {
+      if (value < -maxSafeInteger || value > maxSafeInteger) {
         throw FormatException(
           'Integer is outside the cross-runtime safe range',
         );
       }
       return value;
     }
-    if (value is double || value is num) {
-      throw FormatException('Floating point values are not canonical');
+    if (value is double) {
+      if (!value.isFinite) {
+        throw FormatException('Canonical numbers must be finite safe integers');
+      }
+      if (value < -maxSafeInteger ||
+          value > maxSafeInteger ||
+          value.truncateToDouble() != value) {
+        throw FormatException('Canonical numbers must be safe integers');
+      }
+      return value.toInt();
+    }
+    if (value is num) {
+      throw FormatException('Unsupported numeric value: ${value.runtimeType}');
     }
     if (value is DateTime) return normalizeTimestamp(value);
     if (value is List<Object?>) return value.map(_normalize).toList();

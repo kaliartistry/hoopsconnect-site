@@ -61,6 +61,8 @@ export interface TemporalInterval {
   recordedAt: Date;
 }
 
+export const temporalOpenEndedReasonCode = "open_ended" as const;
+
 export interface PersonIdentityContract {
   associationId: string;
   personId: string;
@@ -150,6 +152,23 @@ export type ExplicitFact<T> =
   | {state: "unknown"; value: null; reasonCode: string | null}
   | {state: "notApplicable"; value: null; reasonCode: string};
 
+export const journalOperationTypes = [
+  "setParticipantStatus",
+  "setPlayerCounter",
+  "setTeamOnlyCounter",
+  "setPeriodScore",
+  "setClock",
+  "recordDiscipline",
+  "setLineup",
+  "attachEvidence",
+] as const;
+export type JournalOperationType = typeof journalOperationTypes[number];
+
+export const journalDeliveryStates = [
+  "savedOnDevice", "queued", "sending", "accepted", "needsAttention",
+] as const;
+export type JournalDeliveryState = typeof journalDeliveryStates[number];
+
 export interface JournalOperationContract {
   scope: GameScope;
   workspaceId: string;
@@ -164,10 +183,52 @@ export interface JournalOperationContract {
   operationSchemaVersion: number;
   reducerVersion: string;
   rulesetVersion: string;
-  operationType: string;
+  operationType: JournalOperationType;
+  periodNumber: ExplicitFact<number>;
+  clockRemainingMs: ExplicitFact<number>;
+  logicalPlayOrder: number;
   payload: Record<string, unknown>;
-  payloadHash: string;
+  semanticHash: string;
+  requestHash: string;
   clientObservedAt: Date;
+}
+
+export interface OperationReceiptContract {
+  receiptId: string;
+  scope: GameScope;
+  workspaceId: string;
+  operationId: string;
+  commandId: string;
+  actorAccountId: string;
+  commandKind: JournalOperationType;
+  requestHash: string;
+  serverSequence: number;
+  acceptedJournalHead: string;
+  acceptedJournalHash: string;
+  writerEpoch: number;
+  acceptedAt: Date;
+}
+
+/** Mutable local delivery metadata. It never participates in semantic hashes. */
+export interface JournalDeliveryContract {
+  operationId: string;
+  state: JournalDeliveryState;
+  retryCount: number;
+  nextAttemptAt: ExplicitFact<Date>;
+  lastErrorCode: ExplicitFact<string>;
+  receipt: ExplicitFact<OperationReceiptContract>;
+}
+
+export const boxScorePartKinds = [
+  "playerInputs", "teamOnlyInputs", "periods", "discipline", "lineups",
+] as const;
+export type BoxScorePartKind = typeof boxScorePartKinds[number];
+
+export interface BoxScoreInputPartDescriptor {
+  partId: string;
+  kind: BoxScorePartKind;
+  count: number;
+  sha256: string;
 }
 
 export interface BoxScoreRevisionContract {
@@ -186,6 +247,7 @@ export interface BoxScoreRevisionContract {
   acceptedThroughSequence: number;
   journalHash: string;
   officialScoreEvidenceRefs: ExplicitFact<string[]>;
+  inputParts: readonly BoxScoreInputPartDescriptor[];
   inputHash: string;
   derivedHash: string;
   validationReportHash: string;
@@ -234,6 +296,7 @@ export interface PublicationReleaseHeadContract {
   seasonId: string;
   state: "absent" | "active" | "retracted";
   activeReleaseId: ExplicitFact<string>;
+  certificateEpoch: number;
   publicationEpoch: number;
   privacyEpoch: number;
 }
@@ -246,6 +309,277 @@ export interface PrivacyReleaseContract {
   isMinor: boolean;
   fieldPermissions: Readonly<Record<string, PrivacyPermissionState>>;
   authorityEvidenceRefs: readonly string[];
+}
+
+const opaqueId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const lowercaseSha256 = /^[0-9a-f]{64}$/;
+
+function requireSafeNonNegative(field: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${field} must be a nonnegative safe integer`);
+  }
+}
+
+function requireOpaqueId(field: string, value: string): void {
+  if (!opaqueId.test(value)) throw new TypeError(`${field} must be an opaque ID`);
+}
+
+function requireSha256(field: string, value: string): void {
+  if (!lowercaseSha256.test(value)) {
+    throw new TypeError(`${field} must be lowercase SHA-256 hex`);
+  }
+}
+
+function validateOrderingFact(field: string, fact: ExplicitFact<number>): void {
+  if (fact.state === "known") {
+    requireSafeNonNegative(field, fact.value);
+    return;
+  }
+  if (fact.value !== null) throw new TypeError(`${field} absent facts require null value`);
+  if (fact.state === "notApplicable" && fact.reasonCode.length === 0) {
+    throw new TypeError(`${field} notApplicable requires a reasonCode`);
+  }
+}
+
+function validatePreviousOperationHash(
+  sequence: number,
+  fact: ExplicitFact<string>,
+): void {
+  if (sequence === 0) {
+    if (fact.state !== "notApplicable" || fact.reasonCode !== "genesis") {
+      throw new TypeError("Sequence zero requires previousOperationHash notApplicable(genesis)");
+    }
+    return;
+  }
+  if (fact.state !== "known") {
+    throw new TypeError("Non-genesis operations require a known previousOperationHash");
+  }
+  requireSha256("previousOperationHash", fact.value);
+}
+
+export function validateTemporalInterval(interval: TemporalInterval): void {
+  canonicalEncode(interval.effectiveFrom);
+  canonicalEncode(interval.recordedAt);
+  switch (interval.effectiveTo.state) {
+  case "known":
+    canonicalEncode(interval.effectiveTo.value);
+    if (interval.effectiveTo.value.getTime() <= interval.effectiveFrom.getTime()) {
+      throw new TypeError("effectiveTo must be after effectiveFrom");
+    }
+    break;
+  case "unknown":
+    if (interval.effectiveTo.value !== null) {
+      throw new TypeError("unknown effectiveTo requires null value");
+    }
+    break;
+  case "notApplicable":
+    if (interval.effectiveTo.value !== null ||
+        interval.effectiveTo.reasonCode !== temporalOpenEndedReasonCode) {
+      throw new TypeError("notApplicable effectiveTo requires reasonCode open_ended");
+    }
+    break;
+  default:
+    throw new TypeError("Unsupported effectiveTo fact state");
+  }
+}
+
+export function temporalIntervalContains(
+  interval: TemporalInterval,
+  instant: Date,
+): boolean | null {
+  validateTemporalInterval(interval);
+  canonicalEncode(instant);
+  if (instant.getTime() < interval.effectiveFrom.getTime()) return false;
+  if (interval.effectiveTo.state === "known") {
+    return instant.getTime() < interval.effectiveTo.value.getTime();
+  }
+  return interval.effectiveTo.state === "notApplicable" ? true : null;
+}
+
+/**
+ * Immutable basketball meaning. IDs, actor/device authority, writer fencing,
+ * observation time, and all delivery fields are deliberately excluded.
+ */
+export function journalSemanticHashInput(
+  operation: JournalOperationContract,
+): Readonly<Record<string, unknown>> {
+  return {
+    clockRemainingMs: operation.clockRemainingMs,
+    logicalPlayOrder: operation.logicalPlayOrder,
+    operationSchemaVersion: operation.operationSchemaVersion,
+    operationType: operation.operationType,
+    payload: operation.payload,
+    periodNumber: operation.periodNumber,
+    reducerVersion: operation.reducerVersion,
+    rulesetVersion: operation.rulesetVersion,
+    scope: operation.scope,
+    workspaceId: operation.workspaceId,
+  };
+}
+
+/**
+ * Immutable request/fencing identity. commandId is the idempotency key and is
+ * excluded from the value it keys; clientObservedAt and JournalDeliveryContract
+ * are transport metadata and are also excluded.
+ */
+export function journalRequestHashInput(
+  operation: JournalOperationContract,
+): Readonly<Record<string, unknown>> {
+  return {
+    actorAccountId: operation.actorAccountId,
+    deviceSessionId: operation.deviceSessionId,
+    expectedServerHead: operation.expectedServerHead,
+    localSequence: operation.localSequence,
+    operationId: operation.operationId,
+    previousOperationHash: operation.previousOperationHash,
+    semanticHash: operation.semanticHash,
+    writerEpoch: operation.writerEpoch,
+  };
+}
+
+export function validateJournalOperation(operation: JournalOperationContract): void {
+  for (const [field, value] of Object.entries({
+    workspaceId: operation.workspaceId,
+    operationId: operation.operationId,
+    commandId: operation.commandId,
+    actorAccountId: operation.actorAccountId,
+    deviceSessionId: operation.deviceSessionId,
+    expectedServerHead: operation.expectedServerHead,
+    reducerVersion: operation.reducerVersion,
+    rulesetVersion: operation.rulesetVersion,
+  })) requireOpaqueId(field, value);
+  for (const [field, value] of Object.entries(operation.scope)) {
+    requireOpaqueId(`scope.${field}`, value);
+  }
+  requireSafeNonNegative("writerEpoch", operation.writerEpoch);
+  requireSafeNonNegative("localSequence", operation.localSequence);
+  requireSafeNonNegative("operationSchemaVersion", operation.operationSchemaVersion);
+  if (operation.operationSchemaVersion === 0) {
+    throw new TypeError("operationSchemaVersion must be at least one");
+  }
+  if (!journalOperationTypes.includes(operation.operationType)) {
+    throw new TypeError(`Unsupported operationType: ${operation.operationType}`);
+  }
+  requireSafeNonNegative("logicalPlayOrder", operation.logicalPlayOrder);
+  validatePreviousOperationHash(operation.localSequence, operation.previousOperationHash);
+  validateOrderingFact("periodNumber", operation.periodNumber);
+  if (operation.periodNumber.state === "known" && operation.periodNumber.value === 0) {
+    throw new TypeError("periodNumber must be at least one");
+  }
+  validateOrderingFact("clockRemainingMs", operation.clockRemainingMs);
+  requireSha256("semanticHash", operation.semanticHash);
+  requireSha256("requestHash", operation.requestHash);
+  canonicalEncode(operation.clientObservedAt);
+  const calculatedSemanticHash = canonicalSha256(journalSemanticHashInput(operation));
+  if (calculatedSemanticHash !== operation.semanticHash) {
+    throw new TypeError("semanticHash does not match immutable semantic fields");
+  }
+  const calculatedRequestHash = canonicalSha256(journalRequestHashInput(operation));
+  if (calculatedRequestHash !== operation.requestHash) {
+    throw new TypeError("requestHash does not match immutable request fields");
+  }
+}
+
+export function validateOperationReceipt(receipt: OperationReceiptContract): void {
+  for (const [field, value] of Object.entries({
+    receiptId: receipt.receiptId,
+    workspaceId: receipt.workspaceId,
+    operationId: receipt.operationId,
+    commandId: receipt.commandId,
+    actorAccountId: receipt.actorAccountId,
+    acceptedJournalHead: receipt.acceptedJournalHead,
+  })) requireOpaqueId(field, value);
+  for (const [field, value] of Object.entries(receipt.scope)) {
+    requireOpaqueId(`scope.${field}`, value);
+  }
+  if (!journalOperationTypes.includes(receipt.commandKind)) {
+    throw new TypeError(`Unsupported commandKind: ${receipt.commandKind}`);
+  }
+  requireSha256("requestHash", receipt.requestHash);
+  requireSha256("acceptedJournalHash", receipt.acceptedJournalHash);
+  requireSafeNonNegative("serverSequence", receipt.serverSequence);
+  requireSafeNonNegative("writerEpoch", receipt.writerEpoch);
+  canonicalEncode(receipt.acceptedAt);
+}
+
+export function validateJournalDelivery(delivery: JournalDeliveryContract): void {
+  requireOpaqueId("operationId", delivery.operationId);
+  requireSafeNonNegative("retryCount", delivery.retryCount);
+  if (delivery.state === "accepted" && delivery.receipt.state !== "known") {
+    throw new TypeError("accepted delivery requires a known receipt");
+  }
+  if (delivery.nextAttemptAt.state === "known") canonicalEncode(delivery.nextAttemptAt.value);
+  if (delivery.receipt.state === "known") {
+    validateOperationReceipt(delivery.receipt.value);
+    if (delivery.receipt.value.operationId !== delivery.operationId) {
+      throw new TypeError("Delivery receipt operationId must match delivery operationId");
+    }
+  }
+}
+
+export function validateBoxScoreInputParts(
+  parts: readonly BoxScoreInputPartDescriptor[],
+  disposition?: StatisticsDisposition,
+): void {
+  const seenIds = new Set<string>();
+  let previousSortKey: string | null = null;
+  const kinds = new Set<BoxScorePartKind>();
+  for (const part of parts) {
+    requireOpaqueId("partId", part.partId);
+    if (seenIds.has(part.partId)) throw new TypeError("inputParts partId values must be unique");
+    seenIds.add(part.partId);
+    requireSafeNonNegative("count", part.count);
+    if (part.count === 0) throw new TypeError("inputParts count must be at least one");
+    requireSha256("sha256", part.sha256);
+    const kindIndex = boxScorePartKinds.indexOf(part.kind);
+    if (kindIndex < 0) throw new TypeError(`Unsupported inputParts kind: ${part.kind}`);
+    kinds.add(part.kind);
+    const sortKey = `${String(kindIndex).padStart(2, "0")}:${part.partId}`;
+    if (previousSortKey !== null && previousSortKey >= sortKey) {
+      throw new TypeError("inputParts must be sorted by kind then ASCII partId");
+    }
+    previousSortKey = sortKey;
+  }
+  if (!kinds.has("teamOnlyInputs")) {
+    throw new TypeError("Every revision requires teamOnlyInputs for outcome facts");
+  }
+  if (disposition === "complete") {
+    for (const required of ["playerInputs", "periods", "discipline"] as const) {
+      if (!kinds.has(required)) throw new TypeError(`Complete revisions require ${required}`);
+    }
+  }
+}
+
+export function boxScoreInputHash(parts: readonly BoxScoreInputPartDescriptor[]): string {
+  validateBoxScoreInputParts(parts);
+  return canonicalSha256(parts);
+}
+
+export function validatePublicationReleaseHead(head: PublicationReleaseHeadContract): void {
+  for (const [field, value] of Object.entries({
+    associationId: head.associationId,
+    competitionId: head.competitionId,
+    seasonId: head.seasonId,
+  })) requireOpaqueId(field, value);
+  requireSafeNonNegative("certificateEpoch", head.certificateEpoch);
+  requireSafeNonNegative("publicationEpoch", head.publicationEpoch);
+  requireSafeNonNegative("privacyEpoch", head.privacyEpoch);
+  if (!(["absent", "active", "retracted"] as const).includes(head.state)) {
+    throw new TypeError(`Unsupported release-head state: ${head.state}`);
+  }
+  if (head.state === "active") {
+    if (head.activeReleaseId.state !== "known") {
+      throw new TypeError("active release head requires a known activeReleaseId");
+    }
+    requireSha256("activeReleaseId", head.activeReleaseId.value);
+    return;
+  }
+  const expectedReason = head.state === "absent" ? "not_activated" : "retracted";
+  if (head.activeReleaseId.state !== "notApplicable" ||
+      head.activeReleaseId.reasonCode !== expectedReason ||
+      head.activeReleaseId.value !== null) {
+    throw new TypeError(`${head.state} release head requires notApplicable(${expectedReason})`);
+  }
 }
 
 export type RetryClassification =
@@ -317,43 +651,82 @@ export const commandErrorIdempotency = {
   internal: "safeReplayReturnsOriginalResult",
 } as const satisfies Readonly<Record<string, IdempotencyClassification>>;
 
-const maxSafeInteger = Number.MAX_SAFE_INTEGER;
+export const maxCanonicalInteger = Number.MAX_SAFE_INTEGER;
 const asciiKey = /^[\x21-\x7e]+$/;
 
-function normalizeCanonical(value: unknown): unknown {
-  if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "string") return value.normalize("NFC");
+function encodeCanonical(value: unknown): string {
+  if (value === null || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "string") return JSON.stringify(value.normalize("NFC"));
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || Math.abs(value) > maxSafeInteger) {
+    if (!Number.isSafeInteger(value)) {
       throw new TypeError("Canonical numbers must be safe integers");
     }
-    return value;
+    return JSON.stringify(value);
   }
   if (value instanceof Date) {
+    if (Object.getPrototypeOf(value) !== Date.prototype ||
+        Object.getOwnPropertyNames(value).length !== 0 ||
+        Object.getOwnPropertySymbols(value).length !== 0) {
+      throw new TypeError("Canonical timestamps must be unmodified Date values");
+    }
     if (!Number.isFinite(value.getTime())) throw new TypeError("Invalid timestamp");
     const year = value.getUTCFullYear();
     if (year < 1 || year > 9999) {
       throw new TypeError("Canonical timestamps require years 0001-9999");
     }
-    return value.toISOString();
+    return JSON.stringify(value.toISOString());
   }
-  if (Array.isArray(value)) return value.map(normalizeCanonical);
-  if (value instanceof Set) throw new TypeError("Unordered sets are not canonical");
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype ||
+        Object.getOwnPropertySymbols(value).length !== 0) {
+      throw new TypeError("Canonical arrays must be ordinary dense arrays");
+    }
+    const ownNames = Object.getOwnPropertyNames(value);
+    if (ownNames.length !== value.length + 1) {
+      throw new TypeError("Canonical arrays cannot have holes or extra properties");
+    }
+    const encoded: string[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const key = String(index);
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        throw new TypeError("Canonical arrays cannot have holes or accessors");
+      }
+      encoded.push(encodeCanonical(descriptor.value));
+    }
+    return `[${encoded.join(",")}]`;
+  }
   if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Canonical maps must be plain records");
+    }
+    if (Object.getOwnPropertySymbols(value).length !== 0) {
+      throw new TypeError("Canonical maps cannot contain symbol properties");
+    }
     const record = value as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const ownNames = Object.getOwnPropertyNames(record);
+    const keys = Object.keys(record);
+    if (ownNames.length !== keys.length) {
+      throw new TypeError("Canonical maps cannot contain non-enumerable properties");
+    }
     for (const key of keys) {
       if (!asciiKey.test(key)) {
         throw new TypeError("Canonical map keys must be nonempty ASCII");
       }
+      const descriptor = Object.getOwnPropertyDescriptor(record, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        throw new TypeError("Canonical maps cannot contain accessors");
+      }
     }
-    return Object.fromEntries(keys.map((key) => [key, normalizeCanonical(record[key])]));
+    keys.sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${encodeCanonical(record[key])}`).join(",")}}`;
   }
   throw new TypeError(`Unsupported canonical value: ${typeof value}`);
 }
 
 export function canonicalEncode(value: unknown): string {
-  return JSON.stringify(normalizeCanonical(value));
+  return encodeCanonical(value);
 }
 
 export function canonicalSha256(value: unknown): string {

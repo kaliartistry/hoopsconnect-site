@@ -24,6 +24,9 @@
     "resultDisposition": ["played", "forfeit", "default", "annulled", "otherAdjudicated"],
     "statisticsDisposition": ["complete", "resultOnly", "excluded"],
     "privacy": ["unknown", "permitted", "denied", "revoked"],
+    "journalOperation": ["setParticipantStatus", "setPlayerCounter", "setTeamOnlyCounter", "setPeriodScore", "setClock", "recordDiscipline", "setLineup", "attachEvidence"],
+    "journalDelivery": ["savedOnDevice", "queued", "sending", "accepted", "needsAttention"],
+    "boxScorePartKind": ["playerInputs", "teamOnlyInputs", "periods", "discipline", "lineups"],
     "legacyClassification": ["evidenced", "unverified", "synthetic", "orphaned", "contradictory", "duplicateCandidate", "privacyRestricted"]
   },
   "transitions": {
@@ -78,12 +81,81 @@
       "input": {"scope": {"seasonId": "season_2026", "associationId": "jba", "competitionId": "nbl"}, "jerseys": ["0", "00"]},
       "canonical": "{\"jerseys\":[\"0\",\"00\"],\"scope\":{\"associationId\":\"jba\",\"competitionId\":\"nbl\",\"seasonId\":\"season_2026\"}}",
       "sha256": "b9487509a40bf0155972b63287e09eea35afdf2446dfa11a0368341b2c2b232c"
+    },
+    {
+      "name": "numeric-looking-keys-at-multiple-depths",
+      "input": {"10": "ten", "2": "two", "a": {"10": {"2": "deep-two", "1": "deep-one"}, "2": "nested-two", "01": "leading"}},
+      "canonical": "{\"10\":\"ten\",\"2\":\"two\",\"a\":{\"01\":\"leading\",\"10\":{\"1\":\"deep-one\",\"2\":\"deep-two\"},\"2\":\"nested-two\"}}",
+      "sha256": "150743235d26e35a02d0f11d53f62c29fb2934c432fa3f817e090b810e3cece2"
     }
   ],
+  "numericDomain": {
+    "minimum": -9007199254740991,
+    "maximum": 9007199254740991,
+    "acceptedRuntimeForms": ["integer", "integralDouble", "exponentParsedIntegral", "negativeZeroAsZero"],
+    "rejectedRuntimeForms": ["belowMinimum", "aboveMaximum", "fractional", "nan", "positiveInfinity", "negativeInfinity"],
+    "sourceTokenSpellingIsSemantic": false
+  },
   "timestampCases": [
     {"input": "2026-10-01T01:02:03.456789-05:00", "canonical": "2026-10-01T06:02:03.456Z"}
   ],
-  "invalidCanonicalKinds": ["floatingPoint", "unsafeInteger", "unorderedSet", "nonAsciiKey"],
+  "invalidCanonicalKinds": ["fractional", "unsafeInteger", "nonFinite", "unorderedSet", "nonAsciiKey", "sparseArray", "arrayExtraProperty", "nonPlainRecord", "symbolProperty", "nonEnumerableProperty", "accessorProperty", "undefined"],
+  "temporalIntervals": {
+    "valid": [
+      {"name": "known-end", "effectiveFrom": "2026-01-01T00:00:00.000Z", "effectiveTo": {"state": "known", "value": "2026-02-01T00:00:00.000Z"}, "recordedAt": "2025-12-01T00:00:00.000Z"},
+      {"name": "open-ended", "effectiveFrom": "2026-01-01T00:00:00.000Z", "effectiveTo": {"state": "notApplicable", "value": null, "reasonCode": "open_ended"}, "recordedAt": "2025-12-01T00:00:00.000Z"},
+      {"name": "unknown-end", "effectiveFrom": "2026-01-01T00:00:00.000Z", "effectiveTo": {"state": "unknown", "value": null, "reasonCode": "not_recorded"}, "recordedAt": "2025-12-01T00:00:00.000Z"}
+    ],
+    "invalid": [
+      {"name": "wrong-open-ended-reason", "effectiveFrom": "2026-01-01T00:00:00.000Z", "effectiveTo": {"state": "notApplicable", "value": null, "reasonCode": "released"}, "recordedAt": "2025-12-01T00:00:00.000Z"},
+      {"name": "blank-open-ended-reason", "effectiveFrom": "2026-01-01T00:00:00.000Z", "effectiveTo": {"state": "notApplicable", "value": null, "reasonCode": ""}, "recordedAt": "2025-12-01T00:00:00.000Z"},
+      {"name": "end-not-after-start", "effectiveFrom": "2026-01-01T00:00:00.000Z", "effectiveTo": {"state": "known", "value": "2026-01-01T00:00:00.000Z"}, "recordedAt": "2025-12-01T00:00:00.000Z"}
+    ]
+  },
+  "publicationReleaseHeads": {
+    "requiredFields": ["associationId", "competitionId", "seasonId", "state", "activeReleaseId", "certificateEpoch", "publicationEpoch", "privacyEpoch"],
+    "valid": [
+      {"name": "active", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "active", "activeReleaseId": {"state": "known", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "certificateEpoch": 4, "publicationEpoch": 3, "privacyEpoch": 2},
+      {"name": "not-activated", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "absent", "activeReleaseId": {"state": "notApplicable", "value": null, "reasonCode": "not_activated"}, "certificateEpoch": 0, "publicationEpoch": 0, "privacyEpoch": 0},
+      {"name": "retracted", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "retracted", "activeReleaseId": {"state": "notApplicable", "value": null, "reasonCode": "retracted"}, "certificateEpoch": 5, "publicationEpoch": 4, "privacyEpoch": 2}
+    ],
+    "invalid": [
+      {"name": "active-with-unknown-id", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "active", "activeReleaseId": {"state": "unknown", "value": null, "reasonCode": "not_loaded"}, "certificateEpoch": 1, "publicationEpoch": 1, "privacyEpoch": 1},
+      {"name": "absent-with-release", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "absent", "activeReleaseId": {"state": "known", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "certificateEpoch": 1, "publicationEpoch": 1, "privacyEpoch": 1},
+      {"name": "retracted-with-wrong-reason", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "retracted", "activeReleaseId": {"state": "notApplicable", "value": null, "reasonCode": "not_activated"}, "certificateEpoch": 1, "publicationEpoch": 1, "privacyEpoch": 1},
+      {"name": "negative-certificate-epoch", "associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "state": "absent", "activeReleaseId": {"state": "notApplicable", "value": null, "reasonCode": "not_activated"}, "certificateEpoch": -1, "publicationEpoch": 0, "privacyEpoch": 0}
+    ]
+  },
+  "boxScoreInputParts": {
+    "ordering": ["kindEnumOrder", "partIdAsciiAscending"],
+    "countMinimum": 1,
+    "countMaximum": 9007199254740991,
+    "completeRequiredKinds": ["playerInputs", "teamOnlyInputs", "periods", "discipline"],
+    "lineupsOptional": true,
+    "validComplete": [
+      {"partId": "players_0001", "kind": "playerInputs", "count": 12, "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+      {"partId": "team_0001", "kind": "teamOnlyInputs", "count": 2, "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+      {"partId": "periods_0001", "kind": "periods", "count": 4, "sha256": "3333333333333333333333333333333333333333333333333333333333333333"},
+      {"partId": "discipline_0001", "kind": "discipline", "count": 3, "sha256": "4444444444444444444444444444444444444444444444444444444444444444"}
+    ],
+    "validCompleteInputHash": "25f94f1f2e1fcd9c42d8bc337ef6b85d0b60fa4b7dcff89c5d995ff490afa4f7",
+    "invalidCases": ["missingTeamOnlyInputs", "missingCompleteKind", "duplicatePartId", "unsorted", "zeroCount", "unsafeCount", "badSha256", "unknownKind"]
+  },
+  "journalContract": {
+    "semanticHashFields": ["clockRemainingMs", "logicalPlayOrder", "operationSchemaVersion", "operationType", "payload", "periodNumber", "reducerVersion", "rulesetVersion", "scope", "workspaceId"],
+    "requestHashFields": ["actorAccountId", "deviceSessionId", "expectedServerHead", "localSequence", "operationId", "previousOperationHash", "semanticHash", "writerEpoch"],
+    "excludedFromSemanticHash": ["operationId", "commandId", "actorAccountId", "deviceSessionId", "writerEpoch", "localSequence", "previousOperationHash", "expectedServerHead", "clientObservedAt", "delivery"],
+    "excludedFromRequestHash": ["commandId", "clientObservedAt", "delivery"],
+    "semanticInput": {"clockRemainingMs": {"state": "known", "value": 345000}, "logicalPlayOrder": 42, "operationSchemaVersion": 2, "operationType": "setPlayerCounter", "payload": {"delta": 1, "participantId": "participant_7", "stat": "twoPointMade"}, "periodNumber": {"state": "known", "value": 1}, "reducerVersion": "reducer_v1", "rulesetVersion": "rules_v1", "scope": {"associationId": "jba", "competitionId": "nbl", "divisionId": "division_1", "gameId": "game_1", "phaseId": "regular", "seasonId": "season_2026"}, "workspaceId": "workspace_1"},
+    "semanticHash": "4ddf4df3a3b705f6f50ffa0d10498c79aa7467786eba44bc68b57289f2ab543c",
+    "requestInput": {"actorAccountId": "statistician_1", "deviceSessionId": "device_1", "expectedServerHead": "head_6", "localSequence": 7, "operationId": "operation_7", "previousOperationHash": {"state": "known", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "semanticHash": "4ddf4df3a3b705f6f50ffa0d10498c79aa7467786eba44bc68b57289f2ab543c", "writerEpoch": 3},
+    "requestHash": "53122558d6303548bcbc367681669bd902a838884bc0e071aa2313e79f12106f",
+    "receiptRequiredFields": ["receiptId", "scope", "workspaceId", "operationId", "commandId", "actorAccountId", "commandKind", "requestHash", "serverSequence", "acceptedJournalHead", "acceptedJournalHash", "writerEpoch", "acceptedAt"]
+  },
+  "deferredConstraints": {
+    "packets03To04": ["Unknown historical effectiveFrom must be representable without inventing a timestamp."],
+    "packet06": ["All identifier and string inputs require explicit length caps.", "Each batch is capped at 25 operations and 128 KiB of canonical encoded content.", "Semantic payloads require operation-specific allowlists and size/count limits."]
+  },
   "entities": [
     "competition",
     "season",
@@ -103,6 +175,7 @@
     "rosterSnapshot",
     "workspace",
     "journalOperation",
+    "operationReceipt",
     "journalCheckpoint",
     "statRevision",
     "statRevisionPart",
