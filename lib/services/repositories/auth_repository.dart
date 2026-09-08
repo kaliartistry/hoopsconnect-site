@@ -118,7 +118,7 @@ class AuthRepository {
   }
 
   /// Ensure a Firestore user document exists for this auth user.
-  /// If not, create one with media role (default for self-signup).
+  /// If not, create one with fan role (default for public self-signup).
   Future<void> _ensureUserDoc(UserCredential cred) async {
     final uid = cred.user!.uid;
     final snap = await _db.doc(FirestorePaths.user(uid)).get();
@@ -129,7 +129,7 @@ class AuthRepository {
       email: cred.user!.email ?? '',
       displayName: cred.user!.displayName ?? 'User',
       associationId: AppDefaults.defaultAssociationId,
-      role: AppDefaults.defaultSignupRole, // Default role for self-signup
+      role: AppDefaults.defaultSignupRole,
     );
     await createUserDoc(user);
   }

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hoops_connect/core/constants/app_constants.dart';
 import 'package:hoops_connect/models/user_model.dart';
 
 void main() {
@@ -66,6 +67,10 @@ void main() {
   // ─────────────────────── UserRole ───────────────────────
 
   group('UserRole', () {
+    test('public self-signup defaults to fan', () {
+      expect(AppDefaults.defaultSignupRole, UserRole.fan);
+    });
+
     test('has expected enum values', () {
       expect(UserRole.values.length, 7);
       expect(UserRole.values, contains(UserRole.superAdmin));

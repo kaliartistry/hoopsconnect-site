@@ -40,11 +40,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       if (_isSignUp) {
         // Create account
-        final cred = await ref.read(authRepositoryProvider).signUp(
+        final cred = await ref
+            .read(authRepositoryProvider)
+            .signUp(
               email: _emailController.text.trim(),
               password: _passwordController.text,
             );
-        // Create user doc with default media role
+        // Create user doc with the public self-signup role.
         final user = UserModel(
           id: cred.user!.uid,
           email: _emailController.text.trim(),
@@ -55,7 +57,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         await ref.read(authRepositoryProvider).createUserDoc(user);
       } else {
         // Sign in
-        await ref.read(authRepositoryProvider).signIn(
+        await ref
+            .read(authRepositoryProvider)
+            .signIn(
               email: _emailController.text.trim(),
               password: _passwordController.text,
             );
@@ -96,12 +100,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   String _friendlyError(String error) {
-    if (error.contains('user-not-found')) return 'No account found with that email';
+    if (error.contains('user-not-found')) {
+      return 'No account found with that email';
+    }
     if (error.contains('wrong-password')) return 'Incorrect password';
-    if (error.contains('email-already-in-use')) return 'An account already exists with that email';
-    if (error.contains('weak-password')) return 'Password must be at least 6 characters';
-    if (error.contains('invalid-email')) return 'Please enter a valid email address';
-    if (error.contains('invalid-credential')) return 'Invalid email or password';
+    if (error.contains('email-already-in-use')) {
+      return 'An account already exists with that email';
+    }
+    if (error.contains('weak-password')) {
+      return 'Password must be at least 6 characters';
+    }
+    if (error.contains('invalid-email')) {
+      return 'Please enter a valid email address';
+    }
+    if (error.contains('invalid-credential')) {
+      return 'Invalid email or password';
+    }
     return error.replaceAll(RegExp(r'\[.*?\]'), '').trim();
   }
 
@@ -181,7 +195,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         labelText: 'Full Name',
                         prefixIcon: Icon(Icons.person_outlined),
                       ),
-                      validator: (v) => _isSignUp && (v == null || v.trim().isEmpty)
+                      validator: (v) =>
+                          _isSignUp && (v == null || v.trim().isEmpty)
                           ? 'Enter your name'
                           : null,
                     ),
@@ -197,7 +212,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       prefixIcon: Icon(Icons.email_outlined),
                     ),
                     validator: (v) {
-                      if (v == null || v.trim().isEmpty) return 'Enter your email';
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Enter your email';
+                      }
                       final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
                       if (!emailRegex.hasMatch(v.trim())) {
                         return 'Enter a valid email address';
@@ -226,16 +243,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       decoration: BoxDecoration(
                         color: AppColors.urgentBg,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.urgent.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: AppColors.urgent.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.error_outline, color: AppColors.urgent, size: 18),
+                          const Icon(
+                            Icons.error_outline,
+                            color: AppColors.urgent,
+                            size: 18,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               _error!,
-                              style: const TextStyle(color: AppColors.urgent, fontSize: 13),
+                              style: const TextStyle(
+                                color: AppColors.urgent,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
                         ],
@@ -290,11 +316,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: _loading ? null : _signInWithGoogle,
-                          icon: const Text('G', style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                            color: AppColors.google,
-                          )),
+                          icon: const Text(
+                            'G',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              color: AppColors.google,
+                            ),
+                          ),
                           label: const Text('Google'),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -334,15 +363,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         onPressed: () => context.push('/legal/terms'),
                         child: const Text(
                           'Terms of Use',
-                          style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
                         ),
                       ),
-                      const Text(' | ', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                      const Text(
+                        ' | ',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
                       TextButton(
                         onPressed: () => context.push('/legal/privacy'),
                         child: const Text(
                           'Privacy Policy',
-                          style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
                         ),
                       ),
                     ],
