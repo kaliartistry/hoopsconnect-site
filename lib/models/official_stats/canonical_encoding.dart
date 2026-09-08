@@ -31,6 +31,10 @@ abstract final class OfficialStatCanonicalEncoding {
   static Object? _normalize(Object? value) {
     if (value == null || value is bool) return value;
     if (value is String) return unicode.nfc(value);
+    // Dart2JS classifies integer-valued JavaScript numbers (including -0) as
+    // Dart ints. Normalize zero before the int branch so every runtime emits
+    // the contract's one canonical representation: the positive integer 0.
+    if (value is num && value == 0) return 0;
     if (value is int) {
       if (value < -maxSafeInteger || value > maxSafeInteger) {
         throw FormatException(

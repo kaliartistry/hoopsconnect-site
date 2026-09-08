@@ -154,7 +154,11 @@
   },
   "deferredConstraints": {
     "packets03To04": ["Unknown historical effectiveFrom must be representable without inventing a timestamp."],
-    "packet06": ["All identifier and string inputs require explicit length caps.", "Each batch is capped at 25 operations and 128 KiB of canonical encoded content.", "Semantic payloads require operation-specific allowlists and size/count limits."]
+    "packets04To05": ["Frozen participant snapshots and revisions must retain the exact display-name version and evidence used at game time."],
+    "packets05And14": ["Schedule-only publication requires an explicit certificate and public-selection schema; it cannot reuse a box-score certificate implicitly."],
+    "packet04Before14To15": ["Minor status must support an explicit unknown state before privacy filtering and public delivery are implemented."],
+    "packet06": ["All identifier and string inputs require explicit length caps.", "Each batch is capped at 25 operations and 128 KiB of canonical encoded content.", "Semantic payloads require exact operation-specific key allowlists, field counts, nullability, provenance, Unicode conformance, and size/count limits."],
+    "packet08": ["Recovery and writer takeover must preserve accepted receipts and pending work, and every current-authorization disclosure must be revalidated before display."]
   },
   "entities": [
     "competition",

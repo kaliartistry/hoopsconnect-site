@@ -232,6 +232,8 @@ Dart and TypeScript execute the same Unicode, timestamp, nested-key, jersey, and
 
 Packet 06 remains responsible for ingress resource limits. It must cap every identifier/string input explicitly, retain the 25-operation/128-KiB batch limits, and apply operation-specific payload key allowlists plus size/count bounds before persistence. Packet 01 records those requirements but does not prematurely implement an ingress handler.
 
+Additional packet boundaries remain explicit and closed: Packets 04–05 must freeze the exact game-time display-name version and evidence; Packets 05 and 14 must define a schedule-only certificate and selection schema rather than implicitly reusing box-score certification; Packet 04 must represent unknown minor status explicitly before Packets 14–15 implement privacy filtering/public delivery; Packet 06 must define exact payload keys, counts, nullability, provenance, and Unicode conformance; and Packet 08 must preserve accepted receipts and pending work through recovery/takeover while revalidating current authorization before disclosure. These are tracking constraints, not active behavior in Packet 01.
+
 ## 11. Activation gates
 
 `contracts/official_stats/v2/activation_gates.json` is normative and currently says `activationAllowed: false`. Every entry remains unresolved until supported by authoritative evidence and a named owner. Required gates include:
