@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// Persisted or inspected invite metadata. It deliberately cannot hold the
+/// bearer credential.
 class InviteCodeModel {
-  final String code;
+  final String inviteId;
   final String? teamId;
   final String role;
   final int usesRemaining;
@@ -10,7 +12,7 @@ class InviteCodeModel {
   final String associationId;
 
   const InviteCodeModel({
-    required this.code,
+    required this.inviteId,
     required this.teamId,
     required this.role,
     required this.usesRemaining,
@@ -24,7 +26,7 @@ class InviteCodeModel {
   ) {
     final data = doc.data()!;
     return InviteCodeModel(
-      code: doc.id,
+      inviteId: doc.id,
       teamId: data['teamId']?.toString(),
       role: data['role'] as String,
       usesRemaining: data['usesRemaining'] as int,
@@ -36,11 +38,12 @@ class InviteCodeModel {
 
   factory InviteCodeModel.fromCallable(Map<Object?, Object?> data) {
     final expiresAt = DateTime.tryParse(data['expiresAt']?.toString() ?? '');
-    if (expiresAt == null) {
-      throw const FormatException('Invite response is missing expiresAt');
+    final inviteId = data['inviteId']?.toString();
+    if (expiresAt == null || inviteId == null || inviteId.isEmpty) {
+      throw const FormatException('Invite response is missing metadata');
     }
     return InviteCodeModel(
-      code: data['code']?.toString() ?? '',
+      inviteId: inviteId,
       teamId: data['teamId']?.toString(),
       role: data['role'] as String,
       usesRemaining: (data['usesRemaining'] as num?)?.toInt() ?? 1,
@@ -50,19 +53,31 @@ class InviteCodeModel {
     );
   }
 
-  Map<String, dynamic> toFirestore() {
-    return {
-      'teamId': teamId,
-      'role': role,
-      'usesRemaining': usesRemaining,
-      'status': status,
-      'expiresAt': Timestamp.fromDate(expiresAt),
-      'associationId': associationId,
-    };
-  }
+  String get displayId => inviteId.length > 11
+      ? '${inviteId.substring(0, 7)}...${inviteId.substring(inviteId.length - 4)}'
+      : inviteId;
 
   bool get isValid =>
       status == 'active' &&
       usesRemaining == 1 &&
       DateTime.now().isBefore(expiresAt);
+}
+
+/// One-time issuer response. This object is never created from Firestore.
+class IssuedInviteCode {
+  final InviteCodeModel invite;
+  final String code;
+
+  const IssuedInviteCode({required this.invite, required this.code});
+
+  factory IssuedInviteCode.fromCallable(Map<Object?, Object?> data) {
+    final code = data['code']?.toString();
+    if (code == null || code.isEmpty) {
+      throw const FormatException('Invite issuance response is missing code');
+    }
+    return IssuedInviteCode(
+      invite: InviteCodeModel.fromCallable(data),
+      code: code,
+    );
+  }
 }

@@ -1,8 +1,8 @@
-import { randomBytes } from "crypto";
+import {createHash, createHmac} from "crypto";
 import * as admin from "firebase-admin";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import { HttpsError, onCall, CallableRequest } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions";
+import {DocumentSnapshot, FieldValue, Timestamp, Transaction} from "firebase-admin/firestore";
+import {defineSecret} from "firebase-functions/params";
+import {CallableRequest, HttpsError, onCall} from "firebase-functions/v2/https";
 import {
   AUTHORIZATION_SCHEMA_VERSION,
   PUBLIC_ASSOCIATION_ID,
@@ -12,6 +12,12 @@ import {
   capabilitiesForRole,
   isRole,
 } from "./authorization";
+
+const INVITE_CREDENTIAL_VERSION = 2;
+const INVITE_TOKEN_HMAC_KEY_V1 = defineSecret("INVITE_TOKEN_HMAC_KEY_V1");
+const operationPattern = /^[A-Za-z0-9_-]{16,128}$/;
+const inviteIdPattern = /^v2_[a-f0-9]{64}$/;
+const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
 
 interface CallerIdentity {
   uid: string;
@@ -26,12 +32,13 @@ interface Authority {
 
 interface InviteData {
   authorizationSchemaVersion?: unknown;
+  credentialVersion?: unknown;
+  inviteId?: unknown;
   associationId?: unknown;
   teamId?: unknown;
   divisionId?: unknown;
   seasonId?: unknown;
   role?: unknown;
-  capabilities?: unknown;
   status?: unknown;
   usesRemaining?: unknown;
   expiresAt?: unknown;
@@ -90,32 +97,65 @@ function requireDocumentId(value: string | null, key: string): string | null {
   return value;
 }
 
-function normalizeCode(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new HttpsError("invalid-argument", "Invite code is required.");
+function requireOperationId(data: Record<string, unknown>): string {
+  const operationId = requireText(data, "operationId", 128);
+  if (!operationPattern.test(operationId)) {
+    throw new HttpsError("invalid-argument", "operationId must be an opaque URL-safe identifier.");
   }
-  const code = value.trim().toUpperCase();
-  // Generated codes use an ambiguity-free alphabet. The wider parser keeps
-  // already-issued legacy codes redeemable without accepting punctuation.
-  if (!/^[A-Z0-9-]{6,32}$/.test(code)) {
-    throw new HttpsError("invalid-argument", "Invite code format is invalid.");
-  }
-  return code;
+  return operationId;
 }
 
-function generateCode(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = randomBytes(10);
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+function normalizeToken(value: unknown): string {
+  if (typeof value !== "string" || !tokenPattern.test(value.trim())) {
+    // The strict v2 format makes all legacy/static raw document IDs fail closed.
+    throw new HttpsError("invalid-argument", "Invite code format is invalid.");
+  }
+  return value.trim();
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+export function inviteIdForToken(token: string): string {
+  return `v2_${sha256(normalizeToken(token))}`;
+}
+
+function receiptId(actorId: string, operation: string, operationId: string): string {
+  return sha256(`${actorId}\u0000${operation}\u0000${operationId}`);
+}
+
+function requestFingerprint(value: Record<string, unknown>): string {
+  const ordered = Object.keys(value).sort().reduce<Record<string, unknown>>((result, key) => {
+    result[key] = value[key];
+    return result;
+  }, {});
+  return sha256(JSON.stringify(ordered));
+}
+
+function inviteHmacKey(): string {
+  const key = process.env.INVITE_TOKEN_HMAC_KEY_V1;
+  if (typeof key !== "string" || Buffer.byteLength(key, "utf8") < 32) {
+    throw new HttpsError("failed-precondition", "Invite issuance is not configured.");
+  }
+  return key;
+}
+
+function deriveToken(actorId: string, operationId: string): string {
+  return createHmac("sha256", inviteHmacKey())
+    .update(`hoopsconnect-invite-v2\u0000${actorId}\u0000${operationId}`, "utf8")
+    .digest("base64url");
 }
 
 function timestampOrNull(value: unknown): Timestamp | null {
   return value instanceof Timestamp ? value : null;
 }
 
-function inviteIsActive(invite: InviteData, now: Timestamp): boolean {
+function inviteIsActive(invite: InviteData, inviteId: string, now: Timestamp): boolean {
   const expiresAt = timestampOrNull(invite.expiresAt);
   return invite.authorizationSchemaVersion === AUTHORIZATION_SCHEMA_VERSION
+    && invite.credentialVersion === INVITE_CREDENTIAL_VERSION
+    && invite.inviteId === inviteId
     && invite.status === "active"
     && invite.usesRemaining === 1
     && expiresAt !== null
@@ -124,7 +164,7 @@ function inviteIsActive(invite: InviteData, now: Timestamp): boolean {
     && !invite.redeemedBy;
 }
 
-function requireInviteShape(invite: InviteData): {
+function requireInviteShape(invite: InviteData, inviteId: string): {
   associationId: string;
   teamId: string | null;
   divisionId: string | null;
@@ -133,6 +173,8 @@ function requireInviteShape(invite: InviteData): {
 } {
   if (
     invite.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION
+    || invite.credentialVersion !== INVITE_CREDENTIAL_VERSION
+    || invite.inviteId !== inviteId
     || typeof invite.associationId !== "string"
     || !/^[A-Za-z0-9_-]+$/.test(invite.associationId)
     || !isRole(invite.role)
@@ -151,40 +193,85 @@ function requireInviteShape(invite: InviteData): {
   return {
     associationId: invite.associationId,
     teamId,
-    divisionId: typeof invite.divisionId === "string" && invite.divisionId.length > 0 ? invite.divisionId : null,
-    seasonId: typeof invite.seasonId === "string" && invite.seasonId.length > 0 ? invite.seasonId : null,
+    divisionId: typeof invite.divisionId === "string" ? invite.divisionId : null,
+    seasonId: typeof invite.seasonId === "string" ? invite.seasonId : null,
     role: invite.role,
   };
 }
 
-async function getAuthority(uid: string): Promise<Authority> {
-  const db = admin.firestore();
-  const membershipSnap = await db.doc(`memberships/${uid}`).get();
-
-  if (membershipSnap.exists) {
-    const membership = membershipSnap.data() ?? {};
-    if (
-      membership.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION
-      || membership.status !== "active"
-      || !isRole(membership.role)
-      || typeof membership.associationId !== "string"
-    ) {
-      throw new HttpsError("permission-denied", "Active membership is required.");
-    }
-    return {
-      associationId: membership.associationId,
-      role: membership.role,
-      capabilities: Array.isArray(membership.capabilities) ? membership.capabilities.filter((v): v is string => typeof v === "string") : [],
-    };
+function authorityFromSnapshot(snapshot: DocumentSnapshot, requiredCapability: string): Authority {
+  if (!snapshot.exists) {
+    throw new HttpsError("permission-denied", "Active membership is required.");
   }
-
-  throw new HttpsError("permission-denied", "Active membership is required.");
-}
-
-function requireCapability(authority: Authority, capability: string): void {
-  if (!authority.capabilities.includes(capability)) {
+  const membership = snapshot.data() ?? {};
+  const memberCapabilities = Array.isArray(membership.capabilities)
+    ? membership.capabilities.filter((value): value is string => typeof value === "string")
+    : [];
+  if (
+    membership.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION
+    || membership.status !== "active"
+    || !isRole(membership.role)
+    || typeof membership.associationId !== "string"
+    || !memberCapabilities.includes(requiredCapability)
+  ) {
     throw new HttpsError("permission-denied", "You do not have permission to complete this action.");
   }
+  return {
+    associationId: membership.associationId,
+    role: membership.role,
+    capabilities: memberCapabilities,
+  };
+}
+
+async function getAuthorityInTransaction(
+  transaction: Transaction,
+  uid: string,
+  requiredCapability: string,
+): Promise<Authority> {
+  const snapshot = await transaction.get(admin.firestore().doc(`memberships/${uid}`));
+  return authorityFromSnapshot(snapshot, requiredCapability);
+}
+
+function validMembershipAuthority(snapshot: DocumentSnapshot): Authority | null {
+  if (!snapshot.exists) return null;
+  const data = snapshot.data() ?? {};
+  if (
+    data.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION
+    || data.status !== "active"
+    || data.associationId !== PUBLIC_ASSOCIATION_ID
+    || !isRole(data.role)
+    || !Array.isArray(data.capabilities)
+    || JSON.stringify([...data.capabilities].sort()) !== JSON.stringify(capabilitiesForRole(data.role).sort())
+  ) {
+    return null;
+  }
+  return {
+    associationId: data.associationId,
+    role: data.role,
+    capabilities: [...data.capabilities] as string[],
+  };
+}
+
+function userMatchesAuthority(
+  snapshot: DocumentSnapshot,
+  caller: CallerIdentity,
+  authority: Authority,
+  membershipSnapshot: DocumentSnapshot,
+): boolean {
+  if (!snapshot.exists) return false;
+  const data = snapshot.data() ?? {};
+  const membership = membershipSnapshot.data() ?? {};
+  const profileTeamId = typeof data.teamId === "string" ? data.teamId : null;
+  const membershipTeamId = typeof membership.teamId === "string" ? membership.teamId : null;
+  const profileDivisionId = typeof data.divisionId === "string" ? data.divisionId : null;
+  const membershipDivisionId = typeof membership.divisionId === "string" ? membership.divisionId : null;
+  return data.authorizationSchemaVersion === AUTHORIZATION_SCHEMA_VERSION
+    && data.associationId === authority.associationId
+    && data.role === authority.role
+    && profileTeamId === membershipTeamId
+    && profileDivisionId === membershipDivisionId
+    && typeof data.email === "string"
+    && data.email.toLowerCase() === caller.email;
 }
 
 export async function provisionFanProfileHandler(request: CallableRequest<unknown>) {
@@ -206,11 +293,39 @@ export async function provisionFanProfileHandler(request: CallableRequest<unknow
     if (!associationSnap.exists) {
       throw new HttpsError("failed-precondition", "Public signup is not configured for this association.");
     }
-    if (userSnap.exists || membershipSnap.exists) {
-      return {created: false};
+    const now = FieldValue.serverTimestamp();
+    if (userSnap.exists && membershipSnap.exists) {
+      const authority = validMembershipAuthority(membershipSnap);
+      if (!authority || !userMatchesAuthority(userSnap, caller, authority, membershipSnap)) {
+        throw new HttpsError("failed-precondition", "Account authorization records require administrator recovery.");
+      }
+      return {created: false, repaired: false, role: authority.role, associationId: authority.associationId};
+    }
+    if (userSnap.exists) {
+      throw new HttpsError("failed-precondition", "Account authorization records require administrator recovery.");
+    }
+    if (membershipSnap.exists) {
+      const authority = validMembershipAuthority(membershipSnap);
+      if (!authority) {
+        throw new HttpsError("failed-precondition", "Account authorization records require administrator recovery.");
+      }
+      transaction.create(userRef, {
+        email: caller.email,
+        displayName,
+        phone: null,
+        associationId: authority.associationId,
+        teamId: membershipSnap.get("teamId") ?? null,
+        role: authority.role,
+        divisionId: membershipSnap.get("divisionId") ?? null,
+        fcmTokens: [],
+        notificationPrefs: {ackReminders: true, statReminders: true, newPosts: true},
+        authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return {created: false, repaired: true, role: authority.role, associationId: authority.associationId};
     }
 
-    const now = FieldValue.serverTimestamp();
     transaction.create(userRef, {
       email: caller.email,
       displayName,
@@ -238,21 +353,23 @@ export async function provisionFanProfileHandler(request: CallableRequest<unknow
       createdAt: now,
       updatedAt: now,
     });
-    return {created: true, role: "fan", associationId: PUBLIC_ASSOCIATION_ID};
+    return {created: true, repaired: false, role: "fan", associationId: PUBLIC_ASSOCIATION_ID};
   });
 }
 
 export async function inspectPrivilegedInviteHandler(request: CallableRequest<unknown>) {
   const data = requireObject(request.data);
   requireAuthorizationSchema(data);
-  const code = normalizeCode(data.code);
-  const inviteSnap = await admin.firestore().doc(`inviteCodes/${code}`).get();
+  const token = normalizeToken(data.code);
+  const inviteId = inviteIdForToken(token);
+  const inviteSnap = await admin.firestore().doc(`inviteCodes/${inviteId}`).get();
   const now = Timestamp.now();
-  if (!inviteSnap.exists || !inviteIsActive(inviteSnap.data() as InviteData, now)) {
+  if (!inviteSnap.exists || !inviteIsActive(inviteSnap.data() as InviteData, inviteId, now)) {
     throw new HttpsError("not-found", "Invite code is invalid, expired, revoked, or already used.");
   }
-  const invite = requireInviteShape(inviteSnap.data() as InviteData);
+  const invite = requireInviteShape(inviteSnap.data() as InviteData, inviteId);
   return {
+    inviteId,
     role: invite.role,
     associationId: invite.associationId,
     teamId: invite.teamId,
@@ -264,31 +381,48 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
   const caller = requireCaller(request);
   const data = requireObject(request.data);
   requireAuthorizationSchema(data);
-  const code = normalizeCode(data.code);
+  const token = normalizeToken(data.code);
+  const inviteId = inviteIdForToken(token);
   const displayName = requireText(data, "displayName", 120);
+  const operationId = requireOperationId(data);
+  const fingerprint = requestFingerprint({inviteId, displayName, email: caller.email});
   const db = admin.firestore();
-  const inviteRef = db.doc(`inviteCodes/${code}`);
+  const inviteRef = db.doc(`inviteCodes/${inviteId}`);
   const userRef = db.doc(`users/${caller.uid}`);
   const membershipRef = db.doc(`memberships/${caller.uid}`);
-  const auditRef = db.collection("authorizationAudit").doc();
+  const operationReceiptId = receiptId(caller.uid, "invite.redeem", operationId);
+  const receiptRef = db.doc(`authorizationOperationReceipts/${operationReceiptId}`);
+  const auditRef = db.doc(`authorizationAudit/redeem_${operationReceiptId}`);
 
   return db.runTransaction(async (transaction) => {
+    const receiptSnap = await transaction.get(receiptRef);
+    if (receiptSnap.exists) {
+      const receipt = receiptSnap.data() ?? {};
+      if (
+        receipt.actorId !== caller.uid
+        || receipt.operation !== "invite.redeem"
+        || receipt.requestFingerprint !== fingerprint
+        || receipt.inviteId !== inviteId
+      ) {
+        throw new HttpsError("failed-precondition", "Operation identifier was already used for a different request.");
+      }
+      return receipt.result;
+    }
+
     const [inviteSnap, userSnap, membershipSnap] = await Promise.all([
       transaction.get(inviteRef),
       transaction.get(userRef),
       transaction.get(membershipRef),
     ]);
-    const now = Timestamp.now();
-    if (!inviteSnap.exists || !inviteIsActive(inviteSnap.data() as InviteData, now)) {
+    if (!inviteSnap.exists || !inviteIsActive(inviteSnap.data() as InviteData, inviteId, Timestamp.now())) {
       throw new HttpsError("failed-precondition", "Invite code is invalid, expired, revoked, or already used.");
     }
-    if (membershipSnap.exists || (userSnap.exists && userSnap.get("role") !== "fan")) {
-      throw new HttpsError("already-exists", "This account already has a membership.");
+    if (userSnap.exists || membershipSnap.exists) {
+      throw new HttpsError("already-exists", "This account already has authorization records.");
     }
 
-    const invite = requireInviteShape(inviteSnap.data() as InviteData);
-    const associationRef = db.doc(`associations/${invite.associationId}`);
-    const associationSnap = await transaction.get(associationRef);
+    const invite = requireInviteShape(inviteSnap.data() as InviteData, inviteId);
+    const associationSnap = await transaction.get(db.doc(`associations/${invite.associationId}`));
     if (!associationSnap.exists) {
       throw new HttpsError("failed-precondition", "Invite association no longer exists.");
     }
@@ -298,31 +432,29 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
       if (!teamSnap.exists) {
         throw new HttpsError("failed-precondition", "Invite team no longer exists.");
       }
-      resolvedDivisionId = typeof teamSnap.get("divisionId") === "string"
-        ? teamSnap.get("divisionId")
-        : null;
+      resolvedDivisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
     }
 
     const serverNow = FieldValue.serverTimestamp();
-    const memberCapabilities = capabilitiesForRole(invite.role);
-    transaction.set(userRef, {
+    const result = {role: invite.role, associationId: invite.associationId, teamId: invite.teamId};
+    transaction.create(userRef, {
       email: caller.email,
       displayName,
-      phone: userSnap.exists ? userSnap.get("phone") ?? null : null,
+      phone: null,
       associationId: invite.associationId,
       teamId: invite.teamId,
       role: invite.role,
       divisionId: resolvedDivisionId,
-      fcmTokens: userSnap.exists ? userSnap.get("fcmTokens") ?? [] : [],
-      notificationPrefs: userSnap.exists ? userSnap.get("notificationPrefs") ?? {ackReminders: true, statReminders: true, newPosts: true} : {ackReminders: true, statReminders: true, newPosts: true},
+      fcmTokens: [],
+      notificationPrefs: {ackReminders: true, statReminders: true, newPosts: true},
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+      createdAt: serverNow,
       updatedAt: serverNow,
-      ...(userSnap.exists ? {} : {createdAt: serverNow}),
     });
     transaction.create(membershipRef, {
       associationId: invite.associationId,
       role: invite.role,
-      capabilities: memberCapabilities,
+      capabilities: capabilitiesForRole(invite.role),
       status: "active",
       teamId: invite.teamId,
       divisionId: resolvedDivisionId,
@@ -339,30 +471,39 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
       redeemedBy: caller.uid,
       redeemedAt: serverNow,
     });
+    transaction.create(receiptRef, {
+      actorId: caller.uid,
+      operation: "invite.redeem",
+      associationId: invite.associationId,
+      inviteId,
+      requestFingerprint: fingerprint,
+      result,
+      createdAt: serverNow,
+      authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+    });
     transaction.create(auditRef, {
       action: "invite.redeemed",
       actorId: caller.uid,
       subjectId: caller.uid,
       associationId: invite.associationId,
-      inviteCode: code,
+      inviteId,
       role: invite.role,
       teamId: invite.teamId,
+      operationReceiptId,
       createdAt: serverNow,
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     });
-
-    return {role: invite.role, associationId: invite.associationId, teamId: invite.teamId};
+    return result;
   });
 }
 
 export async function createPrivilegedInviteHandler(request: CallableRequest<unknown>) {
   const caller = requireCaller(request);
-  const authority = await getAuthority(caller.uid);
-  requireCapability(authority, capabilities.invitesManage);
   const data = requireObject(request.data);
   requireAuthorizationSchema(data);
-  if (!isRole(data.role) || !canGrantRole(authority.role, data.role)) {
-    throw new HttpsError("permission-denied", "The requested role is outside your grant authority.");
+  const operationId = requireOperationId(data);
+  if (!isRole(data.role)) {
+    throw new HttpsError("invalid-argument", "A valid role is required.");
   }
   const role = data.role;
   const teamId = requireDocumentId(optionalText(data, "teamId", 160), "teamId");
@@ -374,76 +515,117 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
     throw new HttpsError("invalid-argument", "daysValid must be an integer from 1 to 30.");
   }
 
+  const token = deriveToken(caller.uid, operationId);
+  const inviteId = inviteIdForToken(token);
+  const fingerprint = requestFingerprint({role, teamId, daysValid: requestedDays});
+  const operationReceiptId = receiptId(caller.uid, "invite.create", operationId);
   const db = admin.firestore();
-  const associationSnap = await db.doc(`associations/${authority.associationId}`).get();
-  if (!associationSnap.exists) {
-    throw new HttpsError("failed-precondition", "Your association no longer exists.");
-  }
-  let divisionId: string | null = null;
-  if (teamId) {
-    const teamSnap = await db.doc(`associations/${authority.associationId}/teams/${teamId}`).get();
-    if (!teamSnap.exists) {
-      throw new HttpsError("invalid-argument", "Team does not exist in your association.");
-    }
-    divisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
-  }
-
+  const inviteRef = db.doc(`inviteCodes/${inviteId}`);
+  const receiptRef = db.doc(`authorizationOperationReceipts/${operationReceiptId}`);
+  const auditRef = db.doc(`authorizationAudit/create_${operationReceiptId}`);
   const expiresAt = Timestamp.fromMillis(Date.now() + requestedDays * 24 * 60 * 60 * 1000);
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const code = generateCode();
-    const inviteRef = db.doc(`inviteCodes/${code}`);
-    try {
-      const auditRef = db.collection("authorizationAudit").doc();
-      const batch = db.batch();
-      batch.create(inviteRef, {
-        associationId: authority.associationId,
-        seasonId: associationSnap.get("currentSeasonId") ?? null,
-        competitionId: null,
-        teamId,
-        divisionId,
-        role,
-        capabilities: capabilitiesForRole(role),
-        status: "active",
-        usesRemaining: 1,
-        createdBy: caller.uid,
-        createdAt: FieldValue.serverTimestamp(),
-        expiresAt,
-        authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
-      });
-      batch.create(auditRef, {
-        action: "invite.created",
-        actorId: caller.uid,
-        associationId: authority.associationId,
-        inviteCode: code,
-        role,
-        teamId,
-        createdAt: FieldValue.serverTimestamp(),
-        authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
-      });
-      await batch.commit();
-      return {code, associationId: authority.associationId, teamId, role, usesRemaining: 1, expiresAt: expiresAt.toDate().toISOString()};
-    } catch (error) {
-      if ((error as {code?: number}).code !== 6 || attempt === 4) throw error;
+
+  const result = await db.runTransaction(async (transaction) => {
+    const receiptSnap = await transaction.get(receiptRef);
+    if (receiptSnap.exists) {
+      const receipt = receiptSnap.data() ?? {};
+      if (
+        receipt.actorId !== caller.uid
+        || receipt.operation !== "invite.create"
+        || receipt.requestFingerprint !== fingerprint
+        || receipt.inviteId !== inviteId
+      ) {
+        throw new HttpsError("failed-precondition", "Operation identifier was already used for a different request.");
+      }
+      return receipt.result as Record<string, unknown>;
     }
-  }
-  throw new HttpsError("internal", "Could not create a unique invite code.");
+
+    const authority = await getAuthorityInTransaction(transaction, caller.uid, capabilities.invitesManage);
+    if (!canGrantRole(authority.role, role)) {
+      throw new HttpsError("permission-denied", "The requested role is outside your grant authority.");
+    }
+    const associationSnap = await transaction.get(db.doc(`associations/${authority.associationId}`));
+    if (!associationSnap.exists) {
+      throw new HttpsError("failed-precondition", "Your association no longer exists.");
+    }
+    let divisionId: string | null = null;
+    if (teamId) {
+      const teamSnap = await transaction.get(db.doc(`associations/${authority.associationId}/teams/${teamId}`));
+      if (!teamSnap.exists) {
+        throw new HttpsError("invalid-argument", "Team does not exist in your association.");
+      }
+      divisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
+    }
+    const serverNow = FieldValue.serverTimestamp();
+    const semanticResult = {
+      inviteId,
+      associationId: authority.associationId,
+      teamId,
+      role,
+      usesRemaining: 1,
+      status: "active",
+      expiresAt: expiresAt.toDate().toISOString(),
+    };
+    transaction.create(inviteRef, {
+      inviteId,
+      credentialVersion: INVITE_CREDENTIAL_VERSION,
+      associationId: authority.associationId,
+      seasonId: associationSnap.get("currentSeasonId") ?? null,
+      competitionId: null,
+      teamId,
+      divisionId,
+      role,
+      capabilities: capabilitiesForRole(role),
+      status: "active",
+      usesRemaining: 1,
+      createdBy: caller.uid,
+      createdAt: serverNow,
+      expiresAt,
+      authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+    });
+    transaction.create(receiptRef, {
+      actorId: caller.uid,
+      operation: "invite.create",
+      associationId: authority.associationId,
+      inviteId,
+      requestFingerprint: fingerprint,
+      result: semanticResult,
+      createdAt: serverNow,
+      authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+    });
+    transaction.create(auditRef, {
+      action: "invite.created",
+      actorId: caller.uid,
+      associationId: authority.associationId,
+      inviteId,
+      role,
+      teamId,
+      operationReceiptId,
+      createdAt: serverNow,
+      authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+    });
+    return semanticResult;
+  });
+  return {...result, code: token};
 }
 
 export async function revokePrivilegedInviteHandler(request: CallableRequest<unknown>) {
   const caller = requireCaller(request);
-  const authority = await getAuthority(caller.uid);
-  requireCapability(authority, capabilities.invitesManage);
   const data = requireObject(request.data);
   requireAuthorizationSchema(data);
-  const code = normalizeCode(data.code);
+  const inviteId = requireText(data, "inviteId", 67);
+  if (!inviteIdPattern.test(inviteId)) {
+    throw new HttpsError("invalid-argument", "Invite identifier is invalid.");
+  }
   const db = admin.firestore();
-  const ref = db.doc(`inviteCodes/${code}`);
+  const ref = db.doc(`inviteCodes/${inviteId}`);
   await db.runTransaction(async (transaction) => {
+    const authority = await getAuthorityInTransaction(transaction, caller.uid, capabilities.invitesManage);
     const snap = await transaction.get(ref);
     if (!snap.exists || snap.get("associationId") !== authority.associationId) {
-      throw new HttpsError("not-found", "Invite code was not found in your association.");
+      throw new HttpsError("not-found", "Invite was not found in your association.");
     }
-    if (!inviteIsActive(snap.data() as InviteData, Timestamp.now())) {
+    if (!inviteIsActive(snap.data() as InviteData, inviteId, Timestamp.now())) {
       throw new HttpsError("failed-precondition", "Only an active invite can be revoked.");
     }
     const now = FieldValue.serverTimestamp();
@@ -452,7 +634,7 @@ export async function revokePrivilegedInviteHandler(request: CallableRequest<unk
       action: "invite.revoked",
       actorId: caller.uid,
       associationId: authority.associationId,
-      inviteCode: code,
+      inviteId,
       createdAt: now,
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     });
@@ -462,8 +644,6 @@ export async function revokePrivilegedInviteHandler(request: CallableRequest<unk
 
 export async function setMemberRoleHandler(request: CallableRequest<unknown>) {
   const caller = requireCaller(request);
-  const authority = await getAuthority(caller.uid);
-  requireCapability(authority, capabilities.membersManage);
   const data = requireObject(request.data);
   requireAuthorizationSchema(data);
   const targetUid = requireText(data, "userId", 128);
@@ -478,56 +658,55 @@ export async function setMemberRoleHandler(request: CallableRequest<unknown>) {
   const userRef = db.doc(`users/${targetUid}`);
   const membershipRef = db.doc(`memberships/${targetUid}`);
   await db.runTransaction(async (transaction) => {
+    const authority = await getAuthorityInTransaction(transaction, caller.uid, capabilities.membersManage);
     const [userSnap, membershipSnap] = await Promise.all([
       transaction.get(userRef),
       transaction.get(membershipRef),
     ]);
-    if (!userSnap.exists || userSnap.get("associationId") !== authority.associationId) {
-      throw new HttpsError("not-found", "User was not found in your association.");
+    if (!userSnap.exists || !membershipSnap.exists) {
+      throw new HttpsError("not-found", "Complete user authorization records were not found in your association.");
     }
-    if (membershipSnap.exists && membershipSnap.get("associationId") !== authority.associationId) {
-      throw new HttpsError("failed-precondition", "User authorization records have conflicting association scope.");
+    if (
+      userSnap.get("associationId") !== authority.associationId
+      || membershipSnap.get("associationId") !== authority.associationId
+      || membershipSnap.get("authorizationSchemaVersion") !== AUTHORIZATION_SCHEMA_VERSION
+      || membershipSnap.get("status") !== "active"
+    ) {
+      throw new HttpsError("failed-precondition", "User authorization records are inactive or have conflicting scope.");
     }
-    if (userSnap.get("role") === "superAdmin") {
+    if (membershipSnap.get("role") === "superAdmin") {
       throw new HttpsError("failed-precondition", "Super-admin changes require the break-glass owner workflow.");
     }
-    const teamId = membershipSnap.exists ? membershipSnap.get("teamId") ?? null : userSnap.get("teamId") ?? null;
+    const teamId = membershipSnap.get("teamId") ?? null;
     if (newRole === "rep" && !teamId) {
       throw new HttpsError("failed-precondition", "Assign a team before granting the representative role.");
     }
     const now = FieldValue.serverTimestamp();
     transaction.update(userRef, {role: newRole, authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION, updatedAt: now});
-    transaction.set(membershipRef, {
-      associationId: authority.associationId,
+    transaction.update(membershipRef, {
       role: newRole,
       capabilities: capabilitiesForRole(newRole),
-      status: "active",
-      teamId,
-      divisionId: userSnap.get("divisionId") ?? null,
-      seasonId: membershipSnap.exists ? membershipSnap.get("seasonId") ?? null : null,
-      competitionId: membershipSnap.exists ? membershipSnap.get("competitionId") ?? null : null,
-      authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
       updatedAt: now,
-      ...(membershipSnap.exists ? {} : {createdAt: now, source: "adminRoleChange"}),
-    }, {merge: true});
+    });
     transaction.create(db.collection("authorizationAudit").doc(), {
-      action: "member.roleChanged",
+      action: "membership.role.changed",
       actorId: caller.uid,
       subjectId: targetUid,
       associationId: authority.associationId,
-      previousRole: userSnap.get("role") ?? null,
+      previousRole: membershipSnap.get("role"),
       role: newRole,
       createdAt: now,
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     });
   });
-  logger.info("Member role changed", {actorId: caller.uid, subjectId: targetUid, associationId: authority.associationId, role: newRole});
   return {updated: true, role: newRole};
 }
 
 export const provisionFanProfile = onCall(provisionFanProfileHandler);
 export const inspectPrivilegedInvite = onCall(inspectPrivilegedInviteHandler);
 export const redeemPrivilegedInvite = onCall(redeemPrivilegedInviteHandler);
-export const createPrivilegedInvite = onCall(createPrivilegedInviteHandler);
+export const createPrivilegedInvite = process.env.FUNCTIONS_EMULATOR === "true"
+  ? onCall(createPrivilegedInviteHandler)
+  : onCall({secrets: [INVITE_TOKEN_HMAC_KEY_V1]}, createPrivilegedInviteHandler);
 export const revokePrivilegedInvite = onCall(revokePrivilegedInviteHandler);
 export const setMemberRole = onCall(setMemberRoleHandler);

@@ -115,9 +115,6 @@ class AppDefaults {
   static const Duration defaultGameDuration = Duration(hours: 2);
 
   // Invite codes
-  static const String inviteCodeCharset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  static const int inviteCodeDefaultMaxUses = 5;
   static const int inviteCodeDefaultDaysValid = 30;
-  static const List<int> inviteCodeMaxUsesOptions = [1, 5, 10, 25, 50];
   static const List<int> inviteCodeDaysValidOptions = [7, 14, 30, 60, 90];
 }

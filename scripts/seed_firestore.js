@@ -78,6 +78,7 @@ async function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: url.hostname,
+      port: url.port,
       path: url.pathname + url.search,
       method,
       headers: {
@@ -175,24 +176,8 @@ async function seed() {
   }
   console.log('✓ 10 teams created');
 
-  // 5. Invite codes
-  const inviteCodes = [
-    { code: 'THUNDER-2026', teamId: 'thunderbolts', role: 'rep', usesRemaining: 5 },
-    { code: 'BLAZERS-2026', teamId: 'blazers', role: 'rep', usesRemaining: 5 },
-    { code: 'RAPTORS-2026', teamId: 'raptors', role: 'rep', usesRemaining: 5 },
-    { code: 'MEDIA-2026', teamId: '', role: 'media', usesRemaining: 10 },
-    { code: 'ADMIN-2026', teamId: '', role: 'admin', usesRemaining: 3 },
-  ];
-  for (const ic of inviteCodes) {
-    await createDoc('inviteCodes', ic.code, {
-      teamId: ic.teamId,
-      role: ic.role,
-      usesRemaining: ic.usesRemaining,
-      expiresAt: new Date('2026-12-31'),
-      associationId: 'jba',
-    });
-  }
-  console.log('✓ 5 invite codes created');
+  // Invite credentials are never seeded or printed. Use the authorized
+  // createPrivilegedInvite callable so v2 tokens are issued one time.
 
   // 6. Sample posts
   const posts = [
@@ -264,12 +249,7 @@ async function seed() {
   console.log('✓ 3 sample events created');
 
   console.log('\n🏀 Seed complete!\n');
-  console.log('Invite codes:');
-  console.log('  THUNDER-2026  → Thunderbolts (rep)');
-  console.log('  BLAZERS-2026  → Blazers (rep)');
-  console.log('  RAPTORS-2026  → Raptors (rep)');
-  console.log('  MEDIA-2026    → Media role');
-  console.log('  ADMIN-2026    → Admin role');
+  console.log('Invite credentials were not seeded. Issue them through the callable workflow.');
 }
 
 seed().catch(err => {

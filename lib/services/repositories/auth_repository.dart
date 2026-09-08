@@ -11,6 +11,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../firebase_options.dart';
 import '../../models/user_model.dart';
+import '../../models/membership_model.dart';
 
 class AuthRepository {
   static const int authorizationSchemaVersion = 1;
@@ -26,6 +27,13 @@ class AuthRepository {
     return _db.doc(FirestorePaths.user(userId)).snapshots().map((snap) {
       if (!snap.exists) return null;
       return UserModel.fromFirestore(snap);
+    });
+  }
+
+  Stream<MembershipModel?> watchMembership(String userId) {
+    return _db.doc('memberships/$userId').snapshots().map((snap) {
+      if (!snap.exists) return null;
+      return MembershipModel.fromFirestore(snap);
     });
   }
 
@@ -134,13 +142,10 @@ class AuthRepository {
     return userCred;
   }
 
-  /// Ensure a Firestore user document exists for this auth user.
-  /// If not, create one with fan role (default for public self-signup).
+  /// Reconcile the server-owned profile/membership pair. The callable creates
+  /// new public fans, repairs an authority-backed missing profile, and fails
+  /// closed on conflicting or legacy records without changing privileges.
   Future<void> _ensureUserDoc(UserCredential cred) async {
-    final uid = cred.user!.uid;
-    final snap = await _db.doc(FirestorePaths.user(uid)).get();
-    if (snap.exists) return;
-
     await _provisionFanProfile(
       cred.user!.displayName?.trim().isNotEmpty == true
           ? cred.user!.displayName!.trim()

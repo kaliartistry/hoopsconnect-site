@@ -4,12 +4,43 @@ import 'package:hoops_connect/models/user_model.dart';
 void main() {
   /// Helper to create a UserModel with the given role.
   UserModel userWith(UserRole role) {
+    final capabilities = switch (role) {
+      UserRole.superAdmin => {
+        'association.manage',
+        'members.manage',
+        'schedule.manage',
+        'invites.manage',
+        'stats.enter',
+        'stats.approve',
+        'posts.create',
+        'posts.manage',
+        'posts.internal.read',
+        'stats.export',
+        'press.read',
+      },
+      UserRole.admin => {
+        'teams.manage',
+        'stats.enter',
+        'stats.approve',
+        'posts.create',
+        'posts.manage',
+        'posts.internal.read',
+        'stats.export',
+        'press.read',
+      },
+      UserRole.statistician => {'stats.enter', 'posts.internal.read'},
+      UserRole.rep => {'posts.create', 'posts.internal.read'},
+      UserRole.media ||
+      UserRole.press => {'posts.internal.read', 'stats.export', 'press.read'},
+      UserRole.fan => <String>{},
+    };
     return UserModel(
       id: 'test-${role.name}',
       email: '${role.name}@example.com',
       displayName: 'Test ${role.name}',
       associationId: 'jba',
       role: role,
+      capabilities: capabilities,
     );
   }
 

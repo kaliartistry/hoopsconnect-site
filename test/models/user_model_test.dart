@@ -101,6 +101,36 @@ void main() {
 
   group('UserModel', () {
     UserModel createTestUser({UserRole role = UserRole.admin, String? teamId}) {
+      final capabilities = switch (role) {
+        UserRole.superAdmin => {
+          'association.manage',
+          'members.manage',
+          'schedule.manage',
+          'invites.manage',
+          'stats.enter',
+          'stats.approve',
+          'posts.create',
+          'posts.manage',
+          'posts.internal.read',
+          'stats.export',
+          'press.read',
+        },
+        UserRole.admin => {
+          'teams.manage',
+          'stats.enter',
+          'stats.approve',
+          'posts.create',
+          'posts.manage',
+          'posts.internal.read',
+          'stats.export',
+          'press.read',
+        },
+        UserRole.rep => {'posts.create', 'posts.internal.read'},
+        UserRole.media ||
+        UserRole.press => {'posts.internal.read', 'stats.export', 'press.read'},
+        UserRole.statistician => {'stats.enter', 'posts.internal.read'},
+        UserRole.fan => <String>{},
+      };
       return UserModel(
         id: 'u1',
         email: 'test@example.com',
@@ -108,6 +138,7 @@ void main() {
         associationId: 'jba',
         role: role,
         teamId: teamId,
+        capabilities: capabilities,
       );
     }
 
@@ -166,6 +197,23 @@ void main() {
     // ──── Permission getters ────
 
     group('permission getters', () {
+      test(
+        'a privileged role label without membership capabilities grants nothing',
+        () {
+          final user = UserModel(
+            id: 'legacy',
+            email: 'legacy@example.com',
+            displayName: 'Legacy',
+            associationId: 'jba',
+            role: UserRole.superAdmin,
+          );
+          expect(user.canAccessAdminPanel, false);
+          expect(user.canManageUsers, false);
+          expect(user.canCreatePost, false);
+          expect(user.canEnterStats, false);
+        },
+      );
+
       test('superAdmin has all permissions', () {
         final user = createTestUser(role: UserRole.superAdmin);
         expect(user.isSuperAdmin, true);

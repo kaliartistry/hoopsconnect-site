@@ -49,6 +49,13 @@ association/team scope, invite lifecycle, or audit entries.
   tenant, team, UID, and email claims.
 - Privileged codes are random, single-purpose, single-use, expire in at most 30
   days, and are constrained to the inviter's association and grant authority.
+- A raw invite is a 256-bit URL-safe bearer derived for one authenticated
+  issuance operation. Firestore stores only its SHA-256 invite identifier;
+  inspection never echoes it and manager listings cannot recover it.
+- Creation and redemption use actor-, operation-, payload-, association-, and
+  invite-bound server-private receipts. Exact retries return the original
+  semantic result without creating or consuming a second invite. Receipts and
+  audits contain no bearer credential.
 - Redemption is one Firestore transaction covering invite validation,
   association/team validation, profile assignment, membership creation, invite
   consumption, and the audit record.
@@ -56,10 +63,14 @@ association/team scope, invite lifecycle, or audit entries.
   replayed codes fail closed.
 - Legacy or statically seeded invite documents are rejected. Only random,
   single-use authorization-schema-v1 invites can be inspected or redeemed.
+- `memberships/{uid}` is the single-association account invariant. A second,
+  suspended, revoked, split, or mismatched record fails closed and requires an
+  explicit audited recovery/transfer workflow.
 
 ## Private and public data
 
-- users, memberships, authorizationAudit, and inviteCodes are private.
+- users, memberships, authorizationAudit, authorizationOperationReceipts, and
+  inviteCodes are private.
 - Fans can read their own user record, not the user directory.
 - Staff directory reads require members.read and a same-association query.
 - Fans can read only posts explicitly marked public with requiresAck false;
@@ -83,7 +94,7 @@ clients receive failed-precondition. Before activating schema v1 remotely:
 4. Ship the compatible client and Functions first.
 5. Backfill explicit post visibility and wait for the required index.
 6. Create reviewed memberships for approved users and revoke every legacy or
-   static invite, including NBL-ADMIN and ADMIN-2026 if present.
+   static invite found by the aggregate migration audit.
 7. Tighten rules only after callable health and client adoption are verified.
 8. Reject clients below the association's later
    minimumAuthorizationSchemaVersion.

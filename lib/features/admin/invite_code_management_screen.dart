@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/invite_code_model.dart';
 import '../../providers/auth_providers.dart';
+import '../../services/repositories/invite_code_repository.dart';
 
 class InviteCodeManagementScreen extends ConsumerStatefulWidget {
   const InviteCodeManagementScreen({super.key});
@@ -51,6 +52,7 @@ class _InviteCodeManagementScreenState
     String role = 'rep';
     int daysValid = AppDefaults.inviteCodeDefaultDaysValid;
     final teamIdController = TextEditingController();
+    final operationId = newInviteOperationId();
 
     showDialog(
       context: context,
@@ -113,19 +115,24 @@ class _InviteCodeManagementScreenState
                 final teamId = teamIdController.text.trim();
                 if (role == 'rep' && teamId.isEmpty) return;
 
-                final code = await ref
+                final issued = await ref
                     .read(inviteCodeRepositoryProvider)
                     .createCode(
                       role: role,
                       teamId: teamId.isEmpty ? null : teamId,
                       daysValid: daysValid,
+                      operationId: operationId,
                     );
-                await Clipboard.setData(ClipboardData(text: code.code));
+                await Clipboard.setData(ClipboardData(text: issued.code));
                 if (ctx.mounted) Navigator.pop(ctx);
                 _loadCodes();
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${code.code} created and copied')),
+                    const SnackBar(
+                      content: Text(
+                        'Invite created and copied. It cannot be viewed again.',
+                      ),
+                    ),
                   );
                 }
               },
@@ -188,7 +195,7 @@ class _InviteCodeManagementScreenState
                     onDelete: () async {
                       await ref
                           .read(inviteCodeRepositoryProvider)
-                          .deleteCode(code.code);
+                          .revokeCode(code.inviteId);
                       _loadCodes();
                     },
                   );
@@ -239,7 +246,7 @@ class _CodeCard extends StatelessWidget {
         title: Row(
           children: [
             Text(
-              code.code,
+              code.displayId,
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
@@ -272,15 +279,6 @@ class _CodeCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: const Icon(Icons.copy, size: 18),
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: code.code));
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('Code copied')));
-              },
-            ),
-            IconButton(
               icon: const Icon(
                 Icons.delete_outline,
                 size: 18,
@@ -292,7 +290,7 @@ class _CodeCard extends StatelessWidget {
                   builder: (ctx) => AlertDialog(
                     title: const Text('Revoke Code'),
                     content: Text(
-                      'Revoke invite code "${code.code}"? It cannot be used afterward.',
+                      'Revoke invite "${code.displayId}"? It cannot be used afterward.',
                     ),
                     actions: [
                       TextButton(

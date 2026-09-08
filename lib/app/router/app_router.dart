@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../providers/auth_providers.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/auth/join_screen.dart';
+import '../../features/auth/access_blocked_screen.dart';
 import '../../features/board/board_screen.dart';
 import '../../features/board/create_post_screen.dart';
 import '../../features/stats/leaderboard_screen.dart';
@@ -49,12 +50,13 @@ final _pressNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'press');
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
   final currentUser = ref.watch(currentUserProvider);
+  final accessStatus = ref.watch(accountAccessStatusProvider);
 
   return GoRouter(
     initialLocation: '/board',
     redirect: (context, state) {
       // While auth is still loading, show the branded loading screen
-      if (authState.isLoading || currentUser.isLoading) {
+      if (accessStatus == AccountAccessStatus.loading) {
         return state.matchedLocation == '/loading' ? null : '/loading';
       }
 
@@ -66,6 +68,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           state.matchedLocation.startsWith('/legal') ||
           state.matchedLocation == '/about';
       final isLoadingRoute = state.matchedLocation == '/loading';
+      final isBlockedRoute = state.matchedLocation == '/access-blocked';
 
       // Not logged in? Go to login (unless already on auth/public page)
       if (!isLoggedIn) {
@@ -74,8 +77,12 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       // An authenticated invitee may not have a profile until the callable
       // redemption transaction succeeds. Keep that recovery path reachable.
-      if (isLoggedIn && userDoc == null) {
+      if (accessStatus == AccountAccessStatus.pendingProvisioning) {
         return state.matchedLocation == '/join' ? null : '/join';
+      }
+
+      if (accessStatus == AccountAccessStatus.blocked) {
+        return isBlockedRoute ? null : '/access-blocked';
       }
 
       // Logged in with a profile but on auth or loading page? Go to board
@@ -92,16 +99,16 @@ final routerProvider = Provider<GoRouter>((ref) {
           return '/board';
         }
 
-        // superAdmin-only routes
-        const superAdminRoutes = [
-          '/admin/users',
-          '/admin/divisions',
-          '/admin/invite-codes',
-          '/admin/schedule',
-          '/admin/schedule/add-game',
-          '/admin/schedule/generate',
-        ];
-        if (superAdminRoutes.contains(loc) && !userDoc.isSuperAdmin) {
+        if (loc == '/admin/users' && !userDoc.canManageUsers) {
+          return '/admin';
+        }
+        if (loc == '/admin/divisions' && !userDoc.canManageDivisions) {
+          return '/admin';
+        }
+        if (loc == '/admin/invite-codes' && !userDoc.canManageInviteCodes) {
+          return '/admin';
+        }
+        if (loc.startsWith('/admin/schedule') && !userDoc.canManageSchedule) {
           return '/admin';
         }
 
@@ -138,6 +145,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Auth routes (no shell)
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(path: '/join', builder: (context, state) => const JoinScreen()),
+      GoRoute(
+        path: '/access-blocked',
+        builder: (context, state) => const AccessBlockedScreen(),
+      ),
 
       // Info & Legal (no auth required for legal from login screen)
       GoRoute(path: '/about', builder: (context, state) => const AboutScreen()),

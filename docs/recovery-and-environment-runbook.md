@@ -22,8 +22,8 @@ Read-only GCP/Firebase inspection on 2026-09-08 found:
 - The aggregate Firestore authorization audit found three users (two with
   privileged legacy roles), zero membership records, and three users requiring
   reviewed membership creation.
-- Both known static privileged invite documents, NBL-ADMIN and ADMIN-2026,
-  exist in production.
+- Two legacy static privileged invite documents existed at the recorded audit
+  date; their bearer values are intentionally omitted here.
 - All 11 existing posts lack an explicit visibility field; none are marked as
   public posts containing acknowledgments.
 

@@ -20,7 +20,7 @@ class AdminPanelScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUser = ref.watch(currentUserProvider).value;
-    final isSuperAdmin = currentUser?.isSuperAdmin ?? false;
+    final hasLeagueManagement = currentUser?.canManageUsers ?? false;
     final teamsAsync = ref.watch(teamsStreamProvider);
     final ackPostsAsync = ref.watch(postsRequiringAckProvider);
     final gamesAsync = ref.watch(gamesNeedingStatsProvider);
@@ -175,7 +175,7 @@ class AdminPanelScreen extends ConsumerWidget {
                     const SizedBox(height: 16),
                     for (final item in sharedItems)
                       _sidebarItem(item),
-                    if (isSuperAdmin) ...[
+                    if (hasLeagueManagement) ...[
                       const Padding(
                         padding: EdgeInsets.only(top: 16, bottom: 8, left: 4),
                         child: Text(
@@ -252,7 +252,7 @@ class AdminPanelScreen extends ConsumerWidget {
         padding: const EdgeInsets.all(16),
         children: [
           seasonCard,
-          if (isSuperAdmin) ...[
+          if (hasLeagueManagement) ...[
             const SizedBox(height: 12),
             _RolePreviewSelector(ref: ref),
           ],
@@ -271,7 +271,7 @@ class AdminPanelScreen extends ConsumerWidget {
             ),
 
           // --- superAdmin-only items ---
-          if (isSuperAdmin) ...[
+          if (hasLeagueManagement) ...[
             const Padding(
               padding: EdgeInsets.only(top: 16, bottom: 8, left: 4),
               child: Text(
@@ -297,7 +297,7 @@ class AdminPanelScreen extends ConsumerWidget {
           ],
 
           const SizedBox(height: 16),
-          if (isSuperAdmin) ...[
+          if (hasLeagueManagement) ...[
             OutlinedButton(
               onPressed: () => _showArchiveSeasonDialog(context, ref),
               child: const Text('Archive Season'),

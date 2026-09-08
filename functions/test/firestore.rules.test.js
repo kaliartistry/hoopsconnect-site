@@ -313,6 +313,7 @@ test('legacy role-only users and suspended authors cannot mutate protected data'
 });
 
 test('invite lifecycle cannot be modified by a client', async () => {
+  const inviteId = 'v2_' + 'a'.repeat(64);
   await seed(async (db) => {
     await setDoc(doc(db, 'users/root'), {
       email: 'root@example.com',
@@ -327,17 +328,25 @@ test('invite lifecycle cannot be modified by a client', async () => {
       authorizationSchemaVersion: 1,
       capabilities: ['invites.manage'],
     });
-    await setDoc(doc(db, 'inviteCodes/CODE123'), {
+    await setDoc(doc(db, 'inviteCodes/' + inviteId), {
+      inviteId,
+      credentialVersion: 2,
       associationId: 'jba',
       role: 'media',
       status: 'active',
       usesRemaining: 1,
     });
+    await setDoc(doc(db, 'authorizationOperationReceipts/private'), {
+      actorId: 'root',
+      associationId: 'jba',
+      operation: 'invite.create',
+    });
   });
   const root = authed('root', 'root@example.com');
-  await assertSucceeds(getDoc(doc(root, 'inviteCodes/CODE123')));
+  await assertSucceeds(getDoc(doc(root, 'inviteCodes/' + inviteId)));
+  await assertFails(getDoc(doc(root, 'authorizationOperationReceipts/private')));
   await assertFails(
-    updateDoc(doc(root, 'inviteCodes/CODE123'), {usesRemaining: 0}),
+    updateDoc(doc(root, 'inviteCodes/' + inviteId), {usesRemaining: 0}),
   );
   await assertFails(
     setDoc(doc(root, 'inviteCodes/FORGED1'), {

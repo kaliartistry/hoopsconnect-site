@@ -113,10 +113,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    match /inviteCodes/{code} {
+    match /inviteCodes/{inviteId} {
       allow get, list: if hasCapability('invites.manage')
         && resource.data.associationId == currentAssociationId();
       allow create, update, delete: if false;
+    }
+
+    // Callable-only idempotency records. They contain no bearer secrets, but
+    // remain server-private to prevent operation replay analysis.
+    match /authorizationOperationReceipts/{receiptId} {
+      allow read, write: if false;
     }
 
     // ── Association-scoped private application data ────────────────

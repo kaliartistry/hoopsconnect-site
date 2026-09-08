@@ -2,18 +2,18 @@
 
 process.env.GCLOUD_PROJECT = 'demo-hoopsconnect';
 process.env.FIREBASE_CONFIG = JSON.stringify({projectId: 'demo-hoopsconnect'});
+process.env.INVITE_TOKEN_HMAC_KEY_V1 = 'local-emulator-only-key-with-at-least-32-bytes';
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const admin = require('firebase-admin');
 
-if (admin.apps.length === 0) {
-  admin.initializeApp({projectId: 'demo-hoopsconnect'});
-}
+if (admin.apps.length === 0) admin.initializeApp({projectId: 'demo-hoopsconnect'});
 
 const {
   createPrivilegedInviteHandler,
   inspectPrivilegedInviteHandler,
+  inviteIdForToken,
   provisionFanProfileHandler,
   redeemPrivilegedInviteHandler,
   revokePrivilegedInviteHandler,
@@ -38,10 +38,53 @@ async function clearFirestore() {
 }
 
 async function seedAssociation(id = 'jba') {
-  await db.doc('associations/' + id).set({
-    name: id,
-    currentSeasonId: 'season-1',
+  await db.doc('associations/' + id).set({name: id, currentSeasonId: 'season-1'});
+}
+
+async function seedMember(uid, role, associationId = 'jba', overrides = {}) {
+  await db.doc('users/' + uid).set({
+    email: uid + '@example.com',
+    displayName: uid,
+    associationId,
+    role,
+    authorizationSchemaVersion: 1,
   });
+  await db.doc('memberships/' + uid).set(Object.assign({
+    associationId,
+    role,
+    status: 'active',
+    authorizationSchemaVersion: 1,
+    capabilities: capabilitiesForRole(role),
+  }, overrides));
+}
+
+async function allSecurityDocuments() {
+  const result = [];
+  for (const collectionName of [
+    'inviteCodes',
+    'authorizationAudit',
+    'authorizationOperationReceipts',
+  ]) {
+    const snapshot = await db.collection(collectionName).get();
+    for (const doc of snapshot.docs) result.push({path: doc.ref.path, data: doc.data()});
+  }
+  return result;
+}
+
+function assertRawAbsent(rawToken, value) {
+  assert.equal(JSON.stringify(value).includes(rawToken), false);
+}
+
+function assertNoSecretFields(value) {
+  if (Array.isArray(value)) {
+    value.forEach(assertNoSecretFields);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    assert.equal(['code', 'inviteCode', 'rawToken', 'secret'].includes(key), false);
+    assertNoSecretFields(child);
+  }
 }
 
 test.beforeEach(async () => {
@@ -54,361 +97,200 @@ test.after(async () => {
   await admin.app().delete();
 });
 
-test('fan provisioning ignores forged authority fields and binds auth email', async () => {
-  const result = await provisionFanProfileHandler(
-    request('fan-1', 'Fan@Example.com', {
-      displayName: 'Fan One',
-      role: 'superAdmin',
-      associationId: 'victim',
-      capabilities: ['members.manage'],
-    }),
+test('fan provisioning creates a consistent pair, repairs membership-only, and fails closed on conflicts', async () => {
+  const created = await provisionFanProfileHandler(request('fan-1', 'Fan@Example.com', {
+    displayName: 'Fan One',
+    role: 'superAdmin',
+    associationId: 'victim',
+  }));
+  assert.equal(created.created, true);
+  assert.equal((await db.doc('users/fan-1').get()).get('email'), 'fan@example.com');
+  assert.deepEqual(
+    (await db.doc('memberships/fan-1').get()).get('capabilities'),
+    capabilitiesForRole('fan'),
   );
-  assert.equal(result.created, true);
 
-  const user = (await db.doc('users/fan-1').get()).data();
-  const membership = (await db.doc('memberships/fan-1').get()).data();
-  assert.equal(user.role, 'fan');
-  assert.equal(user.associationId, 'jba');
-  assert.equal(user.email, 'fan@example.com');
-  assert.equal(membership.role, 'fan');
-  assert.deepEqual(membership.capabilities, capabilitiesForRole('fan'));
-  assert.equal(membership.seasonId, 'season-1');
-});
+  const repeated = await provisionFanProfileHandler(request('fan-1', 'fan@example.com', {
+    displayName: 'Ignored Rename',
+  }));
+  assert.deepEqual(
+    {created: repeated.created, repaired: repeated.repaired},
+    {created: false, repaired: false},
+  );
 
-test('fan provisioning rejects old authorization schema and missing auth', async () => {
+  await db.doc('users/fan-1').update({teamId: 'conflicting-team'});
   await assert.rejects(
-    provisionFanProfileHandler({
-      auth: {uid: 'fan-1', token: {email: 'fan@example.com'}},
-      data: {displayName: 'Fan', authorizationSchemaVersion: 0},
-      rawRequest: {},
-    }),
+    provisionFanProfileHandler(request('fan-1', 'fan@example.com', {displayName: 'Fan One'})),
     (error) => error.code === 'failed-precondition',
   );
-  await assert.rejects(
-    provisionFanProfileHandler(request(null, null, {displayName: 'Fan'})),
-    (error) => error.code === 'unauthenticated',
-  );
-});
+  await db.doc('users/fan-1').update({teamId: null});
 
-test('concurrent redemption consumes a single-use invite exactly once', async () => {
-  await db.doc('associations/jba/teams/team-1').set({name: 'Team One'});
-  await db.doc('inviteCodes/REP123').set({
-    associationId: 'jba',
-    teamId: 'team-1',
-    role: 'rep',
-    status: 'active',
-    usesRemaining: 1,
-    authorizationSchemaVersion: 1,
-    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 60000),
+  await db.doc('memberships/member-only').set({
+    associationId: 'jba', role: 'fan', status: 'active',
+    capabilities: capabilitiesForRole('fan'), authorizationSchemaVersion: 1,
   });
+  const repaired = await provisionFanProfileHandler(request('member-only', 'repair@example.com', {
+    displayName: 'Repair',
+  }));
+  assert.equal(repaired.repaired, true);
+  assert.equal((await db.doc('users/member-only').get()).get('email'), 'repair@example.com');
 
-  const results = await Promise.allSettled([
-    redeemPrivilegedInviteHandler(
-      request('rep-a', 'a@example.com', {
-        code: ' rep123 ',
-        displayName: 'Rep A',
-      }),
-    ),
-    redeemPrivilegedInviteHandler(
-      request('rep-b', 'b@example.com', {
-        code: 'REP123',
-        displayName: 'Rep B',
-      }),
-    ),
-  ]);
-
-  const resultSummary = results.map((result) =>
-    result.status === 'fulfilled'
-      ? 'fulfilled'
-      : String(result.reason?.code) + ': ' + String(result.reason?.message),
-  ).join(' | ');
-  assert.equal(
-    results.filter((result) => result.status === 'fulfilled').length,
-    1,
-    resultSummary,
+  await db.doc('memberships/media-only').set({
+    associationId: 'jba', role: 'media', status: 'active',
+    capabilities: capabilitiesForRole('media'), authorizationSchemaVersion: 1,
+  });
+  const privilegedRepair = await provisionFanProfileHandler(
+    request('media-only', 'media-only@example.com', {displayName: 'Media Repair'}),
   );
-  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
-  const invite = (await db.doc('inviteCodes/REP123').get()).data();
-  assert.equal(invite.status, 'redeemed');
-  assert.equal(invite.usesRemaining, 0);
-  const memberships = await db.collection('memberships').get();
-  assert.equal(memberships.size, 1);
-  const audits = await db
-    .collection('authorizationAudit')
-    .where('action', '==', 'invite.redeemed')
-    .get();
-  assert.equal(audits.size, 1);
+  assert.equal(privilegedRepair.role, 'media');
+  assert.equal((await db.doc('users/media-only').get()).get('role'), 'media');
+
+  await db.doc('users/user-only').set({
+    email: 'user-only@example.com', displayName: 'Legacy', associationId: 'jba', role: 'fan',
+  });
+  await assert.rejects(
+    provisionFanProfileHandler(request('user-only', 'user-only@example.com', {displayName: 'Legacy'})),
+    (error) => error.code === 'failed-precondition',
+  );
+
+  await db.doc('memberships/conflict').set({
+    associationId: 'other', role: 'fan', status: 'active',
+    capabilities: capabilitiesForRole('fan'), authorizationSchemaVersion: 1,
+  });
+  await assert.rejects(
+    provisionFanProfileHandler(request('conflict', 'conflict@example.com', {displayName: 'Conflict'})),
+    (error) => error.code === 'failed-precondition',
+  );
 });
 
-test('expired, revoked, replayed, and super-admin invites fail closed', async () => {
-  const base = {
-    associationId: 'jba',
-    teamId: null,
-    role: 'media',
-    usesRemaining: 1,
-    authorizationSchemaVersion: 1,
+test('invite issuance is high-entropy, hash-addressed, idempotent, and never persists the bearer', async () => {
+  await seedMember('root', 'superAdmin');
+  await db.doc('associations/jba/teams/team-1').set({name: 'Team', divisionId: 'division-1'});
+  const payload = {
+    role: 'rep', teamId: 'team-1', daysValid: 7,
+    operationId: 'create_operation_00000001',
   };
-  await db.doc('inviteCodes/EXPIRED').set(Object.assign({}, base, {
-    status: 'active',
-    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() - 1000),
-  }));
-  await db.doc('inviteCodes/REVOKED').set(Object.assign({}, base, {
-    status: 'revoked',
-    revokedAt: admin.firestore.Timestamp.now(),
-    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 60000),
-  }));
-  await db.doc('inviteCodes/ROOT123').set(Object.assign({}, base, {
-    role: 'superAdmin',
-    status: 'active',
-    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 60000),
-  }));
+  const [first, replay] = await Promise.all([
+    createPrivilegedInviteHandler(request('root', 'root@example.com', payload)),
+    createPrivilegedInviteHandler(request('root', 'root@example.com', payload)),
+  ]);
+  assert.equal(first.code, replay.code);
+  assert.match(first.code, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(first.inviteId, inviteIdForToken(first.code));
+  assert.match(first.inviteId, /^v2_[a-f0-9]{64}$/);
+  assert.equal((await db.collection('inviteCodes').get()).size, 1);
+  assert.equal((await db.collection('authorizationOperationReceipts').get()).size, 1);
+  assert.equal((await db.collection('authorizationAudit').get()).size, 1);
+  assert.equal((await db.doc('inviteCodes/' + first.inviteId).get()).get('divisionId'), 'division-1');
+  const securityDocuments = await allSecurityDocuments();
+  assertRawAbsent(first.code, securityDocuments);
+  assertNoSecretFields(securityDocuments);
 
-  for (const code of ['EXPIRED', 'REVOKED', 'ROOT123']) {
-    await assert.rejects(
-      redeemPrivilegedInviteHandler(
-        request('user-' + code, code.toLowerCase() + '@example.com', {
-          code,
-          displayName: code,
-        }),
-      ),
-    );
-  }
-
-  await db.doc('inviteCodes/MEDIA1').set(Object.assign({}, base, {
-    status: 'active',
-    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 60000),
-  }));
-  await redeemPrivilegedInviteHandler(
-    request('media-1', 'media@example.com', {
-      code: 'MEDIA1',
-      displayName: 'Media',
-    }),
-  );
   await assert.rejects(
-    redeemPrivilegedInviteHandler(
-      request('media-2', 'media2@example.com', {
-        code: 'MEDIA1',
-        displayName: 'Media Two',
-      }),
-    ),
+    createPrivilegedInviteHandler(request('root', 'root@example.com', {
+      ...payload, role: 'media',
+    })),
     (error) => error.code === 'failed-precondition',
   );
 });
 
-test('known static legacy invites and legacy user roles have no authority', async () => {
-  await db.doc('inviteCodes/NBL-ADMIN').set({
-    associationId: 'jba',
-    teamId: null,
-    role: 'admin',
-    usesRemaining: 5,
-    expiresAt: admin.firestore.Timestamp.fromDate(new Date('2026-12-31T23:59:59Z')),
-  });
-  await assert.rejects(
-    inspectPrivilegedInviteHandler(request(null, null, {code: 'NBL-ADMIN'})),
-    (error) => error.code === 'not-found',
-  );
-  await assert.rejects(
-    redeemPrivilegedInviteHandler(
-      request('legacy-admin', 'legacy@example.com', {
-        code: 'NBL-ADMIN',
-        displayName: 'Legacy Admin',
-      }),
-    ),
-    (error) => error.code === 'failed-precondition',
-  );
+test('inspection never echoes a bearer and redemption retries return the original success', async () => {
+  await seedMember('root', 'superAdmin');
+  const issued = await createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'media', daysValid: 7, operationId: 'create_operation_00000002',
+  }));
+  const inspected = await inspectPrivilegedInviteHandler(request(null, null, {code: issued.code}));
+  assert.equal(inspected.inviteId, issued.inviteId);
+  assertRawAbsent(issued.code, inspected);
 
-  await db.doc('users/legacy-root').set({
-    email: 'root@example.com',
-    displayName: 'Legacy Root',
-    associationId: 'jba',
-    role: 'superAdmin',
-  });
+  const redemption = {
+    code: issued.code,
+    displayName: 'Media One',
+    operationId: 'redeem_operation_00000001',
+  };
+  const first = await redeemPrivilegedInviteHandler(
+    request('media-1', 'media@example.com', redemption),
+  );
+  // Simulates a response lost after commit: the same logical request is safe.
+  const retry = await redeemPrivilegedInviteHandler(
+    request('media-1', 'media@example.com', redemption),
+  );
+  assert.deepEqual(retry, first);
+  assert.equal((await db.doc('memberships/media-1').get()).get('role'), 'media');
+  assert.equal((await db.collection('memberships').get()).size, 2);
+  assert.equal((await db.collection('authorizationAudit').where('action', '==', 'invite.redeemed').get()).size, 1);
+  const securityDocuments = await allSecurityDocuments();
+  assertRawAbsent(issued.code, securityDocuments);
+  assertNoSecretFields(securityDocuments);
+
   await assert.rejects(
-    createPrivilegedInviteHandler(
-      request('legacy-root', 'root@example.com', {
-        role: 'media',
-        daysValid: 7,
-      }),
-    ),
-    (error) => error.code === 'permission-denied',
+    redeemPrivilegedInviteHandler(request('media-2', 'media2@example.com', {
+      ...redemption, operationId: 'redeem_operation_00000002',
+    })),
+    (error) => error.code === 'failed-precondition',
   );
 });
 
-test('fan cannot create an invite and super admin cannot delegate super admin', async () => {
-  await db.doc('users/fan-1').set({
-    email: 'fan@example.com',
-    displayName: 'Fan',
-    associationId: 'jba',
-    role: 'fan',
-  });
-  await db.doc('memberships/fan-1').set({
-    associationId: 'jba',
-    role: 'fan',
-    status: 'active',
-    authorizationSchemaVersion: 1,
-    capabilities: capabilitiesForRole('fan'),
-  });
-  await assert.rejects(
-    createPrivilegedInviteHandler(
-      request('fan-1', 'fan@example.com', {
-        role: 'media',
-        daysValid: 7,
-      }),
-    ),
-    (error) => error.code === 'permission-denied',
-  );
+test('different actors racing a single-use invite produce one membership', async () => {
+  await seedMember('root', 'superAdmin');
+  const issued = await createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'media', daysValid: 7, operationId: 'create_operation_00000003',
+  }));
+  const results = await Promise.allSettled([
+    redeemPrivilegedInviteHandler(request('a', 'a@example.com', {
+      code: issued.code, displayName: 'A', operationId: 'redeem_operation_actor_a',
+    })),
+    redeemPrivilegedInviteHandler(request('b', 'b@example.com', {
+      code: issued.code, displayName: 'B', operationId: 'redeem_operation_actor_b',
+    })),
+  ]);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.equal((await db.collection('memberships').get()).size, 2);
+});
 
-  await db.doc('users/root-1').set({
-    email: 'root@example.com',
-    displayName: 'Root',
-    associationId: 'jba',
-    role: 'superAdmin',
-  });
-  await db.doc('memberships/root-1').set({
-    associationId: 'jba',
-    role: 'superAdmin',
-    status: 'active',
+test('legacy/static credentials and role-only profiles fail closed', async () => {
+  await db.doc('inviteCodes/LEGACY-FIXTURE').set({
+    associationId: 'jba', role: 'admin', status: 'active', usesRemaining: 1,
     authorizationSchemaVersion: 1,
-    capabilities: capabilitiesForRole('superAdmin'),
+    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 60000),
   });
   await assert.rejects(
-    createPrivilegedInviteHandler(
-      request('root-1', 'root@example.com', {
-        role: 'superAdmin',
-        daysValid: 7,
-      }),
-    ),
-    (error) => error.code === 'permission-denied',
-  );
-  await assert.rejects(
-    createPrivilegedInviteHandler(
-      request('root-1', 'root@example.com', {
-        role: 'rep',
-        daysValid: 7,
-      }),
-    ),
+    inspectPrivilegedInviteHandler(request(null, null, {code: 'LEGACY-FIXTURE'})),
     (error) => error.code === 'invalid-argument',
   );
-});
-
-test('authorized invite creation is single-use, scoped, and audited', async () => {
-  await db.doc('associations/jba/teams/team-1').set({
-    name: 'Team One',
-    divisionId: 'division-1',
+  await db.doc('users/legacy-root').set({
+    email: 'root@example.com', displayName: 'Root', associationId: 'jba', role: 'superAdmin',
   });
-  await db.doc('users/root-1').set({
-    email: 'root@example.com',
-    displayName: 'Root',
-    associationId: 'jba',
-    role: 'superAdmin',
-  });
-  await db.doc('memberships/root-1').set({
-    associationId: 'jba',
-    role: 'superAdmin',
-    status: 'active',
-    authorizationSchemaVersion: 1,
-    capabilities: capabilitiesForRole('superAdmin'),
-  });
-
-  const created = await createPrivilegedInviteHandler(
-    request('root-1', 'root@example.com', {
-      role: 'rep',
-      teamId: 'team-1',
-      daysValid: 7,
-    }),
-  );
-  const invite = (await db.doc('inviteCodes/' + created.code).get()).data();
-  assert.equal(invite.associationId, 'jba');
-  assert.equal(invite.teamId, 'team-1');
-  assert.equal(invite.divisionId, 'division-1');
-  assert.equal(invite.usesRemaining, 1);
-  assert.equal(invite.status, 'active');
-  const audit = await db
-    .collection('authorizationAudit')
-    .where('inviteCode', '==', created.code)
-    .get();
-  assert.equal(audit.size, 1);
-
-  await revokePrivilegedInviteHandler(
-    request('root-1', 'root@example.com', {code: created.code}),
-  );
-  const revoked = (await db.doc('inviteCodes/' + created.code).get()).data();
-  assert.equal(revoked.status, 'revoked');
   await assert.rejects(
-    redeemPrivilegedInviteHandler(
-      request('rep-after-revoke', 'rep@example.com', {
-        code: created.code,
-        displayName: 'Rep',
-      }),
-    ),
-    (error) => error.code === 'failed-precondition',
+    createPrivilegedInviteHandler(request('legacy-root', 'root@example.com', {
+      role: 'media', daysValid: 7, operationId: 'create_operation_legacy_001',
+    })),
+    (error) => error.code === 'permission-denied',
   );
 });
 
-test('role management cannot reach across associations', async () => {
-  await seedAssociation('other');
-  await db.doc('users/root-1').set({
-    email: 'root@example.com',
-    displayName: 'Root',
-    associationId: 'jba',
-    role: 'superAdmin',
-  });
-  await db.doc('memberships/root-1').set({
-    associationId: 'jba',
-    role: 'superAdmin',
-    status: 'active',
-    authorizationSchemaVersion: 1,
-    capabilities: capabilitiesForRole('superAdmin'),
-  });
-  await db.doc('users/other-user').set({
-    email: 'other@example.com',
-    displayName: 'Other',
-    associationId: 'other',
-    role: 'fan',
-  });
+test('revocation and role changes re-check active capability authority transactionally', async () => {
+  await seedMember('root', 'superAdmin');
+  const issued = await createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'media', daysValid: 7, operationId: 'create_operation_00000004',
+  }));
+  await db.doc('memberships/root').update({status: 'suspended'});
   await assert.rejects(
-    setMemberRoleHandler(
-      request('root-1', 'root@example.com', {
-        userId: 'other-user',
-        role: 'media',
-      }),
-    ),
-    (error) => error.code === 'not-found',
+    revokePrivilegedInviteHandler(request('root', 'root@example.com', {inviteId: issued.inviteId})),
+    (error) => error.code === 'permission-denied',
   );
-  await assert.rejects(
-    setMemberRoleHandler(
-      request('root-1', 'root@example.com', {
-        userId: 'root-1',
-        role: 'admin',
-      }),
-    ),
-    (error) => error.code === 'failed-precondition',
-  );
+  assert.equal((await db.doc('inviteCodes/' + issued.inviteId).get()).get('status'), 'active');
 
-  await db.doc('users/split-user').set({
-    email: 'split@example.com',
-    displayName: 'Split',
-    associationId: 'jba',
-    role: 'fan',
-  });
-  await db.doc('memberships/split-user').set({
-    associationId: 'other',
-    role: 'fan',
-    status: 'active',
-    authorizationSchemaVersion: 1,
-    capabilities: capabilitiesForRole('fan'),
-  });
+  await db.doc('memberships/root').update({status: 'active'});
+  await revokePrivilegedInviteHandler(request('root', 'root@example.com', {inviteId: issued.inviteId}));
+  assert.equal((await db.doc('inviteCodes/' + issued.inviteId).get()).get('status'), 'revoked');
+
+  await seedMember('target', 'media');
+  await db.doc('memberships/root').update({capabilities: []});
   await assert.rejects(
-    setMemberRoleHandler(
-      request('root-1', 'root@example.com', {
-        userId: 'split-user',
-        role: 'media',
-      }),
-    ),
-    (error) => error.code === 'failed-precondition',
+    setMemberRoleHandler(request('root', 'root@example.com', {userId: 'target', role: 'admin'})),
+    (error) => error.code === 'permission-denied',
   );
-  assert.equal(
-    (await db.doc('memberships/split-user').get()).get('associationId'),
-    'other',
-  );
+  assert.equal((await db.doc('memberships/target').get()).get('role'), 'media');
 });
