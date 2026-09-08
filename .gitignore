@@ -67,6 +67,9 @@ firebase-service-account*.json
 google-play-service-account*.json
 service-account*.json
 
+# Owner-readable production readiness evidence and pseudonym keys
+.local/production-readiness/
+
 # Firebase service configs (contain API keys / project IDs)
 # Uncomment below if you want to keep these out of version control.
 # They are safe to commit (restricted by security rules + App Check),

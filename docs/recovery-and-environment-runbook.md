@@ -19,13 +19,18 @@ Read-only GCP/Firebase inspection on 2026-09-08 found:
   roles/firebase.admin member.
 - The authenticated Firebase project list contains no separate HoopsConnect
   staging project.
-- The aggregate Firestore authorization audit found three users (two with
-  privileged legacy roles), zero membership records, and three users requiring
-  reviewed membership creation.
-- Two legacy static privileged invite documents existed at the recorded audit
-  date; their bearer values are intentionally omitted here.
+- The authorization audit found five Firebase Auth identities, three Firestore
+  profiles (two with privileged legacy roles), two Auth identities without a
+  profile, zero membership records, and five accounts requiring manual review.
+- Thirty-one legacy privileged invite documents existed at the recorded audit
+  date; their identifiers and bearer values are intentionally omitted here.
 - All 11 existing posts lack an explicit visibility field; none are marked as
   public posts containing acknowledgments.
+- The application Storage bucket contains no objects and the data contains no
+  post image or team logo URL references.
+- The live Hosting site has no releases and returns the provider's 404 Site Not
+  Found response on both default domains.
+- App Check is unenforced for Firestore, Storage, Identity Toolkit, and OAuth.
 
 These are current observations, not completion claims. The single Owner,
 disabled PITR/delete protection, absent scheduled backup, missing memberships,
@@ -64,12 +69,22 @@ node scripts/check_repository_safety.js
 node scripts/audit_production_foundation.js \
   --project=hoops-connect-jm \
   --allow-production-read=hoops-connect-jm
+node scripts/audit_production_readiness_data.js \
+  --project=hoops-connect-jm \
+  --allow-production-read=hoops-connect-jm \
+  --association=jba \
+  --bucket=hoops-connect-jm.firebasestorage.app \
+  --output-dir=.local/production-readiness
 firebase emulators:exec --project demo-hoopsconnect --only firestore \
   "npm --prefix functions run test:rules"
 ~~~
 
-The production audit is read-only and emits aggregate counts only. Any missing
-membership, association conflict, known static invite, or post without explicit
+The production audits are read-only. The foundation audit emits aggregate
+counts only. The readiness planner emits aggregate counts and hashes to stdout,
+and writes a pseudonymous plan plus the sensitive operator mapping under the
+ignored `.local/production-readiness` directory. The directory must remain
+mode `0700`; its key and JSON artifacts must remain mode `0600`. Any missing
+membership, association conflict, legacy invite, or post without explicit
 visibility/acknowledgment fields blocks the authorization rollout.
 
 The safety check rejects tracked private keys, service-account JSON,
