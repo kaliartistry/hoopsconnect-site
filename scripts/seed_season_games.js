@@ -11,18 +11,23 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const https = require('https');
+const http = require('http');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
 
-const PROJECT_ID = 'hoops-connect-jm';
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const TARGET = guardFirestoreTarget({mode: 'write'});
+const PROJECT_ID = TARGET.projectId;
+const BASE_URL = TARGET.baseUrl;
+const firestoreTransport = TARGET.isEmulator ? http : https;
 
 // ── Firebase helpers (same as seed_nbl.js) ──────────────────────────
 
 let _cachedToken = null;
 
 async function getToken() {
+  if (TARGET.isEmulator) return null;
   if (_cachedToken) return _cachedToken;
 
   const configPath = path.join(os.homedir(), '.config', 'configstore', 'firebase-tools.json');
@@ -94,9 +99,12 @@ async function request(method, urlPath, body) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: url.hostname, path: url.pathname + url.search, method,
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: {
+        ...(token ? {'Authorization': `Bearer ${token}`} : {}),
+        'Content-Type': 'application/json',
+      },
     };
-    const req = https.request(options, res => {
+    const req = firestoreTransport.request(options, res => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {

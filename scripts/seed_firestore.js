@@ -4,12 +4,17 @@
 
 const { execSync } = require('child_process');
 const https = require('https');
+const http = require('http');
+const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
 
-const PROJECT_ID = 'hoops-connect-jm';
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const TARGET = guardFirestoreTarget({mode: 'write'});
+const PROJECT_ID = TARGET.projectId;
+const BASE_URL = TARGET.baseUrl;
+const firestoreTransport = TARGET.isEmulator ? http : https;
 
 // Get the auth token from firebase CLI
 function getToken() {
+  if (TARGET.isEmulator) return null;
   // Read the firebase token from the config file
   const os = require('os');
   const fs = require('fs');
@@ -76,12 +81,12 @@ async function request(method, path, body) {
       path: url.pathname + url.search,
       method,
       headers: {
-        'Authorization': `Bearer ${token}`,
+        ...(token ? {'Authorization': `Bearer ${token}`} : {}),
         'Content-Type': 'application/json',
       },
     };
 
-    const req = https.request(options, (res) => {
+    const req = firestoreTransport.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {

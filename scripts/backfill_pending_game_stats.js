@@ -2,19 +2,22 @@
 
 const { execSync } = require('child_process');
 const https = require('https');
+const http = require('http');
+const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
 
-const DEFAULT_PROJECT = 'hoops-connect-jm';
 const DEFAULT_ASSOC = 'jba';
 const DEFAULT_SEASON = 'nbl-2025-26';
 const BACKFILL_SOURCE = 'codex-demo-stat-backfill-2026-06-30';
 
 const args = new Set(process.argv.slice(2));
 const COMMIT = args.has('--commit');
-const PROJECT_ID = readArg('--project', DEFAULT_PROJECT);
 const ASSOC_ID = readArg('--assoc', DEFAULT_ASSOC);
 const SEASON_ID = readArg('--season', DEFAULT_SEASON);
 const NOW = new Date(readArg('--now', '2026-06-30T00:00:00-04:00'));
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const TARGET = guardFirestoreTarget({mode: COMMIT ? 'write' : 'read'});
+const PROJECT_ID = TARGET.projectId;
+const BASE_URL = TARGET.baseUrl;
+const firestoreTransport = TARGET.isEmulator ? http : https;
 
 function readArg(name, fallback) {
   const idx = process.argv.indexOf(name);
@@ -23,6 +26,7 @@ function readArg(name, fallback) {
 }
 
 function getAccessToken() {
+  if (TARGET.isEmulator) return null;
   return execSync('gcloud auth print-access-token', {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -36,13 +40,13 @@ async function request(method, docPath, body = null) {
   const url = new URL(`${BASE_URL}${docPath}`);
 
   return new Promise((resolve, reject) => {
-    const req = https.request(
+    const req = firestoreTransport.request(
       {
         hostname: url.hostname,
         path: url.pathname + url.search,
         method,
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          ...(accessToken ? {Authorization: `Bearer ${accessToken}`} : {}),
           'Content-Type': 'application/json',
         },
       },

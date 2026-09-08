@@ -1,6 +1,8 @@
 {
   "projects": {
-    "default": "hoops-connect-jm"
+    "default": "demo-hoopsconnect",
+    "development": "demo-hoopsconnect",
+    "production": "hoops-connect-jm"
   },
   "targets": {
     "hoops-connect-jm": {
