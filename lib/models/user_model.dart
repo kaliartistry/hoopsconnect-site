@@ -57,6 +57,7 @@ class UserModel {
   final String? divisionId;
   final List<String> fcmTokens;
   final NotificationPrefs notificationPrefs;
+  final Set<String> capabilities;
 
   const UserModel({
     required this.id,
@@ -69,6 +70,7 @@ class UserModel {
     this.divisionId,
     this.fcmTokens = const [],
     this.notificationPrefs = const NotificationPrefs(),
+    this.capabilities = const {},
   });
 
   factory UserModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -114,6 +116,7 @@ class UserModel {
     String? divisionId,
     List<String>? fcmTokens,
     NotificationPrefs? notificationPrefs,
+    Set<String>? capabilities,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -126,8 +129,11 @@ class UserModel {
       divisionId: divisionId ?? this.divisionId,
       fcmTokens: fcmTokens ?? this.fcmTokens,
       notificationPrefs: notificationPrefs ?? this.notificationPrefs,
+      capabilities: capabilities ?? this.capabilities,
     );
   }
+
+  bool hasCapability(String capability) => capabilities.contains(capability);
 
   bool get isSuperAdmin => role == UserRole.superAdmin;
   bool get isAdmin => role == UserRole.admin || role == UserRole.superAdmin;
@@ -142,19 +148,22 @@ class UserModel {
   bool get isFan => role == UserRole.fan;
 
   // Composite permission getters
-  bool get canAccessAdminPanel => isSuperAdmin || role == UserRole.admin;
-  bool get canManageUsers => isSuperAdmin;
-  bool get canManageDivisions => isSuperAdmin;
-  bool get canManageSchedule => isSuperAdmin;
-  bool get canManageInviteCodes => isSuperAdmin;
-  bool get canEnterStats =>
-      isSuperAdmin || role == UserRole.admin || role == UserRole.statistician;
-  bool get canApproveStats => isSuperAdmin || role == UserRole.admin;
-  bool get canCreatePost => isSuperAdmin || role == UserRole.admin || isRep;
-  bool get canEditAnyPost => isSuperAdmin || role == UserRole.admin;
-  bool get canPinUrgentAck => isSuperAdmin || role == UserRole.admin;
-  bool get canViewBoard => !isFan;
-  bool get canExportStats => isSuperAdmin || role == UserRole.admin || isMedia;
-  bool get canAccessPressTools => isMedia || isAdmin;
-  bool get canCompareHeadToHead => !isFan;
+  bool get canAccessAdminPanel =>
+      hasCapability('association.manage') ||
+      hasCapability('teams.manage') ||
+      hasCapability('posts.manage') ||
+      hasCapability('stats.approve');
+  bool get canManageUsers => hasCapability('members.manage');
+  bool get canManageDivisions => hasCapability('association.manage');
+  bool get canManageSchedule => hasCapability('schedule.manage');
+  bool get canManageInviteCodes => hasCapability('invites.manage');
+  bool get canEnterStats => hasCapability('stats.enter');
+  bool get canApproveStats => hasCapability('stats.approve');
+  bool get canCreatePost => hasCapability('posts.create');
+  bool get canEditAnyPost => hasCapability('posts.manage');
+  bool get canPinUrgentAck => hasCapability('posts.manage');
+  bool get canViewBoard => hasCapability('posts.internal.read');
+  bool get canExportStats => hasCapability('stats.export');
+  bool get canAccessPressTools => hasCapability('press.read');
+  bool get canCompareHeadToHead => hasCapability('posts.internal.read');
 }

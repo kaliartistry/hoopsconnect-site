@@ -86,7 +86,7 @@ class AppDefaults {
 
   // Association
   static const String defaultAssociationId = 'jba';
-  static const UserRole defaultSignupRole = UserRole.media;
+  static const UserRole defaultSignupRole = UserRole.fan;
   static const String ownerEmail = 'kalimccarthy@gmail.com';
 
   // Event / ack types
@@ -98,7 +98,10 @@ class AppDefaults {
   static const int defaultRounds = 2;
   static const Set<int> defaultGameDays = {2, 4, 6}; // Tue, Thu, Sat
   static const TimeOfDay defaultGameTime = TimeOfDay(hour: 19, minute: 0);
-  static const TimeOfDay defaultAckDeadlineTime = TimeOfDay(hour: 18, minute: 0);
+  static const TimeOfDay defaultAckDeadlineTime = TimeOfDay(
+    hour: 18,
+    minute: 0,
+  );
   static const TimeOfDay altGameTimeSlot = TimeOfDay(hour: 21, minute: 0);
 
   // Durations
@@ -112,9 +115,6 @@ class AppDefaults {
   static const Duration defaultGameDuration = Duration(hours: 2);
 
   // Invite codes
-  static const String inviteCodeCharset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  static const int inviteCodeDefaultMaxUses = 5;
   static const int inviteCodeDefaultDaysValid = 30;
-  static const List<int> inviteCodeMaxUsesOptions = [1, 5, 10, 25, 50];
   static const List<int> inviteCodeDaysValidOptions = [7, 14, 30, 60, 90];
 }

@@ -2,19 +2,22 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
-import '../../core/constants/app_constants.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../firebase_options.dart';
 import '../../models/user_model.dart';
+import '../../models/membership_model.dart';
 
 class AuthRepository {
+  static const int authorizationSchemaVersion = 1;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
   Stream<User?> authStateChanges() => _auth.authStateChanges();
 
@@ -24,6 +27,13 @@ class AuthRepository {
     return _db.doc(FirestorePaths.user(userId)).snapshots().map((snap) {
       if (!snap.exists) return null;
       return UserModel.fromFirestore(snap);
+    });
+  }
+
+  Stream<MembershipModel?> watchMembership(String userId) {
+    return _db.doc('memberships/$userId').snapshots().map((snap) {
+      if (!snap.exists) return null;
+      return MembershipModel.fromFirestore(snap);
     });
   }
 
@@ -48,6 +58,21 @@ class AuthRepository {
       email: email,
       password: password,
     );
+  }
+
+  Future<UserCredential> signUpFan({
+    required String email,
+    required String password,
+    required String displayName,
+  }) async {
+    final credential = await signUp(email: email, password: password);
+    try {
+      await _provisionFanProfile(displayName);
+      return credential;
+    } catch (_) {
+      await _deleteOrSignOut(credential.user);
+      rethrow;
+    }
   }
 
   /// Sign in with Google. Creates a user doc if one doesn't exist.
@@ -117,25 +142,22 @@ class AuthRepository {
     return userCred;
   }
 
-  /// Ensure a Firestore user document exists for this auth user.
-  /// If not, create one with media role (default for self-signup).
+  /// Reconcile the server-owned profile/membership pair. The callable creates
+  /// new public fans, repairs an authority-backed missing profile, and fails
+  /// closed on conflicting or legacy records without changing privileges.
   Future<void> _ensureUserDoc(UserCredential cred) async {
-    final uid = cred.user!.uid;
-    final snap = await _db.doc(FirestorePaths.user(uid)).get();
-    if (snap.exists) return;
-
-    final user = UserModel(
-      id: uid,
-      email: cred.user!.email ?? '',
-      displayName: cred.user!.displayName ?? 'User',
-      associationId: AppDefaults.defaultAssociationId,
-      role: AppDefaults.defaultSignupRole, // Default role for self-signup
+    await _provisionFanProfile(
+      cred.user!.displayName?.trim().isNotEmpty == true
+          ? cred.user!.displayName!.trim()
+          : 'User',
     );
-    await createUserDoc(user);
   }
 
-  Future<void> createUserDoc(UserModel user) {
-    return _db.doc(FirestorePaths.user(user.id)).set(user.toFirestore());
+  Future<void> _provisionFanProfile(String displayName) async {
+    await _functions.httpsCallable('provisionFanProfile').call<void>({
+      'displayName': displayName,
+      'authorizationSchemaVersion': authorizationSchemaVersion,
+    });
   }
 
   Future<void> updateUser(String userId, Map<String, dynamic> data) {
@@ -143,12 +165,33 @@ class AuthRepository {
   }
 
   /// Get all users (for admin user management).
-  Future<List<UserModel>> getAllUsers() async {
-    final snap = await _db.collection(FirestorePaths.users()).get();
+  Future<List<UserModel>> getAllUsers(String associationId) async {
+    final snap = await _db
+        .collection(FirestorePaths.users())
+        .where('associationId', isEqualTo: associationId)
+        .get();
     return snap.docs.map((d) => UserModel.fromFirestore(d)).toList();
   }
 
   Future<void> signOut() => _auth.signOut();
+
+  Future<void> deleteCurrentAuthUser() => _deleteOrSignOut(_auth.currentUser);
+
+  Future<void> setMemberRole(String userId, UserRole role) async {
+    await _functions.httpsCallable('setMemberRole').call<void>({
+      'userId': userId,
+      'role': role.name,
+      'authorizationSchemaVersion': authorizationSchemaVersion,
+    });
+  }
+
+  Future<void> _deleteOrSignOut(User? user) async {
+    try {
+      await user?.delete();
+    } catch (_) {
+      await _auth.signOut();
+    }
+  }
 
   GoogleSignIn _googleSignIn() {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {

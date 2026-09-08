@@ -4,11 +4,16 @@
 
 const { execSync } = require('child_process');
 const https = require('https');
+const http = require('http');
+const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
 
-const PROJECT_ID = 'hoops-connect-jm';
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const TARGET = guardFirestoreTarget({mode: 'write'});
+const PROJECT_ID = TARGET.projectId;
+const BASE_URL = TARGET.baseUrl;
+const firestoreTransport = TARGET.isEmulator ? http : https;
 
 function getToken() {
+  if (TARGET.isEmulator) return null;
   const os = require('os');
   const fs = require('fs');
   const path = require('path');
@@ -55,15 +60,16 @@ async function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: url.hostname,
+      port: url.port,
       path: url.pathname + url.search,
       method,
       headers: {
-        'Authorization': `Bearer ${token}`,
+        ...(token ? {'Authorization': `Bearer ${token}`} : {}),
         'Content-Type': 'application/json',
       },
     };
 
-    const req = https.request(options, (res) => {
+    const req = firestoreTransport.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -562,54 +568,12 @@ async function seed() {
   }
   console.log(`✓ ${posts.length} posts created`);
 
-  // ─── 10. Invite Codes ───
-  const inviteCodes = [
-    { code: 'FLAMES-2026',   teamId: 'portmore-flames',    role: 'rep',   usesRemaining: 5 },
-    { code: 'EAGLES-2026',   teamId: 'upper-room-eagles',  role: 'rep',   usesRemaining: 5 },
-    { code: 'KNIGHTS-2026',  teamId: 'urban-knights',      role: 'rep',   usesRemaining: 5 },
-    { code: 'SLAYERS-2026',  teamId: 'st-georges-slayers', role: 'rep',   usesRemaining: 5 },
-    { code: 'WARRIORS-2026', teamId: 'mobay-warriors',      role: 'rep',   usesRemaining: 5 },
-    { code: 'REBELS-2026',   teamId: 'runnin-rebels',       role: 'rep',   usesRemaining: 5 },
-    { code: 'RAPTORS-2026',  teamId: 'rae-town-raptors',    role: 'rep',   usesRemaining: 5 },
-    { code: 'SPARTANS-2026', teamId: 'spanish-town-spartans', role: 'rep', usesRemaining: 5 },
-    { code: 'CELTICS-2026',  teamId: 'central-celtics',     role: 'rep',   usesRemaining: 5 },
-    { code: 'WIZARDS-2026',  teamId: 'tivoli-wizards',      role: 'rep',   usesRemaining: 5 },
-    { code: 'NBL-MEDIA',     teamId: '',                     role: 'media', usesRemaining: 10 },
-    { code: 'NBL-ADMIN',     teamId: '',                     role: 'admin', usesRemaining: 3 },
-    { code: 'NBL-SUPER',     teamId: '',                     role: 'superAdmin', usesRemaining: 1 },
-  ];
-  for (const ic of inviteCodes) {
-    await createDoc('inviteCodes', ic.code, {
-      teamId: ic.teamId,
-      role: ic.role,
-      usesRemaining: ic.usesRemaining,
-      expiresAt: new Date('2026-12-31'),
-      associationId: 'jba',
-    });
-  }
-  console.log(`✓ ${inviteCodes.length} invite codes created`);
+  // Invite credentials are never seeded or printed. Use the authorized
+  // createPrivilegedInvite callable after the data seed completes.
 
   // ─── Done ───
   console.log('\n🏀 Jamaica NBL seed complete!\n');
-  console.log('═══════════════════════════════════════════');
-  console.log('  INVITE CODES');
-  console.log('═══════════════════════════════════════════');
-  console.log('  FLAMES-2026    → Portmore Flames (rep)');
-  console.log('  EAGLES-2026    → Upper Room Eagles (rep)');
-  console.log('  KNIGHTS-2026   → Urban Knights (rep)');
-  console.log('  SLAYERS-2026   → St George\'s Slayers (rep)');
-  console.log('  WARRIORS-2026  → Mo Bay Warriors (rep)');
-  console.log('  REBELS-2026    → Runnin\' Rebels (rep)');
-  console.log('  RAPTORS-2026   → Rae Town Raptors (rep)');
-  console.log('  SPARTANS-2026  → Spanish Town Spartans (rep)');
-  console.log('  CELTICS-2026   → Central Celtics (rep)');
-  console.log('  WIZARDS-2026   → Tivoli Wizards (rep)');
-  console.log('  NBL-MEDIA      → Media role');
-  console.log('  NBL-ADMIN      → Admin role');
-  console.log('  NBL-SUPER      → Super Admin role');
-  console.log('═══════════════════════════════════════════');
-  console.log('\n  To become superAdmin: use code NBL-SUPER');
-  console.log('  Or set role to "superAdmin" in Firebase Console');
+  console.log('Invite credentials were not seeded. Issue them through the callable workflow.');
 }
 
 seed().catch(err => {

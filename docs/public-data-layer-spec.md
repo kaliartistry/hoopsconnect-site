@@ -1,0 +1,338 @@
+# Public Data Layer Spec
+
+Date: 2026-06-30
+
+Status: PASS as implementation-ready planning. NEEDS-DECISION for public privacy policy and website platform.
+
+## Goal
+
+Expose approved public league information to the JBA website without exposing private Firestore collections, private user data, admin metadata, contact details, or unapproved stats.
+
+## Recommended Architecture
+
+Preferred first implementation:
+
+1. Scheduled static JSON exports for low-risk website consumption, or
+2. Versioned Cloud Function HTTP endpoints if the website needs queryable live data.
+
+Both should map private Firestore documents into public DTOs.
+
+## Versioning
+
+All responses/files should include:
+
+```json
+{
+  "version": "v1",
+  "associationId": "jba",
+  "generatedAt": "ISO-8601 timestamp",
+  "data": []
+}
+```
+
+## DTOs
+
+### Team Summary
+
+Public fields:
+
+- `teamId`
+- `name`
+- `logoUrl`
+- `division`
+- `record`
+- `standingRank`
+
+Private fields to exclude:
+
+- `repIds`
+- private notes
+- internal audit metadata
+
+Source:
+
+- `associations/{assocId}/teams`
+- `associations/{assocId}/standings`
+
+Approval requirement:
+
+- Team must be active/public.
+
+Cache:
+
+- 5-15 minutes.
+
+### Player Card
+
+Public fields:
+
+- `playerId`
+- `displayName`
+- `teamId`
+- `teamName`
+- `jerseyNumber`
+- `position`
+- `headshotUrl`
+- `publicBio`
+- `seasonStats`
+
+Private fields to exclude:
+
+- emails
+- phone numbers
+- addresses
+- birthdays unless explicitly approved
+- guardian/contact information
+- internal IDs not intended for public sharing
+- private notes
+
+Source:
+
+- `associations/{assocId}/playerSeasonStats`
+- optional future player profile collection.
+
+Approval requirement:
+
+- Player profile/public stats approved.
+- Minor/privacy rules defined by JBA.
+
+Cache:
+
+- 5-15 minutes.
+
+### Schedule Item
+
+Public fields:
+
+- `gameId`
+- `dateTime`
+- `venue`
+- `homeTeam`
+- `awayTeam`
+- `status`
+- `finalScore`
+
+Private fields to exclude:
+
+- internal notes
+- createdBy
+- admin-only status metadata
+
+Source:
+
+- `associations/{assocId}/events`
+- `associations/{assocId}/gameStats` for approved final score.
+
+Approval requirement:
+
+- Scheduled games can be public unless marked internal.
+- Final scores require approved/submitted policy decision. Recommended: approved only.
+
+Cache:
+
+- 1-5 minutes on game day, 15-60 minutes otherwise.
+
+### Game Result
+
+Public fields:
+
+- `gameId`
+- `dateTime`
+- `venue`
+- `homeTeam`
+- `awayTeam`
+- `homeScore`
+- `awayScore`
+- `winnerTeamId`
+- `status`
+- `approvedAt`
+
+Private fields to exclude:
+
+- submittedBy
+- approvedBy
+- rejectedBy
+- rejectionNote
+- correction/audit metadata
+
+Source:
+
+- `associations/{assocId}/gameStats`
+
+Approval requirement:
+
+- `status == approved`
+
+Cache:
+
+- 1-5 minutes after games.
+
+### Box Score
+
+Public fields:
+
+- `gameId`
+- `homeTeam`
+- `awayTeam`
+- `periodScores`
+- `playerStats`
+- `teamStats`
+- `status`
+- `approvedAt`
+
+Private fields to exclude:
+
+- submitter/admin IDs
+- rejection notes
+- internal audit trail
+- unapproved play events unless explicitly public later
+
+Source:
+
+- `associations/{assocId}/gameStats`
+
+Approval requirement:
+
+- `status == approved`
+
+Cache:
+
+- 5-60 minutes once approved.
+
+### Standings Row
+
+Public fields:
+
+- `teamId`
+- `teamName`
+- `wins`
+- `losses`
+- `winPercentage`
+- `pointsFor`
+- `pointsAgainst`
+- `pointDifferential`
+- `rank`
+
+Private fields to exclude:
+
+- internal processed event metadata
+- correction metadata
+
+Source:
+
+- `associations/{assocId}/standings`
+
+Approval requirement:
+
+- Standings docs generated from approved stats only.
+
+Cache:
+
+- 5-15 minutes.
+
+### Leaderboard Row
+
+Public fields:
+
+- `playerId`
+- `displayName`
+- `teamName`
+- `statName`
+- `statValue`
+- `rank`
+
+Private fields to exclude:
+
+- internal user IDs
+- private player/contact data
+
+Source:
+
+- `associations/{assocId}/leaderboard`
+
+Approval requirement:
+
+- Leaderboard docs generated from approved stats only.
+
+Cache:
+
+- 5-15 minutes.
+
+### Public Post
+
+Public fields:
+
+- `postId`
+- `title`
+- `body`
+- `imageUrl`
+- `publishedAt`
+- `authorDisplayName`
+- `category`
+
+Private fields to exclude:
+
+- ackStatus
+- expectedAcks
+- phone numbers
+- authorId
+- team rep IDs
+- internal posts
+- archived ack lifecycle metadata
+
+Source:
+
+- `associations/{assocId}/posts`
+
+Approval requirement:
+
+- `visibility == public`
+- optional published/approved flag if added later.
+
+Cache:
+
+- 5-15 minutes.
+
+## Endpoints Or Export Files
+
+HTTP API option:
+
+- `GET /v1/public/jba/schedule`
+- `GET /v1/public/jba/standings`
+- `GET /v1/public/jba/leaderboards`
+- `GET /v1/public/jba/games/{gameId}/boxscore`
+- `GET /v1/public/jba/teams`
+- `GET /v1/public/jba/players/{playerId}`
+- `GET /v1/public/jba/posts`
+
+Static export option:
+
+- `/public-data/v1/jba/schedule.json`
+- `/public-data/v1/jba/standings.json`
+- `/public-data/v1/jba/leaderboards.json`
+- `/public-data/v1/jba/teams.json`
+- `/public-data/v1/jba/posts.json`
+
+## Security Model
+
+- Private Firestore collections remain authenticated-only.
+- Public layer is generated by trusted backend code.
+- Only approved/published fields are mapped.
+- CORS is limited to approved domains where possible.
+- Add rate limiting or CDN caching for HTTP endpoints.
+- Do not expose emails, phone numbers, internal user IDs, role data, unapproved stats, or contact information.
+
+## Error Handling
+
+- Return `404` for unknown public entities.
+- Return `404` for unapproved/private entities.
+- Return versioned error objects.
+- Never leak private existence details when possible.
+
+## Estimated Implementation Effort
+
+- Static JSON export MVP: 3-5 dev days.
+- HTTP API MVP: 4-7 dev days.
+- Website widget integration: 2-10 additional dev days depending on platform.
+- Rules/emulator/API tests: 2-4 additional dev days.
+

@@ -159,9 +159,6 @@ class AckDetailScreen extends ConsumerWidget {
                         ref.read(postRepositoryProvider).acknowledge(
                               assocId,
                               post.id,
-                              currentUser.id,
-                              currentUser.displayName,
-                              '',
                             );
                       }
                     },

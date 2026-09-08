@@ -7,7 +7,6 @@ class FirestorePaths {
   static String users() => 'users';
   static String user(String userId) => 'users/$userId';
   static String inviteCodes() => 'inviteCodes';
-  static String inviteCode(String code) => 'inviteCodes/$code';
 
   // Association-scoped collections
   static String associations() => 'associations';

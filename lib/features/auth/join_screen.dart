@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/invite_code_model.dart';
-import '../../models/user_model.dart';
 import '../../providers/auth_providers.dart';
+import '../../services/repositories/invite_code_repository.dart';
 
 class JoinScreen extends ConsumerStatefulWidget {
   const JoinScreen({super.key});
@@ -21,9 +21,14 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
   bool _loading = false;
   String? _error;
   InviteCodeModel? _validatedCode;
+  String? _validatedSecret;
+  String? _redeemOperationId;
+  bool _ownsPendingAuthIdentity = false;
 
   @override
   void dispose() {
+    _validatedSecret = null;
+    _redeemOperationId = null;
     _codeController.dispose();
     _nameController.dispose();
     _emailController.dispose();
@@ -38,6 +43,9 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _validatedCode = null;
+      _validatedSecret = null;
+      _redeemOperationId = null;
     });
 
     try {
@@ -45,10 +53,17 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
           .read(inviteCodeRepositoryProvider)
           .validateCode(code);
       if (inviteCode == null) {
-        setState(() => _error = 'Invalid or expired invite code');
+        setState(() {
+          _error = 'Invalid or expired invite code';
+          _validatedSecret = null;
+        });
       } else {
         setState(() {
           _validatedCode = inviteCode;
+          // The inspection callable never echoes the bearer. Keep exactly the
+          // inspected entry only in this screen's transient state.
+          _validatedSecret = code;
+          _redeemOperationId = newInviteOperationId();
         });
       }
     } catch (e) {
@@ -59,21 +74,23 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
   }
 
   Future<void> _joinTeam() async {
-    if (_validatedCode == null) return;
+    if (_validatedCode == null || _validatedSecret == null) return;
+    final existingAuth = ref.read(authRepositoryProvider).currentUser != null;
     if (_nameController.text.trim().isEmpty ||
-        _emailController.text.trim().isEmpty ||
-        _passwordController.text.isEmpty) {
+        (!existingAuth &&
+            (_emailController.text.trim().isEmpty ||
+                _passwordController.text.isEmpty))) {
       setState(() => _error = 'Please fill in all fields');
       return;
     }
 
     final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-    if (!emailRegex.hasMatch(_emailController.text.trim())) {
+    if (!existingAuth && !emailRegex.hasMatch(_emailController.text.trim())) {
       setState(() => _error = 'Please enter a valid email address');
       return;
     }
 
-    if (_passwordController.text.length < 6) {
+    if (!existingAuth && _passwordController.text.length < 6) {
       setState(() => _error = 'Password must be at least 6 characters');
       return;
     }
@@ -84,36 +101,69 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
     });
 
     try {
-      // Create Firebase Auth account
-      final cred = await ref.read(authRepositoryProvider).signUp(
-            email: _emailController.text.trim(),
-            password: _passwordController.text,
-          );
+      final authRepository = ref.read(authRepositoryProvider);
+      if (authRepository.currentUser == null) {
+        await authRepository.signUp(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
+        _ownsPendingAuthIdentity = true;
+      }
 
-      // Create user document
-      final user = UserModel(
-        id: cred.user!.uid,
-        email: _emailController.text.trim(),
-        displayName: _nameController.text.trim(),
-        associationId: _validatedCode!.associationId,
-        teamId: _validatedCode!.teamId,
-        role: UserRole.values.byName(_validatedCode!.role),
-      );
-      await ref.read(authRepositoryProvider).createUserDoc(user);
-
-      // Consume the invite code
       await ref
           .read(inviteCodeRepositoryProvider)
-          .consumeCode(_validatedCode!.code);
+          .redeemCode(
+            code: _validatedSecret!,
+            displayName: _nameController.text.trim(),
+            operationId: _redeemOperationId ??= newInviteOperationId(),
+          );
+      _codeController.clear();
+      _validatedSecret = null;
+      _redeemOperationId = null;
+      _ownsPendingAuthIdentity = false;
     } catch (e) {
-      setState(() => _error = e.toString());
+      final disposition = inviteFailureDisposition(e);
+      if (disposition == InviteFailureDisposition.terminal) {
+        if (shouldDeletePendingAuthIdentity(
+          ownsPendingIdentity: _ownsPendingAuthIdentity,
+          error: e,
+        )) {
+          await ref.read(authRepositoryProvider).deleteCurrentAuthUser();
+        }
+        _codeController.clear();
+        _validatedSecret = null;
+        _redeemOperationId = null;
+        _ownsPendingAuthIdentity = false;
+      }
+      if (mounted) {
+        setState(() {
+          _error = disposition == InviteFailureDisposition.ambiguous
+              ? 'We could not confirm the result. Your account was kept safe; tap Join again to resume the same request.'
+              : _friendlyInviteError(e);
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  String _friendlyInviteError(Object error) {
+    final text = error.toString();
+    if (text.contains('failed-precondition') || text.contains('not-found')) {
+      return 'This invite is invalid, expired, revoked, or already used.';
+    }
+    if (text.contains('already-exists')) {
+      return 'This account already has a league membership.';
+    }
+    if (text.contains('email-already-in-use')) {
+      return 'An account already exists with that email. Sign in first.';
+    }
+    return text.replaceAll(RegExp(r'\[.*?\]'), '').trim();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final existingAuth = ref.watch(authStateProvider).value;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -144,10 +194,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Join Jamaica HoopsConnect',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 const Text(
@@ -174,20 +221,20 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                 const SizedBox(height: 4),
                 TextField(
                   controller: _codeController,
-                  textCapitalization: TextCapitalization.characters,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 4,
+                    letterSpacing: 1,
                     fontFamily: 'monospace',
                   ),
                   decoration: InputDecoration(
                     border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppSizes.radiusMd),
-                      borderSide:
-                          const BorderSide(color: AppColors.primary, width: 2),
+                      borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                      borderSide: const BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
                     ),
                   ),
                   onSubmitted: (_) => _validateCode(),
@@ -203,9 +250,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                           ? const SizedBox(
                               height: 20,
                               width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Text('Verify Code'),
                     ),
@@ -218,11 +263,8 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: AppColors.infoBg,
-                      border: Border.all(
-                        color: AppColors.infoBorder,
-                      ),
-                      borderRadius:
-                          BorderRadius.circular(AppSizes.radiusMd),
+                      border: Border.all(color: AppColors.infoBorder),
+                      borderRadius: BorderRadius.circular(AppSizes.radiusMd),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -253,24 +295,32 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                       prefixIcon: Icon(Icons.person_outlined),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: Icon(Icons.email_outlined),
+                  if (existingAuth == null) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _passwordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: Icon(Icons.lock_outlined),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: Icon(Icons.lock_outlined),
+                      ),
                     ),
-                  ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Continue as ${existingAuth.email ?? 'the signed-in account'}',
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
@@ -302,13 +352,24 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                 ],
 
                 const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () => context.go('/login'),
-                  child: const Text(
-                    'Already have an account? Sign in',
-                    style: TextStyle(color: AppColors.primary),
+                if (existingAuth == null)
+                  TextButton(
+                    onPressed: () => context.go('/login'),
+                    child: const Text(
+                      'Already have an account? Sign in',
+                      style: TextStyle(color: AppColors.primary),
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: _loading
+                        ? null
+                        : () => ref.read(authRepositoryProvider).signOut(),
+                    child: const Text(
+                      'Sign out and use another account',
+                      style: TextStyle(color: AppColors.primary),
+                    ),
                   ),
-                ),
               ],
             ),
           ),

@@ -8,32 +8,40 @@
 //   - ~56 completed games with box scores (44 premier + 12 women's)
 //   - ~17 upcoming games through end of regular season (May 2026)
 //   - playerSeasonStats, teamSeasonStats, standings, leaderboards
-//   - Board posts, invite codes, calendar events
-//   - Optional superadmin user (--uid=xxx)
+//   - Board posts and calendar events
 //
 // Usage:
 //   node scripts/seed_mock_league.js
-//   node scripts/seed_mock_league.js --uid=abc123
 // ─────────────────────────────────────────────────────────────────────────────
 
 const https = require('https');
+const http = require('http');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
 
-const PROJECT_ID = 'hoops-connect-jm';
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const TARGET = guardFirestoreTarget({
+  mode: 'destructive',
+  destructiveScope: 'associations/jba',
+});
+const PROJECT_ID = TARGET.projectId;
+const BASE_URL = TARGET.baseUrl;
+const firestoreTransport = TARGET.isEmulator ? http : https;
 
 // ── CLI args ────────────────────────────────────────────────────────────────
 
 const UID_ARG = process.argv.find(a => a.startsWith('--uid='));
-const SUPERADMIN_UID = UID_ARG ? UID_ARG.split('=')[1] : null;
+if (UID_ARG) {
+  throw new Error('--uid provisioning is disabled; use the reviewed membership administration workflow.');
+}
 
 // ── Firebase REST helpers ───────────────────────────────────────────────────
 
 let _cachedToken = null;
 
 async function getToken() {
+  if (TARGET.isEmulator) return null;
   if (_cachedToken) return _cachedToken;
 
   const configPath = path.join(os.homedir(), '.config', 'configstore', 'firebase-tools.json');
@@ -121,10 +129,13 @@ async function _doRequest(method, urlPath, body) {
   const url = new URL(`${BASE_URL}${urlPath}`);
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: url.hostname, path: url.pathname + url.search, method,
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      hostname: url.hostname, port: url.port, path: url.pathname + url.search, method,
+      headers: {
+        ...(token ? {'Authorization': `Bearer ${token}`} : {}),
+        'Content-Type': 'application/json',
+      },
     };
-    const req = https.request(options, res => {
+    const req = firestoreTransport.request(options, res => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
@@ -595,11 +606,6 @@ async function seed() {
   } while (icPage);
   if (icDeleted > 0) console.log(`  Deleted ${icDeleted} invite codes`);
   totalDeleted += icDeleted;
-
-  // Delete existing users doc if uid provided
-  if (SUPERADMIN_UID) {
-    await deleteDoc(`users/${SUPERADMIN_UID}`);
-  }
 
   console.log(`  Total: ${totalDeleted} documents deleted`);
   console.log('');
@@ -1157,7 +1163,7 @@ async function seed() {
   console.log(`  ${lbCount} leaderboard docs created`);
 
   // ─── Step 11: Board posts ─────────────────────────────────────────────
-  console.log('[12/12] Creating board posts + invite codes + user...');
+  console.log('[12/12] Creating board posts...');
 
   const boardPosts = [
     {
@@ -1276,62 +1282,8 @@ async function seed() {
   }
   console.log(`  ${postCount} board posts created`);
 
-  // ─── Invite codes ─────────────────────────────────────────────────────
-  const inviteCodes = {
-    'FLAMES':     { role: 'rep', teamId: 'portmore-flames',       teamName: 'Portmore Flames' },
-    'EAGLES':     { role: 'rep', teamId: 'upper-room-eagles',     teamName: 'Upper Room Eagles' },
-    'SLAYERS':    { role: 'rep', teamId: 'st-georges-slayers',    teamName: "St George's Slayers" },
-    'KNIGHTS':    { role: 'rep', teamId: 'urban-knights',         teamName: 'Urban Knights' },
-    'WARRIORS':   { role: 'rep', teamId: 'mobay-warriors',        teamName: 'Mo Bay Warriors' },
-    'REBELS':     { role: 'rep', teamId: 'runnin-rebels',         teamName: "Runnin' Rebels" },
-    'RAPTORS':    { role: 'rep', teamId: 'rae-town-raptors',      teamName: 'Rae Town Raptors' },
-    'SPARTANS':   { role: 'rep', teamId: 'spanish-town-spartans', teamName: 'Spanish Town Spartans' },
-    'QUEENS':     { role: 'rep', teamId: 'kingston-queens',       teamName: 'Kingston Queens' },
-    'ANGELS':     { role: 'rep', teamId: 'mobay-angels',          teamName: 'Montego Bay Angels' },
-    'MYSTICS':    { role: 'rep', teamId: 'ocho-rios-mystics',     teamName: 'Ocho Rios Mystics' },
-    'PSTARS':     { role: 'rep', teamId: 'portmore-stars',        teamName: 'Portmore Stars' },
-    'NBL-ADMIN':  { role: 'admin', teamId: null, teamName: null },
-    'NBL-MEDIA':  { role: 'media', teamId: null, teamName: null },
-    'NBL-PRESS':  { role: 'press', teamId: null, teamName: null },
-    'NBL-STATS':  { role: 'statistician', teamId: null, teamName: null },
-  };
-
-  let codeCount = 0;
-  for (const [code, info] of Object.entries(inviteCodes)) {
-    await createDoc('inviteCodes', code, {
-      code,
-      associationId: ASSOC,
-      role: info.role,
-      teamId: info.teamId,
-      teamName: info.teamName,
-      divisionId: info.teamId ? ALL_TEAMS[info.teamId]?.divisionId : null,
-      usesRemaining: 5,
-      expiresAt: new Date('2026-12-31T23:59:59'),
-      createdAt: new Date('2025-10-15T00:00:00'),
-    });
-    codeCount++;
-  }
-  console.log(`  ${codeCount} invite codes created`);
-
-  // ─── SuperAdmin user ──────────────────────────────────────────────────
-  if (SUPERADMIN_UID) {
-    await patchDoc('users', SUPERADMIN_UID, {
-      email: 'admin@jba.org.jm',
-      displayName: 'JBA Super Admin',
-      phone: null,
-      associationId: ASSOC,
-      teamId: null,
-      role: 'superAdmin',
-      divisionId: null,
-      fcmTokens: [],
-      notificationPrefs: {
-        ackReminders: true,
-        statReminders: true,
-        newPosts: true,
-      },
-    });
-    console.log(`  SuperAdmin user created: ${SUPERADMIN_UID}`);
-  }
+  // Invite credentials are never seeded or printed. Use the authorized
+  // createPrivilegedInvite callable after the data seed completes.
 
   // ═══════════════════════════════════════════════════════════════════════
   // SUMMARY
@@ -1374,16 +1326,6 @@ async function seed() {
     );
   }
 
-  // Invite codes table
-  console.log('');
-  console.log('  INVITE CODES');
-  console.log('  ------------ --------------- ------------------------------');
-  for (const [code, info] of Object.entries(inviteCodes)) {
-    const roleStr = info.role.padEnd(15);
-    const teamStr = info.teamName || '(association-wide)';
-    console.log(`  ${code.padEnd(12)} ${roleStr} ${teamStr}`);
-  }
-
   console.log('');
   console.log('================================================================');
   console.log('  SEED COMPLETE');
@@ -1400,10 +1342,7 @@ async function seed() {
   console.log(`  Standings:       3 docs`);
   console.log(`  Leaderboards:    ${lbCount} docs`);
   console.log(`  Board posts:     ${postCount}`);
-  console.log(`  Invite codes:    ${codeCount}`);
-  if (SUPERADMIN_UID) {
-    console.log(`  SuperAdmin UID:  ${SUPERADMIN_UID}`);
-  }
+  console.log('  Invite codes:    not seeded');
   console.log('================================================================');
   console.log('');
 }

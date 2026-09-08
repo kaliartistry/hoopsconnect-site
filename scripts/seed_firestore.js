@@ -4,12 +4,17 @@
 
 const { execSync } = require('child_process');
 const https = require('https');
+const http = require('http');
+const {guardFirestoreTarget} = require('./lib/firebase_target_guard');
 
-const PROJECT_ID = 'hoops-connect-jm';
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const TARGET = guardFirestoreTarget({mode: 'write'});
+const PROJECT_ID = TARGET.projectId;
+const BASE_URL = TARGET.baseUrl;
+const firestoreTransport = TARGET.isEmulator ? http : https;
 
 // Get the auth token from firebase CLI
 function getToken() {
+  if (TARGET.isEmulator) return null;
   // Read the firebase token from the config file
   const os = require('os');
   const fs = require('fs');
@@ -73,15 +78,16 @@ async function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: url.hostname,
+      port: url.port,
       path: url.pathname + url.search,
       method,
       headers: {
-        'Authorization': `Bearer ${token}`,
+        ...(token ? {'Authorization': `Bearer ${token}`} : {}),
         'Content-Type': 'application/json',
       },
     };
 
-    const req = https.request(options, (res) => {
+    const req = firestoreTransport.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -170,24 +176,8 @@ async function seed() {
   }
   console.log('✓ 10 teams created');
 
-  // 5. Invite codes
-  const inviteCodes = [
-    { code: 'THUNDER-2026', teamId: 'thunderbolts', role: 'rep', usesRemaining: 5 },
-    { code: 'BLAZERS-2026', teamId: 'blazers', role: 'rep', usesRemaining: 5 },
-    { code: 'RAPTORS-2026', teamId: 'raptors', role: 'rep', usesRemaining: 5 },
-    { code: 'MEDIA-2026', teamId: '', role: 'media', usesRemaining: 10 },
-    { code: 'ADMIN-2026', teamId: '', role: 'admin', usesRemaining: 3 },
-  ];
-  for (const ic of inviteCodes) {
-    await createDoc('inviteCodes', ic.code, {
-      teamId: ic.teamId,
-      role: ic.role,
-      usesRemaining: ic.usesRemaining,
-      expiresAt: new Date('2026-12-31'),
-      associationId: 'jba',
-    });
-  }
-  console.log('✓ 5 invite codes created');
+  // Invite credentials are never seeded or printed. Use the authorized
+  // createPrivilegedInvite callable so v2 tokens are issued one time.
 
   // 6. Sample posts
   const posts = [
@@ -259,12 +249,7 @@ async function seed() {
   console.log('✓ 3 sample events created');
 
   console.log('\n🏀 Seed complete!\n');
-  console.log('Invite codes:');
-  console.log('  THUNDER-2026  → Thunderbolts (rep)');
-  console.log('  BLAZERS-2026  → Blazers (rep)');
-  console.log('  RAPTORS-2026  → Raptors (rep)');
-  console.log('  MEDIA-2026    → Media role');
-  console.log('  ADMIN-2026    → Admin role');
+  console.log('Invite credentials were not seeded. Issue them through the callable workflow.');
 }
 
 seed().catch(err => {

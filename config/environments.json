@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "development": {
+    "projectId": "demo-hoopsconnect",
+    "emulatorRequired": true
+  },
+  "staging": {
+    "projectId": null,
+    "status": "not-configured"
+  },
+  "production": {
+    "projectId": "hoops-connect-jm",
+    "protected": true,
+    "localWritesAllowed": false
+  }
+}

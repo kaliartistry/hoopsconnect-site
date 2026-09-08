@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "roles": {
+    "superAdmin": [
+      "association.read",
+      "association.manage",
+      "members.read",
+      "members.manage",
+      "invites.manage",
+      "schedule.manage",
+      "teams.manage",
+      "teams.represent",
+      "posts.create",
+      "posts.manage",
+      "posts.internal.read",
+      "posts.acknowledge",
+      "stats.enter",
+      "stats.approve",
+      "stats.export",
+      "press.read"
+    ],
+    "admin": [
+      "association.read",
+      "teams.manage",
+      "posts.create",
+      "posts.manage",
+      "posts.internal.read",
+      "stats.enter",
+      "stats.approve",
+      "stats.export",
+      "press.read"
+    ],
+    "statistician": [
+      "association.read",
+      "posts.internal.read",
+      "stats.enter"
+    ],
+    "rep": [
+      "association.read",
+      "teams.represent",
+      "posts.create",
+      "posts.internal.read",
+      "posts.acknowledge"
+    ],
+    "media": [
+      "association.read",
+      "posts.internal.read",
+      "stats.export",
+      "press.read"
+    ],
+    "press": [
+      "association.read",
+      "posts.internal.read",
+      "stats.export",
+      "press.read"
+    ],
+    "fan": [
+      "association.read"
+    ]
+  }
+}

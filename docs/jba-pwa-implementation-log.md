@@ -1,0 +1,490 @@
+# JBA PWA Implementation Log
+
+## Phase 0 - Repo Orientation And Truth Check
+
+- Date/time: 2026-06-30 01:47:25 EDT
+- Status: NEEDS-DECISION
+- Files inspected:
+  - `pubspec.yaml`
+  - `lib/`
+  - `web/`
+  - `web/manifest.json`
+  - `web/index.html`
+  - `firebase.json`
+  - `.firebaserc`
+  - `functions/`
+  - `firestore.rules`
+  - `storage.rules`
+- Files changed:
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `pwd`
+  - `git status --short --branch`
+  - `git branch --show-current`
+  - `git remote -v`
+  - `ls`
+  - `ls pubspec.yaml lib web web/manifest.json web/index.html firebase.json .firebaserc functions firestore.rules storage.rules`
+  - `flutter --version`
+  - `dart --version`
+  - `node --version`
+  - `npm --version`
+  - `firebase --version`
+  - `sed -n '1,200p' .firebaserc`
+  - `git status --short`
+- Results:
+  - Working directory is `/Users/kaliartistry-mac/Jamaica Basketball App`.
+  - Current branch is `main`.
+  - The repo has the expected Flutter/Firebase project shape.
+  - Required project files and directories exist.
+  - Git remote is `origin https://github.com/kaliartistry/hoopsconnect-site.git`.
+  - Firebase default project alias is `hoops-connect-jm`.
+  - Flutter is installed: `3.41.2` stable.
+  - Dart is installed: `3.11.0`.
+  - Node is installed: `v25.9.0`.
+  - npm is installed: `11.12.1`.
+  - Firebase CLI is installed: `15.8.0`.
+  - `git status --short` was clean before this log file was created.
+- Risks found:
+  - The Git remote name/path includes `hoopsconnect-site`, which may be a naming mismatch for the canonical app repo.
+  - Local Node is `v25.9.0`; Cloud Functions declare Node 22 in `functions/package.json`, so CI/deploy parity should use Node 22.
+- Blockers:
+  - No local blocker for PWA audit/build work.
+- Next recommended step:
+  - Continue to baseline build/test verification.
+  - Confirm with Kali/JBA whether `https://github.com/kaliartistry/hoopsconnect-site.git` is the canonical HoopsConnect app repository or should be renamed/reconnected.
+
+## Phase 1 - Baseline Build And Test Verification
+
+- Date/time: 2026-06-30 01:58 EDT
+- Status: PASS
+- Files inspected:
+  - `functions/package.json`
+  - `functions/package-lock.json`
+- Files changed:
+  - `functions/package-lock.json`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `flutter pub get`
+  - `sed -n '1,220p' functions/package.json`
+  - `flutter analyze`
+  - `npm install` from `functions/`
+  - `flutter test`
+  - `npm run build` from `functions/`
+  - `flutter build web --release`
+  - `git status --short`
+- Results:
+  - `flutter pub get` completed successfully. It reported available package upgrades but no dependency resolution failure.
+  - `flutter analyze` passed with no issues.
+  - `flutter test` passed with 253 tests.
+  - `npm install` completed. It reported an engine warning because local Node is `v25.9.0` while Functions declare Node 22.
+  - `npm install` reported 25 package vulnerabilities in the Functions dependency tree. This does not block local PWA build work, but should be reviewed before production deployment.
+  - `npm run build` in `functions/` passed.
+  - `flutter build web --release` passed and generated `build/web`.
+  - The web build emitted a non-blocking Flutter WASM dry-run suggestion and font tree-shaking notices.
+  - `functions/package-lock.json` was updated by `npm install` so its root `engines.node` value matches `functions/package.json` (`22` instead of stale `18`).
+- Risks found:
+  - Functions dependency vulnerabilities need audit before production.
+  - Local Node version should be aligned to Node 22 for deployment/emulator parity.
+- Blockers:
+  - None for private PWA readiness work.
+- Next recommended step:
+  - Continue to PWA readiness and Firebase Hosting deployment-readiness audit.
+
+## Phase 2 - PWA Readiness Audit
+
+- Date/time: 2026-06-30 02:07 EDT
+- Status: PASS
+- Files inspected:
+  - `web/manifest.json`
+  - `web/index.html`
+  - `web/icons/`
+  - `web/firebase-messaging-sw.js`
+  - `firebase.json`
+  - `build/web/manifest.json`
+  - `build/web/index.html`
+  - `build/web/icons/`
+- Files changed:
+  - `docs/pwa-readiness-audit.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `sed -n '1,220p' web/manifest.json`
+  - `sed -n '1,220p' web/index.html`
+  - `find web/icons -maxdepth 1 -type f -print -exec file {} \;`
+  - `sed -n '1,220p' web/firebase-messaging-sw.js`
+  - `sed -n '1,260p' firebase.json`
+  - `find build/web -maxdepth 2 -type f | sort | sed -n '1,160p'`
+  - `sed -n '1,220p' build/web/manifest.json`
+  - `sed -n '1,220p' build/web/index.html`
+  - `find build/web/icons -maxdepth 1 -type f -print -exec file {} \;`
+- Results:
+  - PWA manifest exists and has appropriate app names, colors, standalone display, and icons.
+  - Required icon sizes are present in source and build output.
+  - Firebase Messaging service worker exists.
+  - Flutter release web build output includes PWA assets.
+  - Firebase Hosting is configured for `build/web` and SPA rewrites.
+  - Security headers intentionally block iframe embedding.
+  - Full audit created in `docs/pwa-readiness-audit.md`.
+- Risks found:
+  - Live PWA install behavior has not been browser-tested after deployment.
+  - Firebase Messaging and App Check need live-domain verification.
+  - No Lighthouse PWA audit was run.
+- Blockers:
+  - None for local PWA readiness.
+- Next recommended step:
+  - Prepare deployment runbook and document external deployment prerequisites.
+
+## Phase 3 - Firebase Hosting Deployment Readiness
+
+- Date/time: 2026-06-30 02:09 EDT
+- Status: BLOCKED-EXTERNAL
+- Files inspected:
+  - `firebase.json`
+  - `.firebaserc`
+  - `build/web/`
+- Files changed:
+  - `docs/pwa-deployment-runbook.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `sed -n '1,260p' firebase.json`
+  - `sed -n '1,200p' .firebaserc`
+  - `find build/web -maxdepth 2 -type f | sort | sed -n '1,160p'`
+- Results:
+  - Hosting public directory is `build/web`.
+  - SPA rewrite points to `/index.html`.
+  - Security headers are present and intentionally block iframe embedding.
+  - Firebase default project alias is `hoops-connect-jm`.
+  - No staging/production project split is defined in `.firebaserc`.
+  - Recommended portal URL is `portal.jamaicabasketball.com`, with `admin.jamaicabasketball.com` or `stats.jamaicabasketball.com` as alternatives.
+  - Deployment runbook created in `docs/pwa-deployment-runbook.md`.
+- Risks found:
+  - Deploy access and DNS access are not locally verifiable.
+  - No staging alias is configured.
+  - App Check and Auth authorized domains need live-domain configuration.
+- Blockers:
+  - BLOCKED-EXTERNAL for live deployment until Firebase/DNS/App Check/Auth domain access is available and Kali approves deployment.
+- Next recommended step:
+  - Continue with auth and role cleanup before any public or beta launch.
+
+## Phase 4 - Auth And Role Cleanup
+
+- Date/time: 2026-06-30 02:25 EDT
+- Status: PASS
+- Files inspected:
+  - `lib/models/user_model.dart`
+  - `lib/core/constants/app_constants.dart`
+  - `lib/services/repositories/auth_repository.dart`
+  - `lib/features/auth/login_screen.dart`
+  - `lib/features/auth/join_screen.dart`
+  - `lib/app/router/app_router.dart`
+  - `firestore.rules`
+  - `functions/src/`
+  - `test/models/user_model_test.dart`
+  - `test/models/user_role_permissions_test.dart`
+- Files changed:
+  - `lib/core/constants/app_constants.dart`
+  - `lib/services/repositories/auth_repository.dart`
+  - `lib/features/auth/login_screen.dart`
+  - `test/models/user_model_test.dart`
+  - `docs/auth-and-roles-audit.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `rg "media" lib functions firestore.rules test -n`
+  - `rg "press" lib functions firestore.rules test -n`
+  - `rg "fan" lib functions firestore.rules test -n`
+  - `rg "superAdmin|statistician|admin|rep" lib functions firestore.rules test -n`
+  - `sed -n '1,260p' test/models/user_model_test.dart`
+  - `sed -n '1,340p' test/models/user_role_permissions_test.dart`
+  - `flutter analyze`
+  - `flutter test`
+  - `flutter build web --release`
+- Results:
+  - Confirmed public self-signup previously used `AppDefaults.defaultSignupRole`.
+  - Fixed `AppDefaults.defaultSignupRole` from `media` to `fan`.
+  - Added test coverage for public self-signup default role.
+  - Confirmed media/press are currently treated as aliases in Dart and Firestore rules.
+  - Recommended `media` as the canonical stored role going forward, with `press` retained as a backward-compatible alias.
+  - `flutter analyze` passed.
+  - `flutter test` passed with 254 tests.
+  - `flutter build web --release` passed.
+- Risks found:
+  - Firestore rules still allow direct authenticated self-create with non-admin roles such as `rep`, `media`, `press`, and `statistician`; before public launch this should be tightened so public self-create can only create `fan` unless invite-code assignment is protected by a trusted flow.
+  - Any existing `press` role documents should be audited before removing the alias.
+- Blockers:
+  - None for controlled admin/statistician PWA work after the app-side public signup default fix.
+- Next recommended step:
+  - Audit admin/statistician web usability and security rules before public launch.
+
+## Phase 5 - Admin/Statistician PWA Usability Audit
+
+- Date/time: 2026-06-30 02:42 EDT
+- Status: FAIL-NON-BLOCKING
+- Files inspected:
+  - `lib/features/auth/login_screen.dart`
+  - `lib/app/app_shell.dart`
+  - `lib/features/admin/admin_panel_screen.dart`
+  - `lib/features/admin/team_list_screen.dart`
+  - `lib/features/admin/user_management_screen.dart`
+  - `lib/features/admin/schedule_hub_screen.dart`
+  - `lib/features/admin/add_game_screen.dart`
+  - `lib/features/admin/invite_code_management_screen.dart`
+  - `lib/features/admin/division_management_screen.dart`
+  - `lib/features/stats/stat_game_select_screen.dart`
+  - `lib/features/stats/stat_entry_screen.dart`
+  - `lib/features/stats/live_stats_screen.dart`
+  - `lib/features/ack/ack_tracker_screen.dart`
+  - `lib/features/board/board_screen.dart`
+  - `lib/providers/post_providers.dart`
+  - `lib/services/repositories/post_repository.dart`
+- Files changed:
+  - `docs/admin-statistician-pwa-usability-audit.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - Multiple `sed` inspections of the screens listed above.
+  - `rg "isWideScreen|MediaQuery|LayoutBuilder|Orientation|SingleChildScrollView|Keyboard|NavigationRail|ConstrainedBox" ...`
+- Results:
+  - Core admin/statistician screens exist.
+  - Wider app shell uses navigation rail.
+  - Admin panel has desktop layout.
+  - Board has desktop list/detail layout.
+  - Live stats has desktop/web keyboard shortcuts and responsive layout code.
+  - Post-game stat entry has horizontally scrollable stat tables and lifecycle action states.
+  - Full usability audit created in `docs/admin-statistician-pwa-usability-audit.md`.
+- Risks found:
+  - No live browser, tablet, seeded-data, or role-account QA was possible locally.
+  - Several admin screens are list-first and should be upgraded to desktop tables later.
+  - Invite-code creation requires raw team ID input.
+- Blockers:
+  - No blocker for a controlled demo.
+  - Real game-day pilot remains blocked until tested with data, users, and devices.
+- Next recommended step:
+  - Continue security rules audit and public website integration planning.
+
+## Phase 6 - Firestore Rules And Data Security Review
+
+- Date/time: 2026-06-30 02:52 EDT
+- Status: FAIL-BLOCKING
+- Files inspected:
+  - `firestore.rules`
+  - `storage.rules`
+  - `functions/src/`
+  - `lib/services/repositories/auth_repository.dart`
+  - `lib/services/repositories/team_repository.dart`
+  - `lib/providers/team_providers.dart`
+  - `lib/providers/stats_providers.dart`
+  - `lib/models/post_model.dart`
+- Files changed:
+  - `docs/security-rules-audit.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `sed -n '1,280p' storage.rules`
+  - `sed -n '1,280p' firestore.rules`
+  - `rg "firebase emulators|@firebase/rules-unit-testing|RulesTest|emulator" -n . --glob '!build/**' --glob '!functions/node_modules/**' --glob '!*package-lock.json'`
+  - Additional `sed` inspections of repositories, providers, and models.
+- Results:
+  - No unauthenticated public reads were found for private app data.
+  - Rules require authentication for app data reads.
+  - Leaderboards, standings, and team season stats are client-read/client-write-protected appropriately.
+  - Security audit created in `docs/security-rules-audit.md`.
+- Risks found:
+  - Direct Firestore self-create can still request non-admin roles such as `statistician`, `rep`, `media`, or `press`.
+  - Any authenticated user can read all user docs.
+  - Rep team updates are not field-limited.
+  - Rep ack updates are not limited to the caller's own ack entry.
+  - Storage writes are broad for any authenticated user.
+  - No Firebase rules emulator test suite was found.
+- Blockers:
+  - FAIL-BLOCKING for public launch/real production use until rules are tightened.
+  - Not blocking a controlled demo with trusted accounts.
+- Next recommended step:
+  - Do not public-launch until rules are fixed and emulator tests are added.
+
+## Phase 7 - Public JBA Website Integration Plan
+
+- Date/time: 2026-06-30 03:00 EDT
+- Status: PASS
+- Files inspected:
+  - `firebase.json`
+  - `firestore.rules`
+  - `docs/pwa-readiness-audit.md`
+- Files changed:
+  - `docs/jba-website-integration-plan.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - Static review of current hosting/rules/data shape.
+- Results:
+  - Website integration plan created in `docs/jba-website-integration-plan.md`.
+  - Recommendation is HoopsConnect/Firebase as source of truth and JBA website as read-only display.
+  - Private PWA iframe embedding is not recommended.
+  - Public website must use a safe read-only data layer.
+- Risks found:
+  - Website platform and access are unknown.
+  - Public data fields/privacy policy are not decided.
+- Blockers:
+  - NEEDS-DECISION for platform/access/privacy before implementation.
+- Next recommended step:
+  - Ask JBA/Kurt platform and public-data questions before building widgets or API.
+
+## Phase 8 - Public Data Layer Spec
+
+- Date/time: 2026-06-30 03:06 EDT
+- Status: PASS
+- Files inspected:
+  - `lib/core/constants/firestore_paths.dart`
+  - `lib/models/post_model.dart`
+  - `lib/models/game_stats_model.dart`
+  - `lib/models/team_model.dart`
+  - `lib/models/player_season_stats_model.dart`
+  - `lib/models/standings_model.dart`
+  - `lib/models/leaderboard_model.dart`
+- Files changed:
+  - `docs/public-data-layer-spec.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - Static review of current model/source paths.
+- Results:
+  - Public data layer spec created in `docs/public-data-layer-spec.md`.
+  - DTOs defined for team summary, player card, schedule item, game result, box score, standings row, leaderboard row, and public post.
+  - Spec excludes emails, phone numbers, private role data, unapproved stats, contact info, and admin-only metadata.
+- Risks found:
+  - JBA must define privacy boundaries for player bios/photos/minors.
+  - Some desired player profile fields are not fully modeled yet and may need a future public profile collection.
+- Blockers:
+  - No blocker for planning.
+  - NEEDS-DECISION before implementation.
+- Next recommended step:
+  - Prepare demo readiness package and final status.
+
+## Phase 9 - Optional Public API/Export Implementation
+
+- Date/time: 2026-06-30 03:08 EDT
+- Status: NEEDS-DECISION
+- Files inspected:
+  - `docs/public-data-layer-spec.md`
+- Files changed:
+  - None
+- Commands run:
+  - None
+- Results:
+  - Phase intentionally not implemented because the request explicitly says to implement this phase only if instructed.
+- Risks found:
+  - Website platform, public fields, and privacy policy are unresolved.
+- Blockers:
+  - NEEDS-DECISION before implementation.
+- Next recommended step:
+  - Decide between Cloud Function HTTP endpoints and scheduled static JSON exports after website platform review.
+
+## Phase 10 - Demo Readiness Package
+
+- Date/time: 2026-06-30 03:14 EDT
+- Status: PASS
+- Files inspected:
+  - `docs/pwa-readiness-audit.md`
+  - `docs/pwa-deployment-runbook.md`
+  - `docs/auth-and-roles-audit.md`
+  - `docs/admin-statistician-pwa-usability-audit.md`
+  - `docs/security-rules-audit.md`
+  - `docs/jba-website-integration-plan.md`
+  - `docs/public-data-layer-spec.md`
+- Files changed:
+  - `docs/jba-demo-readiness.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - Static review of created docs and repo state.
+- Results:
+  - Demo readiness package created in `docs/jba-demo-readiness.md`.
+  - Package includes ready/not-ready state, demo requirements, PWA explanation, website integration explanation, timeline estimates, and what not to promise.
+- Risks found:
+  - Demo still requires role-specific accounts and seeded data.
+- Blockers:
+  - None for meeting preparation.
+- Next recommended step:
+  - Run final verification and create final status document.
+
+## Phase 11 - Final Readiness Review
+
+- Date/time: 2026-06-30 03:25 EDT
+- Status: PASS with launch blockers documented
+- Files inspected:
+  - `docs/jba-pwa-implementation-log.md`
+  - `docs/pwa-readiness-audit.md`
+  - `docs/pwa-deployment-runbook.md`
+  - `docs/auth-and-roles-audit.md`
+  - `docs/admin-statistician-pwa-usability-audit.md`
+  - `docs/security-rules-audit.md`
+  - `docs/jba-website-integration-plan.md`
+  - `docs/public-data-layer-spec.md`
+  - `docs/jba-demo-readiness.md`
+- Files changed:
+  - `docs/jba-pwa-final-status.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `dart format lib/core/constants/app_constants.dart lib/services/repositories/auth_repository.dart lib/features/auth/login_screen.dart test/models/user_model_test.dart`
+  - `git status --short`
+  - `flutter analyze`
+  - `npm run build` from `functions/`
+  - `flutter test`
+  - `flutter build web --release`
+  - `git status --short`
+- Results:
+  - `flutter analyze`: PASS after adding braces for lint compliance in `login_screen.dart`.
+  - `flutter test`: PASS with 254 tests.
+  - `npm run build`: PASS.
+  - `flutter build web --release`: PASS.
+  - Final status created in `docs/jba-pwa-final-status.md`.
+- Risks found:
+  - Public launch remains blocked by rules hardening and external deployment/access decisions.
+  - Live hosted PWA behavior remains unverified.
+- Blockers:
+  - No blocker for local PWA foundation conclusion.
+  - Public launch and production season use have documented blockers.
+- Next recommended step:
+  - Fix security rules and add emulator tests before any public launch.
+
+## Phase 12 - Demo Stats Backfill
+
+- Date/time: 2026-06-30
+- Status: PASS
+- Files inspected:
+  - `scripts/seed_nbl.js`
+  - `scripts/seed_season_games.js`
+  - `scripts/seed_mock_league.js`
+  - `functions/src/stats.ts`
+  - `functions/src/leaderboard.ts`
+  - `lib/models/event_model.dart`
+  - `lib/models/game_stats_model.dart`
+  - `lib/models/player_season_stats_model.dart`
+- Files changed:
+  - `scripts/backfill_pending_game_stats.js`
+  - `docs/chatgpt-web-jba-meeting-prompt.md`
+  - `docs/jba-demo-readiness.md`
+  - `docs/jba-pwa-final-status.md`
+  - `docs/jba-pwa-implementation-log.md`
+- Commands run:
+  - `firebase use`
+  - `firebase login:list`
+  - `firebase functions:list --project hoops-connect-jm`
+  - Firestore read-only inventory via Google OAuth token.
+  - `node scripts/backfill_pending_game_stats.js`
+  - `node scripts/backfill_pending_game_stats.js --commit`
+  - `node scripts/backfill_pending_game_stats.js`
+  - Firestore verification query via Google OAuth token.
+- Results:
+  - Firebase project in use is `hoops-connect-jm`.
+  - Deployed `onGameStatsApproved` function exists, but the backfill rebuilt derived aggregate docs directly to keep all/division standings and all/division leaderboards aligned.
+  - Initial inventory found 102 games, 76 approved gameStats docs, and 26 past pending games with no gameStats docs.
+  - Backfill generated approved demo box scores for the 26 pending past games.
+  - Backfill marked those 26 events approved.
+  - Backfill rebuilt 96 playerSeasonStats docs.
+  - Backfill rebuilt 12 teamSeasonStats docs.
+  - Backfill rebuilt 3 standings docs.
+  - Backfill rebuilt 15 leaderboard docs.
+  - Final verification found 102 games, 102 approved gameStats docs, 26 generated backfill stats docs, and 0 past pending games.
+  - Paste-ready ChatGPT Web meeting-prep prompt created in `docs/chatgpt-web-jba-meeting-prompt.md`.
+- Risks found:
+  - These 26 box scores are generated demo stats, not official JBA-certified historical stats.
+  - Production launch still requires security rules hardening, role/account QA, and JBA data validation.
+- Blockers:
+  - None for meeting/demo preparation.
+- Next recommended step:
+  - Use the prompt in `docs/chatgpt-web-jba-meeting-prompt.md` for call prep.
+  - Validate demo accounts and the hosted/local PWA login flow before presenting live.

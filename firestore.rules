@@ -2,253 +2,279 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // ── Helper functions ────────────────────────────────────────────
-
-    function getUserDoc() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
-    function getUserRole() {
-      return getUserDoc().role;
-    }
-
-    function isSuperAdmin() {
-      return getUserRole() == 'superAdmin';
-    }
-
-    function isAdmin() {
-      return getUserRole() == 'admin' || isSuperAdmin();
-    }
-
-    function isRep() {
-      return getUserRole() == 'rep';
-    }
-
-    function isMedia() {
-      return getUserRole() == 'media';
-    }
-
-    function isStatistician() {
-      return getUserRole() == 'statistician';
-    }
-
-    function isPress() {
-      return getUserRole() == 'press' || getUserRole() == 'media';
-    }
-
-    function canEnterStats() {
-      return isAdmin() || isStatistician();
-    }
-
-    function isOwnerAccount(userId) {
-      return get(/databases/$(database)/documents/users/$(userId)).data.email == 'kalimccarthy@gmail.com';
-    }
-
+    // Authorization schema v1. Every authorized account requires a
+    // server-owned, active membership document. Legacy user roles are never an
+    // authority source because older clients could self-assign those fields.
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Check that a field was not changed between resource and request
-    function fieldUnchanged(field) {
-      return !(field in request.resource.data.diff(resource.data).affectedKeys());
+    function userPath(userId) {
+      return /databases/$(database)/documents/users/$(userId);
     }
 
-    // Rate limit: require a minimum gap between writes (basic anti-spam)
-    // Checks that a timestamp field is at least N seconds in the past
-    function notTooFrequent(timestampField, minSeconds) {
-      return !('lastWriteAt' in resource.data)
-        || resource.data[timestampField] + duration.value(minSeconds, 's') < request.time;
+    function membershipPath(userId) {
+      return /databases/$(database)/documents/memberships/$(userId);
     }
 
-    // ── Users collection ────────────────────────────────────────────
+    function hasMembershipDoc() {
+      return isAuthenticated() && exists(membershipPath(request.auth.uid));
+    }
 
+    function getUserDoc() {
+      return get(userPath(request.auth.uid)).data;
+    }
+
+    function getMembershipDoc() {
+      return get(membershipPath(request.auth.uid)).data;
+    }
+
+    function currentRole() {
+      return getMembershipDoc().role;
+    }
+
+    function currentAssociationId() {
+      return getMembershipDoc().associationId;
+    }
+
+    function hasCapability(capability) {
+      return isAuthenticated()
+        && hasMembershipDoc()
+        && getMembershipDoc().status == 'active'
+        && getMembershipDoc().authorizationSchemaVersion == 1
+        && getMembershipDoc().capabilities is list
+        && getMembershipDoc().capabilities.hasAny([capability]);
+    }
+
+    function isSameAssociation(assocId) {
+      return isAuthenticated()
+        && hasMembershipDoc()
+        && getMembershipDoc().status == 'active'
+        && getMembershipDoc().authorizationSchemaVersion == 1
+        && currentAssociationId() == assocId;
+    }
+
+    function canReadAssociation(assocId) {
+      return isSameAssociation(assocId) && hasCapability('association.read');
+    }
+
+    function canManageAssociation(assocId) {
+      return isSameAssociation(assocId) && hasCapability('association.manage');
+    }
+
+    function canManageTeams(assocId) {
+      return isSameAssociation(assocId) && hasCapability('teams.manage');
+    }
+
+    function canManagePosts(assocId) {
+      return isSameAssociation(assocId) && hasCapability('posts.manage');
+    }
+
+    function canEnterStats(assocId) {
+      return isSameAssociation(assocId) && hasCapability('stats.enter');
+    }
+
+    function canApproveStats(assocId) {
+      return isSameAssociation(assocId) && hasCapability('stats.approve');
+    }
+
+    // ── Private identity and authorization data ────────────────────
     match /users/{userId} {
-      allow read: if isAuthenticated();
-
-      // Users can create their own doc during signup
-      allow create: if isAuthenticated()
-        && request.auth.uid == userId
-        && request.resource.data.role in ['media', 'rep', 'statistician', 'press', 'fan']  // Cannot self-assign admin/superAdmin
-        && request.resource.data.keys().hasAll(['email', 'displayName', 'role', 'associationId']);
-
-      // Users can update their own profile but CANNOT change role or associationId
-      // Admins can update any user (including role changes)
-      allow update: if isAuthenticated() && (
-        // Self-update: block role escalation and association change
-        (request.auth.uid == userId
-          && fieldUnchanged('role')
-          && fieldUnchanged('associationId'))
-        // Admin can update any user (but not escalate to superAdmin unless they are superAdmin)
-        || (isAdmin()
-          && (isSuperAdmin() || request.resource.data.role != 'superAdmin')
-          && (!isOwnerAccount(userId) || fieldUnchanged('role')))
+      allow get: if isAuthenticated() && (
+        request.auth.uid == userId
+        || (hasCapability('members.read')
+          && resource.data.associationId == currentAssociationId())
       );
-
-      allow delete: if isSuperAdmin();
-    }
-
-    // ── Invite codes ────────────────────────────────────────────────
-
-    match /inviteCodes/{code} {
-      // Authenticated users can get a specific code (for validation during join flow)
-      // Only admins can list all codes
-      allow get: if isAuthenticated();
-      allow list: if isAdmin();
-
-      // Only admins can create codes; superAdmin required to create admin invite codes
-      allow create: if isAdmin()
-        && (request.resource.data.role != 'admin' || isSuperAdmin());
-      allow delete: if isAdmin();
-
-      // Consuming a code: authenticated users may ONLY decrement usesRemaining
-      // All other fields must remain unchanged
+      allow list: if hasCapability('members.read')
+        && resource.data.associationId == currentAssociationId();
+      allow create: if false;
       allow update: if isAuthenticated()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usesRemaining'])
-        && request.resource.data.usesRemaining == resource.data.usesRemaining - 1
-        && resource.data.usesRemaining > 0;
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'phone', 'fcmTokens', 'notificationPrefs', 'updatedAt'
+        ]);
+      allow delete: if false;
     }
 
-    // ── Association-scoped collections ──────────────────────────────
+    match /memberships/{userId} {
+      allow get: if isAuthenticated() && (
+        request.auth.uid == userId
+        || (hasCapability('members.read')
+          && resource.data.associationId == currentAssociationId())
+      );
+      allow list: if hasCapability('members.read')
+        && resource.data.associationId == currentAssociationId();
+      allow create, update, delete: if false;
+    }
 
+    match /authorizationAudit/{entryId} {
+      allow read: if hasCapability('members.read')
+        && resource.data.associationId == currentAssociationId();
+      allow write: if false;
+    }
+
+    match /inviteCodes/{inviteId} {
+      allow get, list: if hasCapability('invites.manage')
+        && resource.data.associationId == currentAssociationId();
+      allow create, update, delete: if false;
+    }
+
+    // Callable-only idempotency records. They contain no bearer secrets, but
+    // remain server-private to prevent operation replay analysis.
+    match /authorizationOperationReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
+    // ── Association-scoped private application data ────────────────
     match /associations/{assocId} {
-      allow read: if isAuthenticated();
-      allow write: if isSuperAdmin();
+      allow read: if canReadAssociation(assocId);
+      allow write: if canManageAssociation(assocId);
 
-      // ── Seasons ─────────────────────────────────────────────────
       match /seasons/{seasonId} {
-        allow read: if isAuthenticated();
-        allow write: if isAdmin();
+        allow read: if canReadAssociation(assocId);
+        allow write: if canManageAssociation(assocId);
       }
 
-      // ── Divisions ───────────────────────────────────────────────
       match /divisions/{divisionId} {
-        allow read: if isAuthenticated();
-        allow write: if isAdmin();
+        allow read: if canReadAssociation(assocId);
+        allow write: if canManageAssociation(assocId);
       }
 
-      // ── Teams ───────────────────────────────────────────────────
       match /teams/{teamId} {
-        allow read: if isAuthenticated();
-        allow create: if isAdmin();
-        allow update: if isAdmin()
-          || (isRep() && resource.data.repIds.hasAny([request.auth.uid]));
-        allow delete: if isAdmin();
+        allow read: if canReadAssociation(assocId);
+        allow create, update, delete: if canManageTeams(assocId)
+          || canManageAssociation(assocId);
       }
 
-      // ── Posts ───────────────────────────────────────────────────
       match /posts/{postId} {
-        allow read: if isAuthenticated();
-
-        // Only admin or rep can create posts
-        allow create: if isAuthenticated()
-          && (isAdmin() || isRep())
-          && request.resource.data.keys().hasAll(['authorId', 'title', 'body', 'type', 'createdAt'])
-          && request.resource.data.authorId == request.auth.uid;
-
-        allow update: if isAuthenticated() && (
-          // Admin can update any post
-          isAdmin()
-          // Author can update their own post (but not ack fields)
-          || (request.auth.uid == resource.data.authorId
-            && fieldUnchanged('ackStatus')
-            && fieldUnchanged('expectedAcks'))
-          // Reps can acknowledge posts (only updating ackStatus field)
-          || (isRep()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ackStatus']))
+        // Fans receive only explicitly public, non-acknowledgment posts. Ack
+        // maps contain staff identity data and cannot be field-redacted.
+        allow read: if canReadAssociation(assocId) && (
+          hasCapability('posts.internal.read')
+          || (resource.data.visibility == 'public'
+            && resource.data.requiresAck == false)
         );
 
-        allow delete: if isAdmin();
+        allow create: if isSameAssociation(assocId)
+          && hasCapability('posts.create')
+          && request.resource.data.keys().hasAll([
+            'authorId', 'authorName', 'authorRole', 'title', 'body', 'type',
+            'createdAt', 'visibility', 'pinned', 'urgent', 'requiresAck',
+            'expectedAcks', 'ackStatus'
+          ])
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.authorName == getUserDoc().displayName
+          && request.resource.data.authorRole == currentRole()
+          && request.resource.data.ackStatus.size() == 0
+          && request.resource.data.expectedAcks.size() == 0
+          && (
+            currentRole() != 'rep'
+            || (request.resource.data.visibility == 'public'
+              && request.resource.data.pinned == false
+              && request.resource.data.urgent == false
+              && request.resource.data.requiresAck == false)
+          );
+
+        allow update: if canManagePosts(assocId)
+          || (isSameAssociation(assocId)
+            && hasCapability('posts.create')
+            && request.auth.uid == resource.data.authorId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title', 'body', 'imageUrl', 'divisionFilter', 'reactions'
+            ]))
+          || validOwnAcknowledgment(assocId);
+        allow delete: if canManagePosts(assocId);
       }
 
-      // ── Events / Schedule ───────────────────────────────────────
       match /events/{eventId} {
-        allow read: if isAuthenticated();
-        allow write: if isAdmin();
+        allow read: if canReadAssociation(assocId);
+        allow write: if canManageAssociation(assocId);
       }
 
-      // ── Game Stats ──────────────────────────────────────────────
       match /gameStats/{gameId} {
-        allow read: if isAuthenticated();
+        allow read: if canReadAssociation(assocId);
+        allow create: if canEnterStats(assocId) && validateGameStatsCreate(assocId);
+        allow update: if canEnterStats(assocId) && validateGameStatsUpdate(assocId);
+        allow delete: if canApproveStats(assocId);
 
-        // Admins and statisticians can create game stat entries
-        allow create: if canEnterStats();
-
-        // Admins and statisticians can update; but only admins can approve
-        allow update: if canEnterStats()
-          && validateGameStatsUpdate();
-
-        allow delete: if isAdmin();
-
-        // Per-action play-by-play log. Append-only by design — the client
-        // tombstones via update with `revoked: true` rather than deleting.
         match /events/{eventId} {
-          allow read: if isAuthenticated();
-          allow create, update: if canEnterStats();
+          allow read: if canReadAssociation(assocId);
+          allow create, update: if canEnterStats(assocId);
           allow delete: if false;
         }
       }
 
-      // ── Player Season Stats ──
       match /playerSeasonStats/{statId} {
-        allow read: if isAuthenticated();
-        // Admins can add/remove players from rosters.
-        // Cloud Functions (Admin SDK) also write these and bypass rules.
-        allow create, update, delete: if isAdmin();
+        allow read: if canReadAssociation(assocId);
+        allow create, update, delete: if canManageTeams(assocId)
+          || canManageAssociation(assocId);
       }
 
-      // ── Leaderboards (written by Cloud Functions via Admin SDK) ──
       match /leaderboard/{boardId} {
-        allow read: if isAuthenticated();
-        // Only Cloud Functions (Admin SDK) should write these.
+        allow read: if canReadAssociation(assocId);
         allow write: if false;
       }
 
-      // ── Standings ───────────────────────────────────────────────
       match /standings/{standingId} {
-        allow read: if isAuthenticated();
-        // Standings are updated by Cloud Functions via Admin SDK.
+        allow read: if canReadAssociation(assocId);
         allow write: if false;
       }
 
-      // ── Team Season Stats (written by Cloud Functions via Admin SDK) ──
       match /teamSeasonStats/{statId} {
-        allow read: if isAuthenticated();
-        // Only Cloud Functions (Admin SDK) should write these.
+        allow read: if canReadAssociation(assocId);
         allow write: if false;
       }
     }
 
-    // ── Validation functions ──────────────────────────────────────
+    // Certified public DTOs are deliberately separate from private source
+    // collections. No public writer exists in this tranche.
+    match /publicData/{assocId}/{document=**} {
+      allow read: if resource.data.associationId == assocId
+        && resource.data.schemaVersion == 1
+        && resource.data.published == true
+        && resource.data.certificationStatus == 'certified';
+      allow write: if false;
+    }
 
-    function validateGameStatsUpdate() {
+    function validOwnAcknowledgment(assocId) {
+      let uid = request.auth.uid;
+      return isSameAssociation(assocId)
+        && hasCapability('posts.acknowledge')
+        && resource.data.requiresAck == true
+        && uid in resource.data.expectedAcks
+        && !(uid in resource.data.ackStatus)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ackStatus'])
+        && request.resource.data.ackStatus.diff(resource.data.ackStatus).affectedKeys().hasOnly([uid])
+        && request.resource.data.ackStatus[uid].keys().hasOnly(['ackedAt', 'name', 'teamName'])
+        && request.resource.data.ackStatus[uid].ackedAt == request.time
+        && request.resource.data.ackStatus[uid].name == resource.data.expectedAcks[uid].name
+        && request.resource.data.ackStatus[uid].teamName == resource.data.expectedAcks[uid].teamName;
+    }
+
+    function validateGameStatsUpdate(assocId) {
       let data = request.resource.data;
-
-      // Status transitions: validate allowed values. `draft` is kept for
-      // backwards-compatibility with pre-v1 docs but new code should use
-      // `inProgress`.
       let statusValid = !('status' in request.resource.data.diff(resource.data).affectedKeys())
         || data.status in ['draft', 'notStarted', 'inProgress', 'submitted', 'approved', 'rejected'];
-
-      // Only admins can set status to 'approved' or 'rejected'
-      // (statisticians can move between editable states + submit but not adjudicate).
-      let approvalAllowed = (data.status != 'approved' && data.status != 'rejected') || isAdmin();
-
-      // If approving, must set approvedBy to the current user.
-      let approvalValid = data.status != 'approved'
-        || data.approvedBy == request.auth.uid;
-
-      // If rejecting, must set rejectedBy to the current user.
-      let rejectionValid = data.status != 'rejected'
-        || data.rejectedBy == request.auth.uid;
-
-      // Validate score fields are non-negative
+      let approvalAllowed = (data.status != 'approved' && data.status != 'rejected')
+        || canApproveStats(assocId);
+      let approvalValid = data.status != 'approved' || data.approvedBy == request.auth.uid;
+      let rejectionValid = data.status != 'rejected' || data.rejectedBy == request.auth.uid;
       let scoresValid = data.homeScore >= 0 && data.awayScore >= 0;
-
       return statusValid && approvalAllowed && approvalValid && rejectionValid && scoresValid;
     }
 
-    // ── Catch-all: deny unmatched paths ──────────────────────────
+    function validateGameStatsCreate(assocId) {
+      let data = request.resource.data;
+      let statusValid = data.status in ['draft', 'notStarted', 'inProgress', 'submitted', 'approved', 'rejected'];
+      let approvalAllowed = (data.status != 'approved' && data.status != 'rejected')
+        || canApproveStats(assocId);
+      let approvalValid = data.status != 'approved' || data.approvedBy == request.auth.uid;
+      let rejectionValid = data.status != 'rejected' || data.rejectedBy == request.auth.uid;
+      let scoresValid = data.homeScore is number && data.awayScore is number
+        && data.homeScore >= 0 && data.awayScore >= 0;
+      return statusValid && approvalAllowed && approvalValid && rejectionValid && scoresValid;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

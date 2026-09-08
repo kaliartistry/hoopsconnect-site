@@ -8,12 +8,13 @@ final rolePreviewProvider = StateProvider<UserRole?>((ref) => null);
 
 /// Returns the user with the preview role applied (if active).
 /// Only super admins can use preview mode. Identity (id, email, etc.)
-/// is preserved — only the role changes for permission checks.
+/// is preserved and real capabilities are never changed. This is presentation
+/// preview only; route and action gates continue to use current membership.
 final effectiveUserProvider = Provider<UserModel?>((ref) {
   final user = ref.watch(currentUserProvider).value;
   final previewRole = ref.watch(rolePreviewProvider);
 
-  if (user == null || previewRole == null || !user.isSuperAdmin) return user;
+  if (user == null || previewRole == null || !user.canManageUsers) return user;
 
   return user.copyWith(role: previewRole);
 });

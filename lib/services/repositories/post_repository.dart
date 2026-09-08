@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/post_model.dart';
 
@@ -24,29 +25,38 @@ class PostRepository {
     int limit = 20,
     bool includeInternal = true,
   }) {
-    final query = _postsRef(assocId)
+    Query<PostModel> query = _postsRef(assocId);
+    if (!includeInternal) {
+      // Firestore rules cannot rely on client-side filtering. Fan queries must
+      // prove that every returned document is public and carries no ack PII.
+      query = query
+          .where('visibility', isEqualTo: PostVisibility.public.name)
+          .where('requiresAck', isEqualTo: false);
+    }
+    query = query
         .orderBy('pinned', descending: true)
-        .orderBy(
-          'createdAt',
-          descending: true,
-        );
+        .orderBy('createdAt', descending: true);
 
     return query.snapshots().map((snap) {
       final posts = snap.docs.map((d) => d.data());
 
-      final visiblePosts = posts.where((post) {
-        // Drop posts that have completed their ack lifecycle.
-        if (post.archived) return false;
-        if (!includeInternal && post.visibility == PostVisibility.internal) {
-          return false;
-        }
-        if (divisionFilter == null) return true;
+      final visiblePosts = posts
+          .where((post) {
+            // Drop posts that have completed their ack lifecycle.
+            if (post.archived) return false;
+            if (!includeInternal &&
+                post.visibility == PostVisibility.internal) {
+              return false;
+            }
+            if (divisionFilter == null) return true;
 
-        final postScope = post.divisionFilter;
-        return postScope == null ||
-            postScope.isEmpty ||
-            postScope == divisionFilter;
-      }).take(limit).toList();
+            final postScope = post.divisionFilter;
+            return postScope == null ||
+                postScope.isEmpty ||
+                postScope == divisionFilter;
+          })
+          .take(limit)
+          .toList();
 
       return visiblePosts;
     });
@@ -54,9 +64,9 @@ class PostRepository {
 
   /// Watch a single post (for ack detail screen).
   Stream<PostModel?> watchPost(String assocId, String postId) {
-    return _postsRef(assocId).doc(postId).snapshots().map(
-          (snap) => snap.exists ? snap.data() : null,
-        );
+    return _postsRef(
+      assocId,
+    ).doc(postId).snapshots().map((snap) => snap.exists ? snap.data() : null);
   }
 
   Future<void> createPost(String assocId, PostModel post) {
@@ -79,19 +89,29 @@ class PostRepository {
   }
 
   /// Record an acknowledgment from a user.
-  Future<void> acknowledge(
-    String assocId,
-    String postId,
-    String userId,
-    String userName,
-    String teamName,
-  ) {
-    return _db.doc(FirestorePaths.post(assocId, postId)).update({
-      'ackStatus.$userId': {
-        'ackedAt': Timestamp.now(),
-        'name': userName,
-        'teamName': teamName,
-      },
+  Future<void> acknowledge(String assocId, String postId) async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) {
+      throw StateError('Sign in before acknowledging a post.');
+    }
+    final postRef = _db.doc(FirestorePaths.post(assocId, postId));
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(postRef);
+      final data = snap.data();
+      final expected = data?['expectedAcks'] as Map<String, dynamic>?;
+      final entry = expected?[userId] as Map<String, dynamic>?;
+      if (entry == null) {
+        throw StateError('This acknowledgment is not assigned to you.');
+      }
+      final current = data?['ackStatus'] as Map<String, dynamic>? ?? {};
+      if (current.containsKey(userId)) return;
+      transaction.update(postRef, {
+        'ackStatus.$userId': {
+          'ackedAt': FieldValue.serverTimestamp(),
+          'name': entry['name'],
+          'teamName': entry['teamName'],
+        },
+      });
     });
   }
 

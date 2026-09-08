@@ -58,6 +58,7 @@ android/key.properties
 # Local environment and deploy secrets
 .env
 .env.*
+.secret.local
 *.p8
 *.p12
 *.cer

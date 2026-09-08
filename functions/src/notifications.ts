@@ -5,6 +5,8 @@ import {
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import * as admin from "firebase-admin";
+import {capabilities} from "./authorization";
+import {loadAuthorizedRecipients} from "./notification_authorization";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -33,16 +35,6 @@ interface PostDoc {
   expectedAcks: Record<string, AckExpectedEntry>;
   ackStatus: Record<string, { ackedAt: admin.firestore.Timestamp; name: string; teamName: string }>;
   ackRemindersSent: number;
-}
-
-interface UserDoc {
-  email: string;
-  displayName: string;
-  associationId: string;
-  teamId?: string;
-  role: string;
-  divisionId?: string;
-  fcmTokens: string[];
 }
 
 // ── Validation helpers ──────────────────────────────────────────────
@@ -101,36 +93,22 @@ export const onPostCreatedWithAck = onDocumentCreated(
     );
 
     try {
-      // Query reps for this association
-      let query: admin.firestore.Query = db
-        .collection("users")
-        .where("associationId", "==", assocId)
-        .where("role", "==", "rep");
-
-      // If the post targets a specific division, filter reps by division
-      if (postData.divisionFilter) {
-        query = query.where("divisionId", "==", postData.divisionFilter);
-      }
-
-      const repsSnap = await query.get();
+      const recipients = await loadAuthorizedRecipients(
+        db,
+        assocId,
+        capabilities.postsAcknowledge,
+        {divisionId: postData.divisionFilter},
+      );
       const expectedAcks: Record<string, AckExpectedEntry> = {};
       const allTokens: string[] = [];
 
-      for (const doc of repsSnap.docs) {
-        const user = doc.data() as UserDoc;
-
-        if (!user.displayName) {
-          logger.warn(`User ${doc.id} has no displayName, using fallback.`);
-        }
-
-        expectedAcks[doc.id] = {
-          name: user.displayName || "Unknown",
-          teamName: user.teamId || "",
-          phone: undefined,
+      for (const recipient of recipients) {
+        expectedAcks[recipient.uid] = {
+          name: recipient.displayName,
+          teamName: recipient.teamId || "",
         };
-
-        if (user.fcmTokens && Array.isArray(user.fcmTokens) && user.fcmTokens.length > 0) {
-          allTokens.push(...user.fcmTokens);
+        if (recipient.notificationPrefs.newPosts !== false) {
+          allTokens.push(...recipient.fcmTokens);
         }
       }
 
@@ -182,17 +160,26 @@ export const onAckWrite = onDocumentUpdated(
     if (!after.requiresAck) return;
     if ((after as PostDoc & { archived?: boolean }).archived === true) return;
 
-    const expected = Object.keys(after.expectedAcks || {}).length;
-    const acked = Object.keys(after.ackStatus || {}).length;
-    const ackedBefore = Object.keys(before.ackStatus || {}).length;
+    const expectedIds = Object.keys(after.expectedAcks || {});
+    const ackedIds = new Set(Object.keys(after.ackStatus || {}));
+    const beforeAckedIds = new Set(Object.keys(before.ackStatus || {}));
+    const assocId = event.params.assocId;
+    const postId = event.params.postId;
+    const activeExpectedRecipients = await loadAuthorizedRecipients(
+      admin.firestore(),
+      assocId,
+      capabilities.postsAcknowledge,
+      {userIds: expectedIds},
+    );
+    const activeExpectedIds = activeExpectedRecipients.map((recipient) => recipient.uid);
+    const expected = activeExpectedIds.length;
+    const acked = activeExpectedIds.filter((id) => ackedIds.has(id)).length;
+    const ackedBefore = activeExpectedIds.filter((id) => beforeAckedIds.has(id)).length;
 
     // Only act on the *transition* to fully-acked, not subsequent writes.
     if (expected === 0) return;
-    if (acked < expected) return;
+    if (!activeExpectedIds.every((id) => ackedIds.has(id))) return;
     if (ackedBefore >= expected) return;
-
-    const assocId = event.params.assocId;
-    const postId = event.params.postId;
 
     logger.info(
       `All acks landed: assoc=${assocId}, post=${postId}, count=${acked}/${expected} — archiving.`
@@ -205,14 +192,14 @@ export const onAckWrite = onDocumentUpdated(
       });
 
       // Notify the author so they know the loop is closed.
-      const authorSnap = await admin
-        .firestore()
-        .doc(`users/${after.authorId}`)
-        .get();
-      if (authorSnap.exists) {
-        const author = authorSnap.data() as UserDoc;
-        if (author.fcmTokens?.length) {
-          await sendMulticast(author.fcmTokens, {
+      const authors = await loadAuthorizedRecipients(
+        admin.firestore(),
+        assocId,
+        capabilities.postsManage,
+        {userIds: [after.authorId]},
+      );
+      if (authors[0]?.fcmTokens.length) {
+          await sendMulticast(authors[0].fcmTokens, {
             title: "All reps acknowledged",
             body: `"${after.title}" is fully acknowledged.`,
             data: {
@@ -221,7 +208,6 @@ export const onAckWrite = onDocumentUpdated(
               assocId,
             },
           });
-        }
       }
     } catch (err) {
       logger.error(`onAckWrite failed for post=${postId}:`, err);
@@ -289,20 +275,13 @@ export const ackDeadlineChecker = onSchedule(
           );
 
           // Collect FCM tokens for unacked reps
-          const tokens: string[] = [];
-          for (const userId of unackedIds) {
-            try {
-              const userSnap = await db.doc(`users/${userId}`).get();
-              if (userSnap.exists) {
-                const user = userSnap.data() as UserDoc;
-                if (user.fcmTokens && Array.isArray(user.fcmTokens) && user.fcmTokens.length > 0) {
-                  tokens.push(...user.fcmTokens);
-                }
-              }
-            } catch (userErr) {
-              logger.warn(`Failed to fetch user ${userId} for ack reminder:`, userErr);
-            }
-          }
+          const recipients = await loadAuthorizedRecipients(
+            db,
+            assocId,
+            capabilities.postsAcknowledge,
+            {userIds: unackedIds, preference: "ackReminders"},
+          );
+          const tokens = recipients.flatMap((recipient) => recipient.fcmTokens);
 
           if (tokens.length > 0) {
             await sendMulticast(tokens, {
@@ -381,20 +360,13 @@ export const statDeadlineReminder = onSchedule(
           `Found ${staleSnap.size} games with pending stats for assoc=${assocId}`
         );
 
-        // Get admin users for this association
-        const adminSnap = await db
-          .collection("users")
-          .where("associationId", "==", assocId)
-          .where("role", "in", ["admin", "superAdmin"])
-          .get();
-
-        const adminTokens: string[] = [];
-        for (const adminDoc of adminSnap.docs) {
-          const user = adminDoc.data() as UserDoc;
-          if (user.fcmTokens && Array.isArray(user.fcmTokens) && user.fcmTokens.length > 0) {
-            adminTokens.push(...user.fcmTokens);
-          }
-        }
+        const statRecipients = await loadAuthorizedRecipients(
+          db,
+          assocId,
+          capabilities.statsEnter,
+          {preference: "statReminders"},
+        );
+        const adminTokens = statRecipients.flatMap((recipient) => recipient.fcmTokens);
 
         if (adminTokens.length === 0) {
           logger.warn(`No admin FCM tokens found for assoc=${assocId}, skipping notification.`);

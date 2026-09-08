@@ -28,12 +28,29 @@ jobs:
           cache: npm
           cache-dependency-path: functions/package-lock.json
 
+      - name: Setup Java for Firebase emulators
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install pinned Firebase CLI
+        run: npm install --global firebase-tools@15.8.0
+
       - name: Install dependencies
         run: flutter pub get
 
       - name: Install Functions dependencies
         working-directory: functions
         run: npm ci
+
+      - name: Check repository and Firebase target safety
+        run: |
+          npm --prefix scripts test
+          node scripts/check_repository_safety.js
+
+      - name: Run authorization Functions and Firestore rules tests
+        run: node scripts/run_security_emulators.js
 
       - name: Analyze code
         run: flutter analyze --no-fatal-infos
@@ -44,6 +61,10 @@ jobs:
       - name: Build Functions
         working-directory: functions
         run: npm run build
+
+      - name: Audit Functions dependencies
+        working-directory: functions
+        run: npm audit --audit-level=high
 
       - name: Build web
         run: flutter build web --release
