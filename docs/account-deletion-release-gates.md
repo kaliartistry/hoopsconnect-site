@@ -15,7 +15,7 @@ The normative gate record is `contracts/account_deletion/v1/release_gates.json`.
 | G7 | Deadline and operations | Approved completion timing; staffing/alerts; backlog capacity; completion delivery; processor request process; outage/attention handling |
 | G8 | Restore and retained copies | Backup/PITR/object-version/log/processor decisions; durable suppression; key custody; restore-before-traffic rehearsal |
 | G9 | Official-stat integration | Approved identity/evidence/privacy addendum; legacy privacy adapter; proof of no certified-hash conflict; proof that no raw/export/public fallback bypasses privacy |
-| G10 | End-to-end evidence | Applicable scenario matrix; independent disposition, custody, and public-privacy review; verified Auth absence; zero unresolved required adapters |
+| G10 | End-to-end evidence | Applicable scenario matrix; independent disposition, custody, and public-privacy review; Auth deletion scheduled after durable fencing/minimum references even when cleanup is blocked; verified Auth absence; proof that Auth absence does not bypass remaining cleanup; zero unresolved required adapters |
 | G11 | Public and store consistency | Live web route and privacy-policy readback; mobile/PWA screenshots; reviewer procedure; App Store privacy and Google Data Safety/deletion URL consistency |
 
 Every gate currently has `owner=null`, `evidenceRefs=[]`, and `passed=false`. `activationAllowed=false` is mandatory while any gate is closed.
@@ -32,6 +32,8 @@ Every gate currently has `owner=null`, `evidenceRefs=[]`, and `passed=false`. `a
 8. Re-run the full repository and release validation suite.
 
 Passing one gate cannot waive another. A policy approval does not prove implementation; a test does not prove provider configuration; Auth deletion does not prove data disposition; and a store disclosure does not activate a safe backend.
+
+The applicable scenario matrix must preserve all 27 mappings pinned in the fixture and retention registry to *HoopsConnect account deletion: architecture and Sol implementation handoff* (prepared September 8, 2026; SHA-256 `9a9d0150244fc124bbc8ab1697fba177a3c862de8b7099c5c684d02ed8537832`). This pin does not approve any pending policy row.
 
 ## Required stop conditions
 

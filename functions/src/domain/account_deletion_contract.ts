@@ -76,6 +76,16 @@ export type ProviderCheckpointState = typeof providerCheckpointStates[number];
 export const providerNames = ["firebaseAuth", "appleCredential"] as const;
 export type ProviderName = typeof providerNames[number];
 
+export const statusAliasBindingKinds = [
+  "winningOperation", "sameGenerationConvergence",
+] as const;
+export type StatusAliasBindingKind = typeof statusAliasBindingKinds[number];
+
+export const authDeletionCheckpointStates = [
+  "notScheduled", "scheduled", "retryRequired", "needsAttention", "complete",
+] as const;
+export type AuthDeletionCheckpointState = typeof authDeletionCheckpointStates[number];
+
 export const deletionStatusPhases = [
   "processing", "accountRemovedCleanupPending", "attentionRequired", "complete",
 ] as const;
@@ -122,6 +132,11 @@ export interface AccountDeletionJobContract {
   resumeStage: ResumeStage | null;
   policyVersion: string;
   inventoryVersion: string;
+  attempt: number;
+  leaseGeneration: number;
+  authorityFenceDurable: boolean;
+  minimumCleanupReferencesCaptured: boolean;
+  authDeletionCheckpointState: AuthDeletionCheckpointState;
   authAbsent: boolean;
   dataDispositionVerified: boolean;
   publicPrivacyVerified: boolean;
@@ -135,6 +150,10 @@ export interface AccountDeletionStatusAliasContract {
   schemaVersion: 1;
   requestId: string;
   internalJobId: string;
+  generationHash: string;
+  acceptedSemanticFingerprint: string;
+  bindingKind: StatusAliasBindingKind;
+  purpose: "readOnlyDeletionStatus";
   statusSecretHash: string;
   createdAt: Date;
   expiryPolicyDecisionId: string;
@@ -152,6 +171,7 @@ export interface MinimalDeletionTombstoneContract {
 }
 
 export interface ProviderCheckpointContract {
+  schemaVersion: 1;
   provider: ProviderName;
   state: ProviderCheckpointState;
   evidenceCode: string;
@@ -159,6 +179,7 @@ export interface ProviderCheckpointContract {
 }
 
 export interface AdapterResultContract {
+  schemaVersion: 1;
   adapterId: string;
   applicability: AdapterApplicability;
   state: AdapterResultState;
@@ -169,6 +190,7 @@ export interface AdapterResultContract {
   holdState: HoldState;
   evidenceCode: string | null;
   evidenceRef: string;
+  holdBoundaryAt: Date | null;
 }
 
 export interface PrepareDeletionRequest {
@@ -195,6 +217,7 @@ export interface DeletionStatusRequest {
 }
 
 export interface DeletionCompletionInput {
+  schemaVersion: 1;
   authAbsent: boolean;
   checkpoints: {
     dataDispositionVerified: boolean;
@@ -208,6 +231,12 @@ export interface DeletionCompletionInput {
   providerCheckpoints: readonly ProviderCheckpointContract[];
   unknownRequiredState: boolean;
 }
+
+export const submittedOperationStatusResolutions = [
+  "notAttempted", "accepted", "notAccepted", "unresolved",
+] as const;
+export type SubmittedOperationStatusResolution =
+  typeof submittedOperationStatusResolutions[number];
 
 const opaqueId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const namespaceId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -259,9 +288,29 @@ function requireHash(field: string, value: unknown): asserts value is string {
   }
 }
 
-function requireSafeEpoch(field: string, value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`${field} must be a nonnegative safe integer`);
+export function decodeWireSafeInteger(
+  field: string,
+  value: unknown,
+  options: {nonnegative?: boolean} = {},
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value) ||
+      !Number.isSafeInteger(value) || (options.nonnegative === true && value < 0)) {
+    throw new TypeError(
+      `${field} must be a${options.nonnegative === true ? " nonnegative" : ""} finite safe integer`,
+    );
+  }
+  return Object.is(value, -0) ? 0 : value;
+}
+
+function requireSchemaVersion(value: unknown): void {
+  if (decodeWireSafeInteger("schemaVersion", value, {nonnegative: true}) !== 1) {
+    throw new TypeError("Unsupported schemaVersion");
+  }
+}
+
+function requireValidDate(field: string, value: unknown): asserts value is Date {
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+    throw new TypeError(`${field} must be a valid Date`);
   }
 }
 
@@ -300,7 +349,7 @@ export function canTransitionDeletionJob(
 export function validatePrepareDeletionRequest(value: unknown): PrepareDeletionRequest {
   const record = requireRecord(value, "PrepareDeletionRequest");
   assertExactKeys(record, ["schemaVersion"]);
-  if (record.schemaVersion !== 1) throw new TypeError("Unsupported schemaVersion");
+  requireSchemaVersion(record.schemaVersion);
   return record as unknown as PrepareDeletionRequest;
 }
 
@@ -310,7 +359,7 @@ export function validateRequestDeletion(value: unknown): RequestDeletion {
     "schemaVersion", "intentId", "policyVersion", "impactVersion", "operationId",
     "requestId", "statusSecretHash", "confirmation", "custodyChoice",
   ], ["providerRevocationRef"]);
-  if (record.schemaVersion !== 1) throw new TypeError("Unsupported schemaVersion");
+  requireSchemaVersion(record.schemaVersion);
   for (const field of ["intentId", "policyVersion", "impactVersion", "operationId", "requestId"]) {
     requireOpaqueId(field, record[field]);
   }
@@ -326,7 +375,7 @@ export function validateRequestDeletion(value: unknown): RequestDeletion {
 export function validateDeletionStatusRequest(value: unknown): DeletionStatusRequest {
   const record = requireRecord(value, "DeletionStatusRequest");
   assertExactKeys(record, ["schemaVersion", "requestId", "statusSecret"]);
-  if (record.schemaVersion !== 1) throw new TypeError("Unsupported schemaVersion");
+  requireSchemaVersion(record.schemaVersion);
   requireOpaqueId("requestId", record.requestId);
   decodeStatusSecret(record.statusSecret);
   return record as unknown as DeletionStatusRequest;
@@ -335,16 +384,23 @@ export function validateDeletionStatusRequest(value: unknown): DeletionStatusReq
 export function validateStatusAlias(value: unknown): AccountDeletionStatusAliasContract {
   const record = requireRecord(value, "AccountDeletionStatusAliasContract");
   assertExactKeys(record, [
-    "schemaVersion", "requestId", "internalJobId", "statusSecretHash",
-    "createdAt", "expiryPolicyDecisionId",
+    "schemaVersion", "requestId", "internalJobId", "generationHash",
+    "acceptedSemanticFingerprint", "bindingKind", "purpose",
+    "statusSecretHash", "createdAt", "expiryPolicyDecisionId",
   ]);
-  if (record.schemaVersion !== 1) throw new TypeError("Unsupported schemaVersion");
+  requireSchemaVersion(record.schemaVersion);
   requireOpaqueId("requestId", record.requestId);
   requireOpaqueId("internalJobId", record.internalJobId);
-  requireHash("statusSecretHash", record.statusSecretHash);
-  if (!(record.createdAt instanceof Date) || !Number.isFinite(record.createdAt.getTime())) {
-    throw new TypeError("createdAt must be a valid Date");
+  requireHash("generationHash", record.generationHash);
+  requireHash("acceptedSemanticFingerprint", record.acceptedSemanticFingerprint);
+  if (!includesValue(statusAliasBindingKinds, record.bindingKind)) {
+    throw new TypeError("Invalid status alias bindingKind");
   }
+  if (record.purpose !== "readOnlyDeletionStatus") {
+    throw new TypeError("Status aliases are read-only deletion status capabilities");
+  }
+  requireHash("statusSecretHash", record.statusSecretHash);
+  requireValidDate("createdAt", record.createdAt);
   if (typeof record.expiryPolicyDecisionId !== "string" ||
       !namespaceId.test(record.expiryPolicyDecisionId)) {
     throw new TypeError("expiryPolicyDecisionId must be a versioned policy reference");
@@ -358,19 +414,23 @@ export function validateMinimalTombstone(value: unknown): MinimalDeletionTombsto
     "schemaVersion", "generationHmac", "deletionEpoch", "policyVersion",
     "suppressionKeyVersion", "acceptedAt", "completedAt", "minimumReplayCutoff",
   ]);
-  if (record.schemaVersion !== 1) throw new TypeError("Unsupported schemaVersion");
+  requireSchemaVersion(record.schemaVersion);
   requireHash("generationHmac", record.generationHmac);
-  requireSafeEpoch("deletionEpoch", record.deletionEpoch);
+  decodeWireSafeInteger("deletionEpoch", record.deletionEpoch, {nonnegative: true});
   requireOpaqueId("policyVersion", record.policyVersion);
   requireOpaqueId("suppressionKeyVersion", record.suppressionKeyVersion);
   for (const field of ["acceptedAt", "minimumReplayCutoff"] as const) {
-    if (!(record[field] instanceof Date) || !Number.isFinite(record[field].getTime())) {
-      throw new TypeError(`${field} must be a valid Date`);
-    }
+    requireValidDate(field, record[field]);
   }
   if (record.completedAt !== null &&
       (!(record.completedAt instanceof Date) || !Number.isFinite(record.completedAt.getTime()))) {
     throw new TypeError("completedAt must be a valid Date or null");
+  }
+  const acceptedAt = record.acceptedAt as Date;
+  const minimumReplayCutoff = record.minimumReplayCutoff as Date;
+  if ((record.completedAt !== null && (record.completedAt as Date) < acceptedAt) ||
+      minimumReplayCutoff < acceptedAt) {
+    throw new TypeError("Tombstone timestamps violate lifecycle chronology");
   }
   return record as unknown as MinimalDeletionTombstoneContract;
 }
@@ -381,14 +441,19 @@ export function validateAccountLifecycle(value: unknown): AccountLifecycleContra
     "schemaVersion", "state", "epoch", "generationHash", "internalJobId",
     "acceptedAt", "completedAt",
   ]);
-  if (record.schemaVersion !== 1 || !includesValue(accountLifecycleStates, record.state)) {
+  requireSchemaVersion(record.schemaVersion);
+  if (!includesValue(accountLifecycleStates, record.state)) {
     throw new TypeError("Invalid lifecycle version or state");
   }
-  requireSafeEpoch("epoch", record.epoch);
+  decodeWireSafeInteger("epoch", record.epoch, {nonnegative: true});
   requireHash("generationHash", record.generationHash);
   if (record.internalJobId !== null) requireOpaqueId("internalJobId", record.internalJobId);
-  if (record.acceptedAt !== null && !(record.acceptedAt instanceof Date)) throw new TypeError("acceptedAt must be Date or null");
-  if (record.completedAt !== null && !(record.completedAt instanceof Date)) throw new TypeError("completedAt must be Date or null");
+  if (record.acceptedAt !== null) requireValidDate("acceptedAt", record.acceptedAt);
+  if (record.completedAt !== null) requireValidDate("completedAt", record.completedAt);
+  if (record.acceptedAt !== null && record.completedAt !== null &&
+      record.completedAt < record.acceptedAt) {
+    throw new TypeError("completedAt cannot precede acceptedAt");
+  }
   if (record.state === "active" && (record.internalJobId !== null || record.acceptedAt !== null || record.completedAt !== null)) {
     throw new TypeError("Active lifecycle cannot carry deletion state");
   }
@@ -405,23 +470,32 @@ export function validateDeletionJob(value: unknown): AccountDeletionJobContract 
   const record = requireRecord(value, "AccountDeletionJobContract");
   assertExactKeys(record, [
     "schemaVersion", "internalJobId", "generationHash", "state", "resumeStage",
-    "policyVersion", "inventoryVersion", "authAbsent", "dataDispositionVerified",
+    "policyVersion", "inventoryVersion", "attempt", "leaseGeneration",
+    "authorityFenceDurable", "minimumCleanupReferencesCaptured",
+    "authDeletionCheckpointState", "authAbsent", "dataDispositionVerified",
     "publicPrivacyVerified", "custodyRecorded", "providerDispositionRecorded",
     "restoreSuppressionDurable", "safeErrorCode",
   ]);
-  if (record.schemaVersion !== 1 || !includesValue(deletionJobStates, record.state)) {
+  requireSchemaVersion(record.schemaVersion);
+  if (!includesValue(deletionJobStates, record.state)) {
     throw new TypeError("Invalid deletion job version or state");
   }
   requireOpaqueId("internalJobId", record.internalJobId);
   requireHash("generationHash", record.generationHash);
   requireOpaqueId("policyVersion", record.policyVersion);
   if (record.inventoryVersion !== accountDeletionVersions.inventoryVersion) throw new TypeError("Unknown inventory version");
+  decodeWireSafeInteger("attempt", record.attempt, {nonnegative: true});
+  decodeWireSafeInteger("leaseGeneration", record.leaseGeneration, {nonnegative: true});
+  if (!includesValue(authDeletionCheckpointStates, record.authDeletionCheckpointState)) {
+    throw new TypeError("Invalid authDeletionCheckpointState");
+  }
   const needsResume = record.state === "retryWait" || record.state === "needsAttention";
   if ((needsResume && !includesValue(resumeStages, record.resumeStage)) ||
       (!needsResume && record.resumeStage !== null)) {
     throw new TypeError("retryWait/needsAttention require an exact resumeStage and other states forbid it");
   }
   const completionFields = [
+    "authorityFenceDurable", "minimumCleanupReferencesCaptured",
     "authAbsent", "dataDispositionVerified", "publicPrivacyVerified", "custodyRecorded",
     "providerDispositionRecorded", "restoreSuppressionDurable",
   ] as const;
@@ -433,8 +507,20 @@ export function validateDeletionJob(value: unknown): AccountDeletionJobContract 
        !Object.prototype.hasOwnProperty.call(accountDeletionErrorPolicies, record.safeErrorCode))) {
     throw new TypeError("safeErrorCode must be a stable external deletion error or null");
   }
+  if (record.authorityFenceDurable === true &&
+      record.minimumCleanupReferencesCaptured === true &&
+      record.authAbsent === false && record.authDeletionCheckpointState === "notScheduled") {
+    throw new TypeError("Auth deletion must be scheduled independently after its durable preconditions");
+  }
+  if (record.authAbsent === true && record.authDeletionCheckpointState !== "complete") {
+    throw new TypeError("Verified Auth absence requires a complete Auth checkpoint");
+  }
+  if (record.authDeletionCheckpointState === "complete" && record.authAbsent !== true) {
+    throw new TypeError("A complete Auth checkpoint requires verified Auth absence");
+  }
   if (record.state === "complete" &&
-      (!completionFields.every((field) => record[field] === true) || record.safeErrorCode !== null)) {
+      (!completionFields.every((field) => record[field] === true) ||
+       record.authDeletionCheckpointState !== "complete" || record.safeErrorCode !== null)) {
     throw new TypeError("Complete jobs require every summary checkpoint and no error");
   }
   return record as unknown as AccountDeletionJobContract;
@@ -540,7 +626,24 @@ export function evaluateIdempotency(input: IdempotencyEvaluationInput): Idempote
   if (input.sameOperation) {
     return input.sameSemantic && input.sameEnvelope ? "exactReplay" : "conflict";
   }
-  return input.sameSemantic ? "attachStatusAlias" : "conflict";
+  return "attachStatusAlias";
+}
+
+const statusFirstFailureCodes = new Set([
+  "AD_UNAUTHENTICATED", "AD_REAUTH_REQUIRED", "AD_APP_ATTESTATION_REQUIRED",
+]);
+
+export function resolveSubmittedOperationFailure(input: {
+  errorCode: AccountDeletionErrorCode;
+  hasPersistedRequestMaterial: boolean;
+  statusResolution: SubmittedOperationStatusResolution;
+}): AccountDeletionErrorCode {
+  if (!statusFirstFailureCodes.has(input.errorCode) ||
+      input.hasPersistedRequestMaterial !== true) return input.errorCode;
+  if (input.statusResolution === "accepted") return "AD_ALREADY_ACCEPTED";
+  if (input.statusResolution === "notAccepted") return input.errorCode;
+  if (input.statusResolution === "unresolved") return "AD_STATUS_UNAVAILABLE";
+  return "AD_ACCEPTANCE_UNKNOWN";
 }
 
 export function canReplayGrant(input: {
@@ -553,7 +656,95 @@ export function canReplayGrant(input: {
     input.epochMatches && input.capabilityPresent;
 }
 
+export function validateAdapterResult(value: unknown): AdapterResultContract {
+  const result = requireRecord(value, "AdapterResultContract");
+  assertExactKeys(result, [
+    "schemaVersion", "adapterId", "applicability", "state", "disposition",
+    "policyDecisionState", "policyDecisionId", "policyVersion", "holdState",
+    "evidenceCode", "evidenceRef", "holdBoundaryAt",
+  ]);
+  requireSchemaVersion(result.schemaVersion);
+  requireOpaqueId("adapterId", result.adapterId);
+  if (!includesValue(adapterApplicabilities, result.applicability) ||
+      !includesValue(adapterResultStates, result.state) ||
+      !includesValue(dispositionActions, result.disposition) ||
+      !includesValue(holdStates, result.holdState) ||
+      typeof result.policyDecisionState !== "string" ||
+      !["pendingAuthoritativeDecision", "pendingOperationalProof", "approved", "rejected", "superseded"]
+        .includes(result.policyDecisionState)) {
+    throw new TypeError("Invalid adapter result state");
+  }
+  requireOpaqueId("policyVersion", result.policyVersion);
+  if (typeof result.policyDecisionId !== "string" || !namespaceId.test(result.policyDecisionId)) {
+    throw new TypeError("policyDecisionId must be a versioned policy reference");
+  }
+  if (result.evidenceCode !== null) requireOpaqueId("evidenceCode", result.evidenceCode);
+  requireOpaqueId("evidenceRef", result.evidenceRef);
+  if (result.holdBoundaryAt !== null) requireValidDate("holdBoundaryAt", result.holdBoundaryAt);
+  return result as unknown as AdapterResultContract;
+}
+
+export function validateProviderCheckpoint(value: unknown): ProviderCheckpointContract {
+  const checkpoint = requireRecord(value, "ProviderCheckpointContract");
+  assertExactKeys(checkpoint, [
+    "schemaVersion", "provider", "state", "evidenceCode", "checkedAt",
+  ]);
+  requireSchemaVersion(checkpoint.schemaVersion);
+  if (!includesValue(providerNames, checkpoint.provider) ||
+      !includesValue(providerCheckpointStates, checkpoint.state)) {
+    throw new TypeError("Invalid provider checkpoint state");
+  }
+  requireOpaqueId("evidenceCode", checkpoint.evidenceCode);
+  requireValidDate("checkedAt", checkpoint.checkedAt);
+  return checkpoint as unknown as ProviderCheckpointContract;
+}
+
+export function validateDeletionCompletionInput(value: unknown): DeletionCompletionInput {
+  const input = requireRecord(value, "DeletionCompletionInput");
+  assertExactKeys(input, [
+    "schemaVersion", "authAbsent", "checkpoints", "requiredAdapterIds",
+    "adapterResults", "providerCheckpoints", "unknownRequiredState",
+  ]);
+  requireSchemaVersion(input.schemaVersion);
+  if (typeof input.authAbsent !== "boolean" ||
+      typeof input.unknownRequiredState !== "boolean") {
+    throw new TypeError("Completion envelope predicates must be boolean");
+  }
+  const checkpoints = requireRecord(input.checkpoints, "DeletionCompletionInput.checkpoints");
+  assertExactKeys(checkpoints, completionCheckpointNames);
+  for (const field of completionCheckpointNames) {
+    if (typeof checkpoints[field] !== "boolean") {
+      throw new TypeError(`${field} must be boolean`);
+    }
+  }
+  if (!Array.isArray(input.requiredAdapterIds) ||
+      !input.requiredAdapterIds.every((id) => typeof id === "string") ||
+      !Array.isArray(input.adapterResults) || !Array.isArray(input.providerCheckpoints)) {
+    throw new TypeError("Completion inventory and checkpoints must be arrays");
+  }
+  input.adapterResults.forEach(validateAdapterResult);
+  input.providerCheckpoints.forEach(validateProviderCheckpoint);
+  return input as unknown as DeletionCompletionInput;
+}
+
+export function authDeletionScheduleRequired(input: {
+  authorityFenceDurable: boolean;
+  minimumCleanupReferencesCaptured: boolean;
+  authAbsent: boolean;
+  hasUnknownAdapter: boolean;
+  retentionClassificationResolved: boolean;
+  custodyResolved: boolean;
+}): boolean {
+  return input.authorityFenceDurable === true &&
+    input.minimumCleanupReferencesCaptured === true && input.authAbsent === false;
+}
+
 function adapterDispositionComplete(result: AdapterResultContract): boolean {
+  try {
+    validateAdapterResult(result);
+  } catch {
+    return false;
+  }
   if (!accountDeletionAdapterIds.includes(result.adapterId as typeof accountDeletionAdapterIds[number]) ||
       !includesValue(adapterApplicabilities, result.applicability) ||
       !includesValue(adapterResultStates, result.state) ||
@@ -568,21 +759,21 @@ function adapterDispositionComplete(result: AdapterResultContract): boolean {
       result.applicability === "unknown" || result.holdState === "unknown") return false;
   if (result.state === "notApplicable") {
     return result.applicability === "notApplicable" &&
-      result.disposition === "notApplicable" && result.holdState === "none";
+      result.disposition === "notApplicable" && result.holdState === "none" &&
+      result.holdBoundaryAt === null;
   }
   if (result.applicability !== "applicable" || result.state !== "complete" ||
       result.disposition === "unresolved" || result.disposition === "notApplicable") return false;
   if (result.disposition === "restrictedRetention") {
-    return result.holdState === "activeApproved";
+    return result.holdState === "activeApproved" && result.holdBoundaryAt instanceof Date;
   }
-  return result.holdState === "none";
+  return result.holdState === "none" && result.holdBoundaryAt === null;
 }
 
 export function isProviderCheckpointTerminal(checkpoint: ProviderCheckpointContract): boolean {
-  if (!includesValue(providerNames, checkpoint.provider) ||
-      !includesValue(providerCheckpointStates, checkpoint.state) ||
-      typeof checkpoint.evidenceCode !== "string" || !opaqueId.test(checkpoint.evidenceCode) ||
-      !(checkpoint.checkedAt instanceof Date) || !Number.isFinite(checkpoint.checkedAt.getTime())) {
+  try {
+    validateProviderCheckpoint(checkpoint);
+  } catch {
     return false;
   }
   if (checkpoint.provider === "firebaseAuth") return checkpoint.state === "complete";
@@ -592,6 +783,11 @@ export function isProviderCheckpointTerminal(checkpoint: ProviderCheckpointContr
 }
 
 export function isDeletionComplete(input: DeletionCompletionInput): boolean {
+  try {
+    validateDeletionCompletionInput(input);
+  } catch {
+    return false;
+  }
   if (input.authAbsent !== true || input.unknownRequiredState !== false) return false;
   const checkpointKeys = Object.keys(input.checkpoints);
   if (checkpointKeys.length !== completionCheckpointNames.length ||
@@ -656,8 +852,7 @@ export const accountDeletionAdapterIds = [
 export type AccountDeletionErrorCode = keyof typeof accountDeletionErrorPolicies;
 export type AccountDeletionRetryClass =
   | "never"
-  | "reauthenticateThenRetrySameOperation"
-  | "useSupportedAttestationOrRecovery"
+  | "resolveSavedStatusBeforeNewAuthentication"
   | "refreshImpactThenCreateNewOperation"
   | "returnBoundStatusAlias"
   | "operatorResolutionRequired"
@@ -666,6 +861,7 @@ export type AccountDeletionRetryClass =
   | "useExistingReceiptOrVerifiedRecovery";
 export type AccountDeletionIdempotencyClass =
   | "notAccepted"
+  | "acceptanceUnknownUnlessStatusResolved"
   | "sameKeyDifferentPayloadRejected"
   | "safeReplayReturnsOriginalAcceptance"
   | "notAcceptedUnlessReceiptExists"
@@ -674,15 +870,16 @@ export type AccountDeletionIdempotencyClass =
   | "acceptedJobRemainsFenced";
 
 export const accountDeletionErrorPolicies = {
-  AD_UNAUTHENTICATED: {transport: "unauthenticated", retry: "reauthenticateThenRetrySameOperation", idempotency: "notAccepted"},
-  AD_REAUTH_REQUIRED: {transport: "unauthenticated", retry: "reauthenticateThenRetrySameOperation", idempotency: "notAccepted"},
+  AD_UNAUTHENTICATED: {transport: "unauthenticated", retry: "resolveSavedStatusBeforeNewAuthentication", idempotency: "acceptanceUnknownUnlessStatusResolved"},
+  AD_REAUTH_REQUIRED: {transport: "unauthenticated", retry: "resolveSavedStatusBeforeNewAuthentication", idempotency: "acceptanceUnknownUnlessStatusResolved"},
   AD_IDENTITY_MISMATCH: {transport: "permission-denied", retry: "never", idempotency: "notAccepted"},
-  AD_APP_ATTESTATION_REQUIRED: {transport: "failed-precondition", retry: "useSupportedAttestationOrRecovery", idempotency: "notAccepted"},
+  AD_APP_ATTESTATION_REQUIRED: {transport: "failed-precondition", retry: "resolveSavedStatusBeforeNewAuthentication", idempotency: "acceptanceUnknownUnlessStatusResolved"},
   AD_INVALID_REQUEST: {transport: "invalid-argument", retry: "never", idempotency: "notAccepted"},
   AD_INTENT_EXPIRED: {transport: "failed-precondition", retry: "refreshImpactThenCreateNewOperation", idempotency: "notAccepted"},
   AD_IMPACT_CHANGED: {transport: "failed-precondition", retry: "refreshImpactThenCreateNewOperation", idempotency: "notAccepted"},
   AD_OPERATION_CONFLICT: {transport: "already-exists", retry: "never", idempotency: "sameKeyDifferentPayloadRejected"},
   AD_ALREADY_ACCEPTED: {transport: "success", retry: "returnBoundStatusAlias", idempotency: "safeReplayReturnsOriginalAcceptance"},
+  AD_ACCEPTANCE_UNKNOWN: {transport: "acceptance-unknown", retry: "resolveSavedStatusBeforeNewAuthentication", idempotency: "mayAlreadyBeAccepted"},
   AD_TRANSFER_NOT_READY: {transport: "failed-precondition", retry: "operatorResolutionRequired", idempotency: "notAccepted"},
   AD_POLICY_NOT_READY: {transport: "failed-precondition", retry: "operatorResolutionRequired", idempotency: "notAccepted"},
   AD_RATE_LIMITED: {transport: "resource-exhausted", retry: "retrySameOperation", idempotency: "notAcceptedUnlessReceiptExists"},

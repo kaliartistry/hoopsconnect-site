@@ -74,6 +74,16 @@ enum DispositionAction {
 
 enum ProviderName { firebaseAuth, appleCredential }
 
+enum StatusAliasBindingKind { winningOperation, sameGenerationConvergence }
+
+enum AuthDeletionCheckpointState {
+  notScheduled,
+  scheduled,
+  retryRequired,
+  needsAttention,
+  complete,
+}
+
 enum ProviderCheckpointState {
   pending,
   complete,
@@ -104,6 +114,13 @@ enum PolicyDecisionState {
   approved,
   rejected,
   superseded,
+}
+
+enum SubmittedOperationStatusResolution {
+  notAttempted,
+  accepted,
+  notAccepted,
+  unresolved,
 }
 
 class AccountGeneration {
@@ -212,7 +229,11 @@ class RequestDeletionContract {
       );
     }
     return RequestDeletionContract(
-      schemaVersion: map['schemaVersion'] as int,
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
       intentId: map['intentId'] as String,
       policyVersion: map['policyVersion'] as String,
       impactVersion: map['impactVersion'] as String,
@@ -281,6 +302,40 @@ class AccountLifecycleContract {
         (internalJobId == null || acceptedAt == null || completedAt == null)) {
       throw FormatException('Deleted lifecycle requires terminal evidence');
     }
+    if (acceptedAt != null &&
+        completedAt != null &&
+        completedAt!.isBefore(acceptedAt!)) {
+      throw FormatException('completedAt cannot precede acceptedAt');
+    }
+  }
+
+  factory AccountLifecycleContract.fromContractMap(Map<String, Object?> map) {
+    AccountDeletionContract.requireExactKeys(map, const {
+      'schemaVersion',
+      'state',
+      'epoch',
+      'generationHash',
+      'internalJobId',
+      'acceptedAt',
+      'completedAt',
+    });
+    return AccountLifecycleContract(
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
+      state: AccountLifecycleState.values.byName(map['state'] as String),
+      epoch: AccountDeletionContract.decodeWireSafeInteger(
+        'epoch',
+        map['epoch'],
+        nonNegative: true,
+      ),
+      generationHash: map['generationHash'] as String,
+      internalJobId: map['internalJobId'] as String?,
+      acceptedAt: map['acceptedAt'] as DateTime?,
+      completedAt: map['completedAt'] as DateTime?,
+    );
   }
 }
 
@@ -292,6 +347,11 @@ class AccountDeletionJobContract {
   final ResumeStage? resumeStage;
   final String policyVersion;
   final String inventoryVersion;
+  final int attempt;
+  final int leaseGeneration;
+  final bool authorityFenceDurable;
+  final bool minimumCleanupReferencesCaptured;
+  final AuthDeletionCheckpointState authDeletionCheckpointState;
   final bool authAbsent;
   final bool dataDispositionVerified;
   final bool publicPrivacyVerified;
@@ -308,6 +368,11 @@ class AccountDeletionJobContract {
     required this.resumeStage,
     required this.policyVersion,
     required this.inventoryVersion,
+    required this.attempt,
+    required this.leaseGeneration,
+    required this.authorityFenceDurable,
+    required this.minimumCleanupReferencesCaptured,
+    required this.authDeletionCheckpointState,
     required this.authAbsent,
     required this.dataDispositionVerified,
     required this.publicPrivacyVerified,
@@ -325,6 +390,12 @@ class AccountDeletionJobContract {
     if (inventoryVersion != AccountDeletionVersions.inventory) {
       throw FormatException('Unknown inventory version');
     }
+    if (attempt < 0 ||
+        attempt > OfficialStatCanonicalEncoding.maxSafeInteger ||
+        leaseGeneration < 0 ||
+        leaseGeneration > OfficialStatCanonicalEncoding.maxSafeInteger) {
+      throw FormatException('Job counters must be nonnegative safe integers');
+    }
     final needsResume =
         state == DeletionJobState.retryWait ||
         state == DeletionJobState.needsAttention;
@@ -340,8 +411,33 @@ class AccountDeletionJobContract {
         'safeErrorCode must be a stable external deletion error or null',
       );
     }
+    if (authorityFenceDurable &&
+        minimumCleanupReferencesCaptured &&
+        !authAbsent &&
+        authDeletionCheckpointState ==
+            AuthDeletionCheckpointState.notScheduled) {
+      throw FormatException(
+        'Auth deletion must be scheduled independently after its durable preconditions',
+      );
+    }
+    if (authAbsent &&
+        authDeletionCheckpointState != AuthDeletionCheckpointState.complete) {
+      throw FormatException(
+        'Verified Auth absence requires a complete Auth checkpoint',
+      );
+    }
+    if (authDeletionCheckpointState == AuthDeletionCheckpointState.complete &&
+        !authAbsent) {
+      throw FormatException(
+        'A complete Auth checkpoint requires verified Auth absence',
+      );
+    }
     if (state == DeletionJobState.complete &&
-        (!authAbsent ||
+        (!authorityFenceDurable ||
+            !minimumCleanupReferencesCaptured ||
+            authDeletionCheckpointState !=
+                AuthDeletionCheckpointState.complete ||
+            !authAbsent ||
             !dataDispositionVerified ||
             !publicPrivacyVerified ||
             !custodyRecorded ||
@@ -363,6 +459,11 @@ class AccountDeletionJobContract {
       'resumeStage',
       'policyVersion',
       'inventoryVersion',
+      'attempt',
+      'leaseGeneration',
+      'authorityFenceDurable',
+      'minimumCleanupReferencesCaptured',
+      'authDeletionCheckpointState',
       'authAbsent',
       'dataDispositionVerified',
       'publicPrivacyVerified',
@@ -372,7 +473,11 @@ class AccountDeletionJobContract {
       'safeErrorCode',
     });
     return AccountDeletionJobContract(
-      schemaVersion: map['schemaVersion'] as int,
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
       internalJobId: map['internalJobId'] as String,
       generationHash: map['generationHash'] as String,
       state: DeletionJobState.values.byName(map['state'] as String),
@@ -381,6 +486,22 @@ class AccountDeletionJobContract {
           : ResumeStage.values.byName(map['resumeStage'] as String),
       policyVersion: map['policyVersion'] as String,
       inventoryVersion: map['inventoryVersion'] as String,
+      attempt: AccountDeletionContract.decodeWireSafeInteger(
+        'attempt',
+        map['attempt'],
+        nonNegative: true,
+      ),
+      leaseGeneration: AccountDeletionContract.decodeWireSafeInteger(
+        'leaseGeneration',
+        map['leaseGeneration'],
+        nonNegative: true,
+      ),
+      authorityFenceDurable: map['authorityFenceDurable'] as bool,
+      minimumCleanupReferencesCaptured:
+          map['minimumCleanupReferencesCaptured'] as bool,
+      authDeletionCheckpointState: AuthDeletionCheckpointState.values.byName(
+        map['authDeletionCheckpointState'] as String,
+      ),
       authAbsent: map['authAbsent'] as bool,
       dataDispositionVerified: map['dataDispositionVerified'] as bool,
       publicPrivacyVerified: map['publicPrivacyVerified'] as bool,
@@ -396,6 +517,10 @@ class AccountDeletionStatusAliasContract {
   final int schemaVersion;
   final String requestId;
   final String internalJobId;
+  final String generationHash;
+  final String acceptedSemanticFingerprint;
+  final StatusAliasBindingKind bindingKind;
+  final String purpose;
   final String statusSecretHash;
   final DateTime createdAt;
   final String expiryPolicyDecisionId;
@@ -404,6 +529,10 @@ class AccountDeletionStatusAliasContract {
     this.schemaVersion = AccountDeletionVersions.schema,
     required this.requestId,
     required this.internalJobId,
+    required this.generationHash,
+    required this.acceptedSemanticFingerprint,
+    required this.bindingKind,
+    this.purpose = 'readOnlyDeletionStatus',
     required this.statusSecretHash,
     required this.createdAt,
     required this.expiryPolicyDecisionId,
@@ -413,6 +542,16 @@ class AccountDeletionStatusAliasContract {
     }
     AccountDeletionContract.requireOpaqueId('requestId', requestId);
     AccountDeletionContract.requireOpaqueId('internalJobId', internalJobId);
+    AccountDeletionContract.requireHash('generationHash', generationHash);
+    AccountDeletionContract.requireHash(
+      'acceptedSemanticFingerprint',
+      acceptedSemanticFingerprint,
+    );
+    if (purpose != 'readOnlyDeletionStatus') {
+      throw FormatException(
+        'Status aliases are read-only deletion status capabilities',
+      );
+    }
     AccountDeletionContract.requireHash('statusSecretHash', statusSecretHash);
     if (!AccountDeletionContract.namespaceId.hasMatch(expiryPolicyDecisionId)) {
       throw FormatException(
@@ -428,14 +567,28 @@ class AccountDeletionStatusAliasContract {
       'schemaVersion',
       'requestId',
       'internalJobId',
+      'generationHash',
+      'acceptedSemanticFingerprint',
+      'bindingKind',
+      'purpose',
       'statusSecretHash',
       'createdAt',
       'expiryPolicyDecisionId',
     });
     return AccountDeletionStatusAliasContract(
-      schemaVersion: map['schemaVersion'] as int,
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
       requestId: map['requestId'] as String,
       internalJobId: map['internalJobId'] as String,
+      generationHash: map['generationHash'] as String,
+      acceptedSemanticFingerprint: map['acceptedSemanticFingerprint'] as String,
+      bindingKind: StatusAliasBindingKind.values.byName(
+        map['bindingKind'] as String,
+      ),
+      purpose: map['purpose'] as String,
       statusSecretHash: map['statusSecretHash'] as String,
       createdAt: map['createdAt'] as DateTime,
       expiryPolicyDecisionId: map['expiryPolicyDecisionId'] as String,
@@ -474,6 +627,12 @@ class MinimalDeletionTombstoneContract {
       'suppressionKeyVersion',
       suppressionKeyVersion,
     );
+    if (completedAt != null && completedAt!.isBefore(acceptedAt) ||
+        minimumReplayCutoff.isBefore(acceptedAt)) {
+      throw FormatException(
+        'Tombstone timestamps violate lifecycle chronology',
+      );
+    }
   }
 
   factory MinimalDeletionTombstoneContract.fromContractMap(
@@ -490,9 +649,17 @@ class MinimalDeletionTombstoneContract {
       'minimumReplayCutoff',
     });
     return MinimalDeletionTombstoneContract(
-      schemaVersion: map['schemaVersion'] as int,
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
       generationHmac: map['generationHmac'] as String,
-      deletionEpoch: map['deletionEpoch'] as int,
+      deletionEpoch: AccountDeletionContract.decodeWireSafeInteger(
+        'deletionEpoch',
+        map['deletionEpoch'],
+        nonNegative: true,
+      ),
       policyVersion: map['policyVersion'] as String,
       suppressionKeyVersion: map['suppressionKeyVersion'] as String,
       acceptedAt: map['acceptedAt'] as DateTime,
@@ -503,6 +670,7 @@ class MinimalDeletionTombstoneContract {
 }
 
 class AdapterResultContract {
+  final int schemaVersion;
   final String adapterId;
   final AdapterApplicability applicability;
   final AdapterResultState state;
@@ -513,8 +681,10 @@ class AdapterResultContract {
   final HoldState holdState;
   final String? evidenceCode;
   final String evidenceRef;
+  final DateTime? holdBoundaryAt;
 
-  const AdapterResultContract({
+  AdapterResultContract({
+    this.schemaVersion = AccountDeletionVersions.schema,
     required this.adapterId,
     required this.applicability,
     required this.state,
@@ -525,24 +695,121 @@ class AdapterResultContract {
     required this.holdState,
     this.evidenceCode,
     required this.evidenceRef,
-  });
+    required this.holdBoundaryAt,
+  }) {
+    if (schemaVersion != AccountDeletionVersions.schema) {
+      throw FormatException('Unsupported schemaVersion');
+    }
+  }
+
+  factory AdapterResultContract.fromContractMap(Map<String, Object?> map) {
+    AccountDeletionContract.requireExactKeys(map, const {
+      'schemaVersion',
+      'adapterId',
+      'applicability',
+      'state',
+      'disposition',
+      'policyDecisionState',
+      'policyDecisionId',
+      'policyVersion',
+      'holdState',
+      'evidenceCode',
+      'evidenceRef',
+      'holdBoundaryAt',
+    });
+    return AdapterResultContract(
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
+      adapterId: map['adapterId'] as String,
+      applicability: AdapterApplicability.values.byName(
+        map['applicability'] as String,
+      ),
+      state: AdapterResultState.values.byName(map['state'] as String),
+      disposition: DispositionAction.values.byName(
+        map['disposition'] as String,
+      ),
+      policyDecisionState: PolicyDecisionState.values.byName(
+        map['policyDecisionState'] as String,
+      ),
+      policyDecisionId: map['policyDecisionId'] as String,
+      policyVersion: map['policyVersion'] as String,
+      holdState: HoldState.values.byName(map['holdState'] as String),
+      evidenceCode: map['evidenceCode'] as String?,
+      evidenceRef: map['evidenceRef'] as String,
+      holdBoundaryAt: map['holdBoundaryAt'] as DateTime?,
+    );
+  }
+
+  Map<String, Object?> toContractMap() => {
+    'schemaVersion': schemaVersion,
+    'adapterId': adapterId,
+    'applicability': applicability.name,
+    'state': state.name,
+    'disposition': disposition.name,
+    'policyDecisionState': policyDecisionState.name,
+    'policyDecisionId': policyDecisionId,
+    'policyVersion': policyVersion,
+    'holdState': holdState.name,
+    'evidenceCode': evidenceCode,
+    'evidenceRef': evidenceRef,
+    'holdBoundaryAt': holdBoundaryAt,
+  };
 }
 
 class ProviderCheckpointContract {
+  final int schemaVersion;
   final ProviderName provider;
   final ProviderCheckpointState state;
   final String evidenceCode;
   final DateTime checkedAt;
 
-  const ProviderCheckpointContract({
+  ProviderCheckpointContract({
+    this.schemaVersion = AccountDeletionVersions.schema,
     required this.provider,
     required this.state,
     required this.evidenceCode,
     required this.checkedAt,
-  });
+  }) {
+    if (schemaVersion != AccountDeletionVersions.schema) {
+      throw FormatException('Unsupported schemaVersion');
+    }
+  }
+
+  factory ProviderCheckpointContract.fromContractMap(Map<String, Object?> map) {
+    AccountDeletionContract.requireExactKeys(map, const {
+      'schemaVersion',
+      'provider',
+      'state',
+      'evidenceCode',
+      'checkedAt',
+    });
+    return ProviderCheckpointContract(
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
+      provider: ProviderName.values.byName(map['provider'] as String),
+      state: ProviderCheckpointState.values.byName(map['state'] as String),
+      evidenceCode: map['evidenceCode'] as String,
+      checkedAt: map['checkedAt'] as DateTime,
+    );
+  }
+
+  Map<String, Object?> toContractMap() => {
+    'schemaVersion': schemaVersion,
+    'provider': provider.name,
+    'state': state.name,
+    'evidenceCode': evidenceCode,
+    'checkedAt': checkedAt,
+  };
 }
 
 class DeletionCompletionInput {
+  final int schemaVersion;
   final bool authAbsent;
   final bool dataDispositionVerified;
   final bool publicPrivacyVerified;
@@ -554,7 +821,8 @@ class DeletionCompletionInput {
   final List<ProviderCheckpointContract> providerCheckpoints;
   final bool unknownRequiredState;
 
-  const DeletionCompletionInput({
+  DeletionCompletionInput({
+    this.schemaVersion = AccountDeletionVersions.schema,
     required this.authAbsent,
     required this.dataDispositionVerified,
     required this.publicPrivacyVerified,
@@ -565,7 +833,60 @@ class DeletionCompletionInput {
     required this.adapterResults,
     required this.providerCheckpoints,
     required this.unknownRequiredState,
-  });
+  }) {
+    if (schemaVersion != AccountDeletionVersions.schema) {
+      throw FormatException('Unsupported schemaVersion');
+    }
+  }
+
+  factory DeletionCompletionInput.fromContractMap(Map<String, Object?> map) {
+    AccountDeletionContract.requireExactKeys(map, const {
+      'schemaVersion',
+      'authAbsent',
+      'checkpoints',
+      'requiredAdapterIds',
+      'adapterResults',
+      'providerCheckpoints',
+      'unknownRequiredState',
+    });
+    final checkpoints = Map<String, Object?>.from(map['checkpoints'] as Map);
+    AccountDeletionContract.requireExactKeys(
+      checkpoints,
+      AccountDeletionContract.completionCheckpointNames.toSet(),
+    );
+    final adapterMaps = map['adapterResults'] as List<dynamic>;
+    final providerMaps = map['providerCheckpoints'] as List<dynamic>;
+    return DeletionCompletionInput(
+      schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
+        'schemaVersion',
+        map['schemaVersion'],
+        nonNegative: true,
+      ),
+      authAbsent: map['authAbsent'] as bool,
+      dataDispositionVerified: checkpoints['dataDispositionVerified'] as bool,
+      publicPrivacyVerified: checkpoints['publicPrivacyVerified'] as bool,
+      custodyRecorded: checkpoints['custodyRecorded'] as bool,
+      providerDispositionRecorded:
+          checkpoints['providerDispositionRecorded'] as bool,
+      restoreSuppressionDurable:
+          checkpoints['restoreSuppressionDurable'] as bool,
+      requiredAdapterIds: (map['requiredAdapterIds'] as List<dynamic>)
+          .cast<String>(),
+      adapterResults: [
+        for (final raw in adapterMaps)
+          AdapterResultContract.fromContractMap(
+            Map<String, Object?>.from(raw as Map),
+          ),
+      ],
+      providerCheckpoints: [
+        for (final raw in providerMaps)
+          ProviderCheckpointContract.fromContractMap(
+            Map<String, Object?>.from(raw as Map),
+          ),
+      ],
+      unknownRequiredState: map['unknownRequiredState'] as bool,
+    );
+  }
 }
 
 class IdempotencyEvaluationInput {
@@ -659,7 +980,12 @@ abstract final class AccountDeletionContract {
 
   static void validatePrepareDeletionRequest(Map<String, Object?> value) {
     requireExactKeys(value, const {'schemaVersion'});
-    if (value['schemaVersion'] != AccountDeletionVersions.schema) {
+    if (decodeWireSafeInteger(
+          'schemaVersion',
+          value['schemaVersion'],
+          nonNegative: true,
+        ) !=
+        AccountDeletionVersions.schema) {
       throw FormatException('Unsupported schemaVersion');
     }
   }
@@ -670,7 +996,12 @@ abstract final class AccountDeletionContract {
       'requestId',
       'statusSecret',
     });
-    if (value['schemaVersion'] != AccountDeletionVersions.schema) {
+    if (decodeWireSafeInteger(
+          'schemaVersion',
+          value['schemaVersion'],
+          nonNegative: true,
+        ) !=
+        AccountDeletionVersions.schema) {
       throw FormatException('Unsupported schemaVersion');
     }
     requireOpaqueId('requestId', value['requestId'] as String);
@@ -689,6 +1020,25 @@ abstract final class AccountDeletionContract {
     if (value.keys.any((key) => !allowed.contains(key))) {
       throw FormatException('Unknown field');
     }
+  }
+
+  static int decodeWireSafeInteger(
+    String field,
+    Object? value, {
+    bool nonNegative = false,
+  }) {
+    if (value is! num || !value.isFinite) {
+      throw FormatException('$field must be a finite safe integer');
+    }
+    final asDouble = value.toDouble();
+    if (asDouble.truncateToDouble() != asDouble ||
+        asDouble.abs() > OfficialStatCanonicalEncoding.maxSafeInteger ||
+        (nonNegative && asDouble < 0)) {
+      throw FormatException(
+        '$field must be a${nonNegative ? ' nonnegative' : ''} finite safe integer',
+      );
+    }
+    return asDouble == 0 ? 0 : asDouble.toInt();
   }
 
   static void requireOpaqueId(String field, String value) {
@@ -808,9 +1158,47 @@ abstract final class AccountDeletionContract {
           ? IdempotencyDecision.exactReplay
           : IdempotencyDecision.conflict;
     }
-    return input.sameSemantic
-        ? IdempotencyDecision.attachStatusAlias
-        : IdempotencyDecision.conflict;
+    return IdempotencyDecision.attachStatusAlias;
+  }
+
+  static String resolveSubmittedOperationFailure({
+    required String errorCode,
+    required bool hasPersistedRequestMaterial,
+    required SubmittedOperationStatusResolution statusResolution,
+  }) {
+    const statusFirstCodes = {
+      'AD_UNAUTHENTICATED',
+      'AD_REAUTH_REQUIRED',
+      'AD_APP_ATTESTATION_REQUIRED',
+    };
+    if (!statusFirstCodes.contains(errorCode) || !hasPersistedRequestMaterial) {
+      return errorCode;
+    }
+    return switch (statusResolution) {
+      SubmittedOperationStatusResolution.accepted => 'AD_ALREADY_ACCEPTED',
+      SubmittedOperationStatusResolution.notAccepted => errorCode,
+      SubmittedOperationStatusResolution.unresolved => 'AD_STATUS_UNAVAILABLE',
+      SubmittedOperationStatusResolution.notAttempted =>
+        'AD_ACCEPTANCE_UNKNOWN',
+    };
+  }
+
+  static bool authDeletionScheduleRequired({
+    required bool authorityFenceDurable,
+    required bool minimumCleanupReferencesCaptured,
+    required bool authAbsent,
+    required bool hasUnknownAdapter,
+    required bool retentionClassificationResolved,
+    required bool custodyResolved,
+  }) {
+    final _ = (
+      hasUnknownAdapter,
+      retentionClassificationResolved,
+      custodyResolved,
+    );
+    return authorityFenceDurable &&
+        minimumCleanupReferencesCaptured &&
+        !authAbsent;
   }
 
   static bool canReplayGrant({
@@ -825,13 +1213,17 @@ abstract final class AccountDeletionContract {
       capabilityPresent;
 
   static bool _adapterComplete(AdapterResultContract result) {
-    if (!adapterIds.contains(result.adapterId) ||
+    if (result.schemaVersion != AccountDeletionVersions.schema ||
+        !adapterIds.contains(result.adapterId) ||
         result.evidenceCode == null ||
         !opaqueId.hasMatch(result.evidenceCode!) ||
         result.policyDecisionId != 'retention.${result.adapterId}' ||
         !namespaceId.hasMatch(result.policyDecisionId) ||
         !opaqueId.hasMatch(result.policyVersion) ||
         !opaqueId.hasMatch(result.evidenceRef) ||
+        (result.holdBoundaryAt != null &&
+            result.holdBoundaryAt!.millisecondsSinceEpoch.abs() >
+                OfficialStatCanonicalEncoding.maxSafeInteger) ||
         result.applicability == AdapterApplicability.unknown ||
         result.holdState == HoldState.unknown ||
         result.policyDecisionState != PolicyDecisionState.approved) {
@@ -840,7 +1232,8 @@ abstract final class AccountDeletionContract {
     if (result.state == AdapterResultState.notApplicable) {
       return result.applicability == AdapterApplicability.notApplicable &&
           result.disposition == DispositionAction.notApplicable &&
-          result.holdState == HoldState.none;
+          result.holdState == HoldState.none &&
+          result.holdBoundaryAt == null;
     }
     if (result.applicability != AdapterApplicability.applicable ||
         result.state != AdapterResultState.complete ||
@@ -849,13 +1242,19 @@ abstract final class AccountDeletionContract {
       return false;
     }
     if (result.disposition == DispositionAction.restrictedRetention) {
-      return result.holdState == HoldState.activeApproved;
+      return result.holdState == HoldState.activeApproved &&
+          result.holdBoundaryAt != null;
     }
-    return result.holdState == HoldState.none;
+    return result.holdState == HoldState.none && result.holdBoundaryAt == null;
   }
 
   static bool providerCheckpointTerminal(ProviderCheckpointContract value) {
-    if (!opaqueId.hasMatch(value.evidenceCode)) return false;
+    if (value.schemaVersion != AccountDeletionVersions.schema ||
+        !opaqueId.hasMatch(value.evidenceCode) ||
+        value.checkedAt.millisecondsSinceEpoch.abs() >
+            OfficialStatCanonicalEncoding.maxSafeInteger) {
+      return false;
+    }
     if (value.provider == ProviderName.firebaseAuth) {
       return value.state == ProviderCheckpointState.complete;
     }
@@ -865,7 +1264,11 @@ abstract final class AccountDeletionContract {
   }
 
   static bool isDeletionComplete(DeletionCompletionInput input) {
-    if (!input.authAbsent || input.unknownRequiredState) return false;
+    if (input.schemaVersion != AccountDeletionVersions.schema ||
+        !input.authAbsent ||
+        input.unknownRequiredState) {
+      return false;
+    }
     if (!input.dataDispositionVerified ||
         !input.publicPrivacyVerified ||
         !input.custodyRecorded ||
@@ -955,13 +1358,13 @@ abstract final class AccountDeletionContract {
   static const Map<String, AccountDeletionErrorPolicy> errorPolicies = {
     'AD_UNAUTHENTICATED': AccountDeletionErrorPolicy(
       transport: 'unauthenticated',
-      retry: 'reauthenticateThenRetrySameOperation',
-      idempotency: 'notAccepted',
+      retry: 'resolveSavedStatusBeforeNewAuthentication',
+      idempotency: 'acceptanceUnknownUnlessStatusResolved',
     ),
     'AD_REAUTH_REQUIRED': AccountDeletionErrorPolicy(
       transport: 'unauthenticated',
-      retry: 'reauthenticateThenRetrySameOperation',
-      idempotency: 'notAccepted',
+      retry: 'resolveSavedStatusBeforeNewAuthentication',
+      idempotency: 'acceptanceUnknownUnlessStatusResolved',
     ),
     'AD_IDENTITY_MISMATCH': AccountDeletionErrorPolicy(
       transport: 'permission-denied',
@@ -970,8 +1373,8 @@ abstract final class AccountDeletionContract {
     ),
     'AD_APP_ATTESTATION_REQUIRED': AccountDeletionErrorPolicy(
       transport: 'failed-precondition',
-      retry: 'useSupportedAttestationOrRecovery',
-      idempotency: 'notAccepted',
+      retry: 'resolveSavedStatusBeforeNewAuthentication',
+      idempotency: 'acceptanceUnknownUnlessStatusResolved',
     ),
     'AD_INVALID_REQUEST': AccountDeletionErrorPolicy(
       transport: 'invalid-argument',
@@ -997,6 +1400,11 @@ abstract final class AccountDeletionContract {
       transport: 'success',
       retry: 'returnBoundStatusAlias',
       idempotency: 'safeReplayReturnsOriginalAcceptance',
+    ),
+    'AD_ACCEPTANCE_UNKNOWN': AccountDeletionErrorPolicy(
+      transport: 'acceptance-unknown',
+      retry: 'resolveSavedStatusBeforeNewAuthentication',
+      idempotency: 'mayAlreadyBeAccepted',
     ),
     'AD_TRANSFER_NOT_READY': AccountDeletionErrorPolicy(
       transport: 'failed-precondition',

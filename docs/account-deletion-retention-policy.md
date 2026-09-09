@@ -4,6 +4,8 @@ Status: **all decisions pending; activation not approved**
 
 The normative registry is `contracts/account_deletion/v1/retention_policy_registry.json`. It maps every v1 inventory row to one adapter and a unique policy decision ID. This document describes the required decision process; it does not choose legal bases, retention periods, or business policy.
 
+The registry pins its 27-row matrix to *HoopsConnect account deletion: architecture and Sol implementation handoff*, prepared September 8, 2026, SHA-256 `9a9d0150244fc124bbc8ab1697fba177a3c862de8b7099c5c684d02ed8537832`. The pinned invariants cover truthful acknowledgments, invite-consumption integrity, complete-ranking truth, controlled legacy rekey/read holds/rebuild suppression, and independent reference reconciliation. That reference prevents these semantics from being lost behind shorter category labels; it does not approve a retention decision.
+
 ## Approval rule
 
 Each row must be completed by an authorized decision maker and must include:

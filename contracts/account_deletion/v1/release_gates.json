@@ -88,7 +88,7 @@
       "name": "end_to_end_evidence",
       "status": "closedPendingOperationalProof",
       "owner": null,
-      "requiredEvidence": ["applicable_scenario_matrix_pass", "independent_disposition_review", "custody_review", "public_privacy_review", "verified_auth_absence", "zero_unresolved_required_adapters"],
+      "requiredEvidence": ["applicable_scenario_matrix_pass", "independent_disposition_review", "custody_review", "public_privacy_review", "auth_deletion_scheduled_after_durable_fence_and_minimum_references", "blocked_cleanup_does_not_block_auth_deletion", "verified_auth_absence", "auth_absence_does_not_bypass_cleanup_completion", "zero_unresolved_required_adapters"],
       "evidenceRefs": [],
       "passed": false
     },

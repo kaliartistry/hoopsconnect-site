@@ -22,8 +22,11 @@
     "adapterResult": ["pending", "blocked", "complete", "notApplicable", "unsupported"],
     "disposition": ["erase", "detach", "pseudonymize", "restrictedRetention", "accessRevokedAwaitingExpiry", "notApplicable", "unresolved"],
     "providerName": ["firebaseAuth", "appleCredential"],
+    "statusAliasBindingKind": ["winningOperation", "sameGenerationConvergence"],
+    "authDeletionCheckpoint": ["notScheduled", "scheduled", "retryRequired", "needsAttention", "complete"],
     "providerCheckpoint": ["pending", "complete", "retryRequired", "manualActionGuidance", "notApplicable", "unknown"],
     "deletionStatusPhase": ["processing", "accountRemovedCleanupPending", "attentionRequired", "complete"],
+    "submittedOperationStatusResolution": ["notAttempted", "accepted", "notAccepted", "unresolved"],
     "idempotencyDecision": ["acceptNew", "exactReplay", "attachStatusAlias", "conflict", "denyFenced"]
   },
   "completionCheckpointNames": ["dataDispositionVerified", "publicPrivacyVerified", "custodyRecorded", "providerDispositionRecorded", "restoreSuppressionDurable"],
@@ -47,15 +50,23 @@
     },
     "deletionStatusRequest": {"required": ["schemaVersion", "requestId", "statusSecret"], "optional": []},
     "deletionJob": {
-      "required": ["schemaVersion", "internalJobId", "generationHash", "state", "resumeStage", "policyVersion", "inventoryVersion", "authAbsent", "dataDispositionVerified", "publicPrivacyVerified", "custodyRecorded", "providerDispositionRecorded", "restoreSuppressionDurable", "safeErrorCode"],
+      "required": ["schemaVersion", "internalJobId", "generationHash", "state", "resumeStage", "policyVersion", "inventoryVersion", "attempt", "leaseGeneration", "authorityFenceDurable", "minimumCleanupReferencesCaptured", "authDeletionCheckpointState", "authAbsent", "dataDispositionVerified", "publicPrivacyVerified", "custodyRecorded", "providerDispositionRecorded", "restoreSuppressionDurable", "safeErrorCode"],
       "optional": []
     },
     "adapterResult": {
-      "required": ["adapterId", "applicability", "state", "disposition", "policyDecisionState", "policyDecisionId", "policyVersion", "holdState", "evidenceCode", "evidenceRef"],
+      "required": ["schemaVersion", "adapterId", "applicability", "state", "disposition", "policyDecisionState", "policyDecisionId", "policyVersion", "holdState", "evidenceCode", "evidenceRef", "holdBoundaryAt"],
+      "optional": []
+    },
+    "providerCheckpoint": {
+      "required": ["schemaVersion", "provider", "state", "evidenceCode", "checkedAt"],
+      "optional": []
+    },
+    "deletionCompletion": {
+      "required": ["schemaVersion", "authAbsent", "checkpoints", "requiredAdapterIds", "adapterResults", "providerCheckpoints", "unknownRequiredState"],
       "optional": []
     },
     "statusAlias": {
-      "required": ["schemaVersion", "requestId", "internalJobId", "statusSecretHash", "createdAt", "expiryPolicyDecisionId"],
+      "required": ["schemaVersion", "requestId", "internalJobId", "generationHash", "acceptedSemanticFingerprint", "bindingKind", "purpose", "statusSecretHash", "createdAt", "expiryPolicyDecisionId"],
       "optional": []
     },
     "minimalTombstone": {
@@ -96,7 +107,7 @@
     "secretEncoding": "base64urlNoPadding",
     "secret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
     "secretHash": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
-    "serverStores": ["requestId", "statusSecretHash", "internalJobId", "createdAt", "expiryPolicyDecisionId"],
+    "serverStores": ["schemaVersion", "requestId", "internalJobId", "generationHash", "acceptedSemanticFingerprint", "bindingKind", "purpose", "statusSecretHash", "createdAt", "expiryPolicyDecisionId"],
     "serverNeverStores": ["statusSecret"],
     "allowedCapability": ["readOwnCoarseDeletionStatus"],
     "forbiddenCapabilities": ["initiateDeletion", "cancelDeletion", "restoreAccount", "grantAuthority", "mutateJob", "accessPrivateInventory", "recoverJournal"]
@@ -108,12 +119,69 @@
     {"name":"sameOperationChangedSecret","hasJob":true,"sameOperation":true,"sameSemantic":true,"sameEnvelope":false,"authenticatedSameGeneration":true,"lifecycle":"deleting","expected":"conflict"},
     {"name":"sameOperationChangedCustody","hasJob":true,"sameOperation":true,"sameSemantic":false,"sameEnvelope":false,"authenticatedSameGeneration":true,"lifecycle":"deleting","expected":"conflict"},
     {"name":"secondDeviceBeforeDisable","hasJob":true,"sameOperation":false,"sameSemantic":true,"sameEnvelope":false,"authenticatedSameGeneration":true,"lifecycle":"deleting","expected":"attachStatusAlias"},
+    {"name":"secondDeviceChangedPreviewStillGetsReadOnlyAlias","hasJob":true,"sameOperation":false,"sameSemantic":false,"sameEnvelope":false,"authenticatedSameGeneration":true,"lifecycle":"deleting","expected":"attachStatusAlias"},
     {"name":"secondDeviceAfterDisable","hasJob":true,"sameOperation":false,"sameSemantic":true,"sameEnvelope":false,"authenticatedSameGeneration":false,"lifecycle":"deleting","expected":"denyFenced"},
     {"name":"newGenerationCannotAttach","hasJob":true,"sameOperation":false,"sameSemantic":true,"sameEnvelope":false,"authenticatedSameGeneration":false,"lifecycle":"active","expected":"conflict"}
   ],
   "generationIdentityCases": {
     "acceptedFirebaseUids": ["legacy:123", "imported.user", "legacy|123"],
     "normalizationDistinct": ["é", "é"]
+  },
+  "wireIntegerFields": ["schemaVersion", "epoch", "deletionEpoch", "attempt", "leaseGeneration"],
+  "wireIntegerCases": [
+    {"name":"integerLiteral","json":"1","accepted":true,"normalized":1},
+    {"name":"decimalInteger","json":"1.0","accepted":true,"normalized":1},
+    {"name":"exponentInteger","json":"1e0","accepted":true,"normalized":1},
+    {"name":"negativeZero","json":"-0.0","accepted":true,"normalized":0},
+    {"name":"positiveSafeBoundary","json":"9007199254740991","accepted":true,"normalized":9007199254740991},
+    {"name":"negativeSafeBoundary","json":"-9007199254740991","accepted":true,"normalized":-9007199254740991},
+    {"name":"fraction","json":"1.5","accepted":false},
+    {"name":"positiveOutOfRange","json":"9007199254740992","accepted":false},
+    {"name":"negativeOutOfRange","json":"-9007199254740992","accepted":false},
+    {"name":"numericString","json":"\"1\"","accepted":false}
+  ],
+  "statusAliasCases": [
+    {"name":"winningOperation","bindingKind":"winningOperation","purpose":"readOnlyDeletionStatus","sameGeneration":true,"canReadCoarseStatus":true,"canMutateWinningJob":false,"canChangeAcceptedScope":false,"grantsGeneralAuthority":false},
+    {"name":"differentOperationSameGeneration","bindingKind":"sameGenerationConvergence","purpose":"readOnlyDeletionStatus","sameGeneration":true,"canReadCoarseStatus":true,"canMutateWinningJob":false,"canChangeAcceptedScope":false,"grantsGeneralAuthority":false},
+    {"name":"differentGenerationDenied","bindingKind":"sameGenerationConvergence","purpose":"readOnlyDeletionStatus","sameGeneration":false,"canReadCoarseStatus":false,"canMutateWinningJob":false,"canChangeAcceptedScope":false,"grantsGeneralAuthority":false}
+  ],
+  "submittedOperationRecoverySequence": {
+    "events": ["accepted", "responseLost", "authRemoved", "unauthenticatedRetry", "acceptanceUnknown", "savedStatusCapabilityResolved", "acceptedStatusRecovered"],
+    "retryError": "AD_UNAUTHENTICATED",
+    "beforeStatusResolution": "AD_ACCEPTANCE_UNKNOWN",
+    "afterAcceptedStatusResolution": "AD_ALREADY_ACCEPTED",
+    "newAuthenticationOnlyAfterNotAcceptedProof": true,
+    "statusCapabilityCanMutate": false
+  },
+  "authDeletionIndependenceCases": [
+    {"name":"blockedCleanupStillSchedulesAuth","authorityFenceDurable":true,"minimumCleanupReferencesCaptured":true,"authAbsent":false,"hasUnknownAdapter":true,"retentionClassificationResolved":false,"custodyResolved":false,"mustScheduleAuthDeletion":true,"finalCompletionAllowed":false},
+    {"name":"cleanupCompleteCannotCompleteWhileAuthPresent","authorityFenceDurable":true,"minimumCleanupReferencesCaptured":true,"authAbsent":false,"hasUnknownAdapter":false,"retentionClassificationResolved":true,"custodyResolved":true,"mustScheduleAuthDeletion":true,"finalCompletionAllowed":false},
+    {"name":"referencesNotCapturedDoesNotScheduleYet","authorityFenceDurable":true,"minimumCleanupReferencesCaptured":false,"authAbsent":false,"hasUnknownAdapter":true,"retentionClassificationResolved":false,"custodyResolved":false,"mustScheduleAuthDeletion":false,"finalCompletionAllowed":false},
+    {"name":"verifiedAuthAbsenceNeedsNoNewSchedule","authorityFenceDurable":true,"minimumCleanupReferencesCaptured":true,"authAbsent":true,"hasUnknownAdapter":false,"retentionClassificationResolved":true,"custodyResolved":true,"mustScheduleAuthDeletion":false,"finalCompletionAllowed":true}
+  ],
+  "localJournalReconciliationCase": {
+    "name": "twoDevicesIndependentConsent",
+    "serverDeletionContinuesIndependently": true,
+    "statusCapabilityCanRecoverJournalContent": false,
+    "statusAliasCanAuthorizeJournalMutation": false,
+    "consentInheritedAcrossDevices": false,
+    "quarantineRequiresNamedCustodianAndDispositionDeadline": true,
+    "devices": [
+      {"deviceId":"device_a","manifestId":"manifest_a","receiptState":"responseLost","serverAcceptanceTruth":"accepted","requiresAuthorizedReceiptReconciliation":true,"localDecision":"handoffAfterReconciliation","quarantineState":"encryptedPendingReceiptReconciliation","consentBoundToManifest":true},
+      {"deviceId":"device_b","manifestId":"manifest_b","receiptState":"notSubmitted","serverAcceptanceTruth":"notAccepted","requiresAuthorizedReceiptReconciliation":false,"localDecision":"discardAuthorized","quarantineState":"none","consentBoundToManifest":true}
+    ]
+  },
+  "governingMatrix": {
+    "sourceTitle": "HoopsConnect account deletion: architecture and Sol implementation handoff",
+    "sha256": "9a9d0150244fc124bbc8ab1697fba177a3c862de8b7099c5c684d02ed8537832",
+    "adapterCount": 27,
+    "normativeInvariants": [
+      "acknowledgementWithdrawalDoesNotRewriteTruthfulAcknowledgementOutcome",
+      "issuerDeletionRevokesPendingInvitesButPreservesAnotherRecipientsCompletedRedemption",
+      "privacyFilteringNeverSilentlyClaimsAnIncompleteRankingIsComplete",
+      "legacyIdentityRekeyRequiresControlledMappingReadHoldAndRebuildSuppression",
+      "reverseIndexesNeverReplaceIndependentReferenceReconciliation"
+    ]
   },
   "authorityFenceCases": [
     {"name":"activeMatchingGenerationAndEpoch","lifecycle":"active","generationMatches":true,"epochMatches":true,"capabilityPresent":true,"grantReceiptReplay":true},
@@ -135,15 +203,16 @@
     "firebase_auth_identity", "user_profile", "memberships_capabilities", "device_fcm_preferences", "notification_inbox", "team_assignments", "pending_invites", "historical_invites", "authorization_evidence", "personal_ugc", "official_notices", "acknowledgements", "event_attribution", "account_person_claims", "person_identity_evidence", "legacy_player_identity", "legacy_game_evidence", "v2_journal_operations", "local_offline_journal", "v2_certified_evidence", "public_projections_exports", "personal_storage_media", "shared_association_media", "device_local_state", "diagnostics_processors", "backups_restores", "deletion_operational_residue"
   ],
   "errors": {
-    "AD_UNAUTHENTICATED":{"transport":"unauthenticated","retry":"reauthenticateThenRetrySameOperation","idempotency":"notAccepted"},
-    "AD_REAUTH_REQUIRED":{"transport":"unauthenticated","retry":"reauthenticateThenRetrySameOperation","idempotency":"notAccepted"},
+    "AD_UNAUTHENTICATED":{"transport":"unauthenticated","retry":"resolveSavedStatusBeforeNewAuthentication","idempotency":"acceptanceUnknownUnlessStatusResolved"},
+    "AD_REAUTH_REQUIRED":{"transport":"unauthenticated","retry":"resolveSavedStatusBeforeNewAuthentication","idempotency":"acceptanceUnknownUnlessStatusResolved"},
     "AD_IDENTITY_MISMATCH":{"transport":"permission-denied","retry":"never","idempotency":"notAccepted"},
-    "AD_APP_ATTESTATION_REQUIRED":{"transport":"failed-precondition","retry":"useSupportedAttestationOrRecovery","idempotency":"notAccepted"},
+    "AD_APP_ATTESTATION_REQUIRED":{"transport":"failed-precondition","retry":"resolveSavedStatusBeforeNewAuthentication","idempotency":"acceptanceUnknownUnlessStatusResolved"},
     "AD_INVALID_REQUEST":{"transport":"invalid-argument","retry":"never","idempotency":"notAccepted"},
     "AD_INTENT_EXPIRED":{"transport":"failed-precondition","retry":"refreshImpactThenCreateNewOperation","idempotency":"notAccepted"},
     "AD_IMPACT_CHANGED":{"transport":"failed-precondition","retry":"refreshImpactThenCreateNewOperation","idempotency":"notAccepted"},
     "AD_OPERATION_CONFLICT":{"transport":"already-exists","retry":"never","idempotency":"sameKeyDifferentPayloadRejected"},
     "AD_ALREADY_ACCEPTED":{"transport":"success","retry":"returnBoundStatusAlias","idempotency":"safeReplayReturnsOriginalAcceptance"},
+    "AD_ACCEPTANCE_UNKNOWN":{"transport":"acceptance-unknown","retry":"resolveSavedStatusBeforeNewAuthentication","idempotency":"mayAlreadyBeAccepted"},
     "AD_TRANSFER_NOT_READY":{"transport":"failed-precondition","retry":"operatorResolutionRequired","idempotency":"notAccepted"},
     "AD_POLICY_NOT_READY":{"transport":"failed-precondition","retry":"operatorResolutionRequired","idempotency":"notAccepted"},
     "AD_RATE_LIMITED":{"transport":"resource-exhausted","retry":"retrySameOperation","idempotency":"notAcceptedUnlessReceiptExists"},

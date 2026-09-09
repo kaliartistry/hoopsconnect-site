@@ -31,8 +31,14 @@ test("TypeScript deletion versions and states match shared fixtures", () => {
   assert.deepEqual(contract.adapterResultStates, fixture.states.adapterResult);
   assert.deepEqual(contract.dispositionActions, fixture.states.disposition);
   assert.deepEqual(contract.providerNames, fixture.states.providerName);
+  assert.deepEqual(contract.statusAliasBindingKinds, fixture.states.statusAliasBindingKind);
+  assert.deepEqual(contract.authDeletionCheckpointStates, fixture.states.authDeletionCheckpoint);
   assert.deepEqual(contract.providerCheckpointStates, fixture.states.providerCheckpoint);
   assert.deepEqual(contract.deletionStatusPhases, fixture.states.deletionStatusPhase);
+  assert.deepEqual(
+    contract.submittedOperationStatusResolutions,
+    fixture.states.submittedOperationStatusResolution,
+  );
   assert.deepEqual(contract.idempotencyDecisions, fixture.states.idempotencyDecision);
   assert.deepEqual(contract.completionCheckpointNames, fixture.completionCheckpointNames);
 });
@@ -95,12 +101,18 @@ test("status aliases and minimal tombstones reject extra identity material", () 
     schemaVersion: 1,
     requestId: "request_fixture_1",
     internalJobId: "job_fixture_1",
+    generationHash: fixture.generation.generationHash,
+    acceptedSemanticFingerprint: fixture.fingerprints.semanticHash,
+    bindingKind: "sameGenerationConvergence",
+    purpose: "readOnlyDeletionStatus",
     statusSecretHash: fixture.statusCapability.secretHash,
     createdAt: new Date("2026-01-02T03:04:05.678Z"),
     expiryPolicyDecisionId: "retention.deletion_operational_residue.v1",
   };
   assert.doesNotThrow(() => contract.validateStatusAlias(statusAlias));
   assert.throws(() => contract.validateStatusAlias({...statusAlias, uid: "uid_fixture_alpha"}));
+  assert.throws(() => contract.validateStatusAlias({...statusAlias, purpose: "mutateDeletion"}));
+  assert.throws(() => contract.validateStatusAlias({...statusAlias, schemaVersion: 2}));
   const tombstone = {
     schemaVersion: 1,
     generationHmac: "1".repeat(64),
@@ -194,6 +206,16 @@ test("idempotency distinguishes exact retry, conflict, and two-device status rec
   const late = fixture.idempotencyCases.find((entry) => entry.name === "secondDeviceAfterDisable");
   assert.equal(winner.expected, "attachStatusAlias");
   assert.equal(late.expected, "denyFenced");
+  const changed = fixture.idempotencyCases.find((entry) =>
+    entry.name === "secondDeviceChangedPreviewStillGetsReadOnlyAlias");
+  assert.equal(changed.sameSemantic, false);
+  assert.equal(changed.expected, "attachStatusAlias");
+  for (const aliasCase of fixture.statusAliasCases) {
+    assert.equal(aliasCase.purpose, "readOnlyDeletionStatus");
+    assert.equal(aliasCase.canMutateWinningJob, false);
+    assert.equal(aliasCase.canChangeAcceptedScope, false);
+    assert.equal(aliasCase.grantsGeneralAuthority, false);
+  }
 });
 
 test("deleting or stale accounts never regain authority through a granting receipt", () => {
@@ -241,6 +263,24 @@ test("lifecycle serialization rejects inconsistent terminal fields", () => {
     acceptedAt: null,
     completedAt: null,
   }));
+  assert.throws(() => contract.validateAccountLifecycle({
+    schemaVersion: 1,
+    state: "deleting",
+    epoch: 1,
+    generationHash,
+    internalJobId: "job_1",
+    acceptedAt: new Date(Number.NaN),
+    completedAt: null,
+  }));
+  assert.throws(() => contract.validateAccountLifecycle({
+    schemaVersion: 1,
+    state: "deleted",
+    epoch: 2,
+    generationHash,
+    internalJobId: "job_1",
+    acceptedAt: new Date("2026-01-02T00:00:00Z"),
+    completedAt: new Date("2026-01-01T00:00:00Z"),
+  }));
 });
 
 test("retry and attention jobs require an exact resume stage", () => {
@@ -252,6 +292,11 @@ test("retry and attention jobs require an exact resume stage", () => {
     resumeStage: null,
     policyVersion: "policy_v1",
     inventoryVersion: fixture.versions.inventoryVersion,
+    attempt: 0,
+    leaseGeneration: 0,
+    authorityFenceDurable: false,
+    minimumCleanupReferencesCaptured: false,
+    authDeletionCheckpointState: "notScheduled",
     authAbsent: false,
     dataDispositionVerified: false,
     publicPrivacyVerified: false,
@@ -265,10 +310,18 @@ test("retry and attention jobs require an exact resume stage", () => {
   assert.throws(() => contract.validateDeletionJob({...base, state: "retryWait", resumeStage: null}));
   assert.throws(() => contract.validateDeletionJob({...base, state: "inventory", resumeStage: "inventory"}));
   assert.throws(() => contract.validateDeletionJob({...base, safeErrorCode: "INTERNAL_STACK_TRACE"}));
+  assert.throws(() => contract.validateDeletionJob({
+    ...base,
+    authDeletionCheckpointState: "complete",
+    authAbsent: false,
+  }));
   assert.throws(() => contract.validateDeletionJob({...base, state: "complete"}));
   assert.doesNotThrow(() => contract.validateDeletionJob({
     ...base,
     state: "complete",
+    authorityFenceDurable: true,
+    minimumCleanupReferencesCaptured: true,
+    authDeletionCheckpointState: "complete",
     authAbsent: true,
     dataDispositionVerified: true,
     publicPrivacyVerified: true,
@@ -281,6 +334,7 @@ test("retry and attention jobs require an exact resume stage", () => {
 
 function completeInput(testCase) {
   const results = fixture.adapterIds.map((adapterId) => ({
+    schemaVersion: 1,
     adapterId,
     applicability: "applicable",
     state: "complete",
@@ -291,9 +345,11 @@ function completeInput(testCase) {
     holdState: adapterId === "v2_certified_evidence" ? "activeApproved" : "none",
     evidenceCode: "fixture_verified",
     evidenceRef: "evidence_fixture",
+    holdBoundaryAt: adapterId === "v2_certified_evidence" ? new Date("2027-01-01T00:00:00Z") : null,
   }));
   if (!testCase.allAdaptersComplete) results[0] = {...results[0], state: "blocked"};
   return {
+    schemaVersion: 1,
     authAbsent: testCase.authAbsent,
     checkpoints: {
       dataDispositionVerified: testCase.allCheckpoints,
@@ -305,8 +361,8 @@ function completeInput(testCase) {
     requiredAdapterIds: [...fixture.adapterIds],
     adapterResults: results,
     providerCheckpoints: [
-      {provider: "firebaseAuth", state: "complete", evidenceCode: "absent_verified", checkedAt: new Date()},
-      {provider: "appleCredential", state: testCase.allProvidersTerminal ? (testCase.appleOutcome || "notApplicable") : "retryRequired", evidenceCode: "fixture", checkedAt: new Date()},
+      {schemaVersion: 1, provider: "firebaseAuth", state: "complete", evidenceCode: "absent_verified", checkedAt: new Date()},
+      {schemaVersion: 1, provider: "appleCredential", state: testCase.allProvidersTerminal ? (testCase.appleOutcome || "notApplicable") : "retryRequired", evidenceCode: "fixture", checkedAt: new Date()},
     ],
     unknownRequiredState: testCase.unknownRequiredState,
   };
@@ -357,6 +413,16 @@ test("completion requires Auth absence and every adapter, privacy, custody, prov
     holdState: "releasePending",
   };
   assert.equal(contract.isDeletionComplete(releasePendingNotApplicable), false);
+  const datedNotApplicable = completeInput(fixture.completionCases[0]);
+  datedNotApplicable.adapterResults[0] = {
+    ...datedNotApplicable.adapterResults[0],
+    applicability: "notApplicable",
+    state: "notApplicable",
+    disposition: "notApplicable",
+    holdState: "none",
+    holdBoundaryAt: new Date("2027-01-01T00:00:00Z"),
+  };
+  assert.equal(contract.isDeletionComplete(datedNotApplicable), false);
   const unknownDisposition = completeInput(fixture.completionCases[0]);
   unknownDisposition.adapterResults[0] = {...unknownDisposition.adapterResults[0], disposition: "invented"};
   assert.equal(contract.isDeletionComplete(unknownDisposition), false);
@@ -373,6 +439,132 @@ test("completion requires Auth absence and every adapter, privacy, custody, prov
     Object.keys(completeInput(fixture.completionCases[0]).adapterResults[0]).sort(),
     [...fixture.schemas.adapterResult.required].sort(),
   );
+  assert.deepEqual(
+    Object.keys(completeInput(fixture.completionCases[0]).providerCheckpoints[0]).sort(),
+    [...fixture.schemas.providerCheckpoint.required].sort(),
+  );
+  assert.deepEqual(
+    Object.keys(completeInput(fixture.completionCases[0])).sort(),
+    [...fixture.schemas.deletionCompletion.required].sort(),
+  );
+});
+
+test("nested v1 records reject future versions, unknown fields, and invalid dates", () => {
+  const input = completeInput(fixture.completionCases[0]);
+  assert.doesNotThrow(() => contract.validateDeletionCompletionInput(input));
+  assert.throws(() => contract.validateDeletionCompletionInput({...input, schemaVersion: 2}));
+  assert.throws(() => contract.validateDeletionCompletionInput({...input, futureField: true}));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    checkpoints: {...input.checkpoints, futureCheckpoint: true},
+  }));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    adapterResults: [{...input.adapterResults[0], schemaVersion: 2}, ...input.adapterResults.slice(1)],
+  }));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    adapterResults: [{...input.adapterResults[0], futureField: true}, ...input.adapterResults.slice(1)],
+  }));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    adapterResults: [{...input.adapterResults[0], holdBoundaryAt: new Date(Number.NaN)}, ...input.adapterResults.slice(1)],
+  }));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    providerCheckpoints: [{...input.providerCheckpoints[0], schemaVersion: 2}, input.providerCheckpoints[1]],
+  }));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    providerCheckpoints: [{...input.providerCheckpoints[0], extra: true}, input.providerCheckpoints[1]],
+  }));
+  assert.throws(() => contract.validateDeletionCompletionInput({
+    ...input,
+    providerCheckpoints: [{...input.providerCheckpoints[0], checkedAt: new Date(Number.NaN)}, input.providerCheckpoints[1]],
+  }));
+});
+
+test("wire integers normalize mathematical integers and reject unsafe values", () => {
+  for (const testCase of fixture.wireIntegerCases) {
+    const value = JSON.parse(testCase.json);
+    if (testCase.accepted) {
+      assert.equal(contract.decodeWireSafeInteger(testCase.name, value), testCase.normalized, testCase.name);
+    } else {
+      assert.throws(() => contract.decodeWireSafeInteger(testCase.name, value), undefined, testCase.name);
+    }
+  }
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.throws(() => contract.decodeWireSafeInteger("nonfinite", value));
+  }
+  assert.doesNotThrow(() => contract.validatePrepareDeletionRequest({schemaVersion: 1.0}));
+  assert.throws(() => contract.validatePrepareDeletionRequest({schemaVersion: 1.5}));
+  assert.throws(() => contract.validateDeletionJob({...completeJobFixture(), attempt: -1}));
+});
+
+function completeJobFixture() {
+  return {
+    schemaVersion: 1,
+    internalJobId: "job_1",
+    generationHash: fixture.generation.generationHash,
+    state: "complete",
+    resumeStage: null,
+    policyVersion: "policy_v1",
+    inventoryVersion: fixture.versions.inventoryVersion,
+    attempt: 1,
+    leaseGeneration: 1,
+    authorityFenceDurable: true,
+    minimumCleanupReferencesCaptured: true,
+    authDeletionCheckpointState: "complete",
+    authAbsent: true,
+    dataDispositionVerified: true,
+    publicPrivacyVerified: true,
+    custodyRecorded: true,
+    providerDispositionRecorded: true,
+    restoreSuppressionDurable: true,
+    safeErrorCode: null,
+  };
+}
+
+test("submitted operation failures resolve saved status before new authentication", () => {
+  const sequence = fixture.submittedOperationRecoverySequence;
+  for (const code of ["AD_UNAUTHENTICATED", "AD_REAUTH_REQUIRED", "AD_APP_ATTESTATION_REQUIRED"]) {
+    assert.equal(contract.resolveSubmittedOperationFailure({
+      errorCode: code,
+      hasPersistedRequestMaterial: true,
+      statusResolution: "notAttempted",
+    }), sequence.beforeStatusResolution);
+    assert.equal(contract.resolveSubmittedOperationFailure({
+      errorCode: code,
+      hasPersistedRequestMaterial: true,
+      statusResolution: "accepted",
+    }), sequence.afterAcceptedStatusResolution);
+    assert.equal(contract.resolveSubmittedOperationFailure({
+      errorCode: code,
+      hasPersistedRequestMaterial: true,
+      statusResolution: "unresolved",
+    }), "AD_STATUS_UNAVAILABLE");
+    assert.equal(contract.resolveSubmittedOperationFailure({
+      errorCode: code,
+      hasPersistedRequestMaterial: true,
+      statusResolution: "notAccepted",
+    }), code);
+  }
+  assert.equal(sequence.newAuthenticationOnlyAfterNotAcceptedProof, true);
+  assert.equal(sequence.statusCapabilityCanMutate, false);
+});
+
+test("Auth deletion scheduling is independent from cleanup blockers", () => {
+  for (const testCase of fixture.authDeletionIndependenceCases) {
+    assert.equal(contract.authDeletionScheduleRequired(testCase), testCase.mustScheduleAuthDeletion, testCase.name);
+  }
+  assert.throws(() => contract.validateDeletionJob({
+    ...completeJobFixture(),
+    state: "disposition",
+    authAbsent: false,
+    authDeletionCheckpointState: "notScheduled",
+    dataDispositionVerified: false,
+  }));
+  assert.equal(contract.isDeletionComplete({...completeInput(fixture.completionCases[0]), authAbsent: false}), false);
 });
 
 test("every disposition row has one adapter and a closed policy decision", () => {
@@ -390,6 +582,9 @@ test("every disposition row has one adapter and a closed policy decision", () =>
   }
   assert.equal(policyRegistry.decisionTemplate.approved, false);
   assert.equal(policyRegistry.decisionTemplate.decisionState, "pendingAuthoritativeDecision");
+  assert.deepEqual(policyRegistry.governingMatrix, fixture.governingMatrix);
+  assert.equal(fixture.governingMatrix.adapterCount, 27);
+  assert.equal(fixture.governingMatrix.normativeInvariants.length, 5);
 });
 
 test("all G1-G11 release gates remain closed with owners and evidence absent", () => {
@@ -404,6 +599,10 @@ test("all G1-G11 release gates remain closed with owners and evidence absent", (
     assert.ok(gate.status.startsWith("closed"), gate.id);
     assert.ok(gate.requiredEvidence.length > 0, gate.id);
   }
+  const g10 = releaseGates.gates.find((gate) => gate.id === "G10");
+  assert.ok(g10.requiredEvidence.includes("auth_deletion_scheduled_after_durable_fence_and_minimum_references"));
+  assert.ok(g10.requiredEvidence.includes("blocked_cleanup_does_not_block_auth_deletion"));
+  assert.ok(g10.requiredEvidence.includes("auth_absence_does_not_bypass_cleanup_completion"));
 });
 
 test("stable public errors match the shared retry and idempotency policy", () => {
@@ -441,4 +640,11 @@ test("custody and stat privacy fixtures preserve account, tenant, and sporting b
   assert.equal(minor.publicNameAllowed, false);
   assert.equal(policyRegistry.policyTruths.pseudonymizationIsAnonymity, false);
   assert.equal(policyRegistry.policyTruths.accountDeletionDeletesTenantOrTeam, false);
+  const journal = fixture.localJournalReconciliationCase;
+  assert.equal(journal.serverDeletionContinuesIndependently, true);
+  assert.equal(journal.statusCapabilityCanRecoverJournalContent, false);
+  assert.equal(journal.statusAliasCanAuthorizeJournalMutation, false);
+  assert.equal(journal.consentInheritedAcrossDevices, false);
+  assert.equal(journal.devices.length, 2);
+  assert.notEqual(journal.devices[0].manifestId, journal.devices[1].manifestId);
 });

@@ -74,9 +74,11 @@ Certified evidence may be `restrictedRetention` only under an `activeApproved` h
 
 ## Offline journals and ambiguous receipts
 
-Accepted server journal operations and unaccepted device-local work are separate adapters. Deletion must not upload or recover local work merely to complete inventory. A client with a lost/ambiguous receipt may query only its deletion status capability; that capability cannot reveal or recover journal contents.
+Accepted server journal operations, truly unaccepted device-local work, and receipt-unknown device-local work are distinct states. A missing receipt never proves non-acceptance, and accepted actor provenance is preserved under the official-stat contract. Account deletion does not upload or recover local work merely to finish server inventory, and server deletion continues independently of every device-local decision.
 
-Future client code must clear relevant local queues, Firestore persistence, Riverpod state, notifications, and PWA caches when fenced. Server disposition remains authoritative. A missing device cannot be claimed wiped; policy and disclosure must describe the realistic boundary.
+Before handoff or discard, each reachable device reconciles opaque command IDs against accepted receipts through a separately authorized, generation/game-scoped recovery mechanism. The deletion status capability and status aliases cannot read or recover journal content, authorize reconciliation, or mutate a journal. Each device requires its own consent bound to an exact manifest; another device's consent is never inherited. Authorized handoff must preserve original actor provenance and cannot transfer the departing user's credentials. Authorized discard applies only to the consented manifest.
+
+If reconciliation cannot safely finish before sign-out, retain only an encrypted quarantined recovery partition with a named custodian and disposition deadline. Ordinary caches, Firestore persistence, Riverpod state, listeners, notifications, and PWA caches are cleared when fenced according to platform ordering. A second offline device cannot be remotely guaranteed purged, but it must deny normal account use and reconcile its own manifest when it next observes deletion or revocation. Policy and disclosure must state that realistic boundary.
 
 ## Restore and migration suppression
 

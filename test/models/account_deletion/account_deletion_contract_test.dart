@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/account_deletion/account_deletion_contract.dart';
 
+import 'account_deletion_wire_cases.dart';
+
 Map<String, dynamic> loadJson(String path) =>
     jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
 
@@ -62,10 +64,22 @@ void main() {
       expect(names(DispositionAction.values), states['disposition']);
       expect(names(ProviderName.values), states['providerName']);
       expect(
+        names(StatusAliasBindingKind.values),
+        states['statusAliasBindingKind'],
+      );
+      expect(
+        names(AuthDeletionCheckpointState.values),
+        states['authDeletionCheckpoint'],
+      );
+      expect(
         names(ProviderCheckpointState.values),
         states['providerCheckpoint'],
       );
       expect(names(DeletionStatusPhase.values), states['deletionStatusPhase']);
+      expect(
+        names(SubmittedOperationStatusResolution.values),
+        states['submittedOperationStatusResolution'],
+      );
       expect(names(IdempotencyDecision.values), states['idempotencyDecision']);
       expect(
         AccountDeletionContract.completionCheckpointNames,
@@ -196,11 +210,54 @@ void main() {
       );
     });
 
+    test('native wire integer cases exactly match the browser fixture', () {
+      expect(fixture['wireIntegerCases'], accountDeletionWireIntegerCases);
+      for (final testCase in accountDeletionWireIntegerCases) {
+        final value = jsonDecode(testCase['json']! as String);
+        if (testCase['accepted']! as bool) {
+          expect(
+            AccountDeletionContract.decodeWireSafeInteger(
+              testCase['name']! as String,
+              value,
+            ),
+            testCase['normalized'],
+          );
+        } else {
+          expect(
+            () => AccountDeletionContract.decodeWireSafeInteger(
+              testCase['name']! as String,
+              value,
+            ),
+            throwsFormatException,
+          );
+        }
+      }
+      for (final value in [
+        double.nan,
+        double.infinity,
+        double.negativeInfinity,
+      ]) {
+        expect(
+          () =>
+              AccountDeletionContract.decodeWireSafeInteger('nonfinite', value),
+          throwsFormatException,
+        );
+      }
+    });
+
     test('status aliases and tombstones reject extra identity material', () {
       final statusAlias = <String, Object?>{
         'schemaVersion': 1,
         'requestId': 'request_fixture_1',
         'internalJobId': 'job_fixture_1',
+        'generationHash':
+            (fixture['generation'] as Map<String, dynamic>)['generationHash']
+                as String,
+        'acceptedSemanticFingerprint':
+            (fixture['fingerprints'] as Map<String, dynamic>)['semanticHash']
+                as String,
+        'bindingKind': 'sameGenerationConvergence',
+        'purpose': 'readOnlyDeletionStatus',
         'statusSecretHash': capability['secretHash'] as String,
         'createdAt': DateTime.utc(2026, 1, 2, 3, 4, 5, 678),
         'expiryPolicyDecisionId': 'retention.deletion_operational_residue.v1',
@@ -213,6 +270,20 @@ void main() {
         () => AccountDeletionStatusAliasContract.fromContractMap({
           ...statusAlias,
           'uid': 'uid_fixture_alpha',
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AccountDeletionStatusAliasContract.fromContractMap({
+          ...statusAlias,
+          'schemaVersion': 2,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AccountDeletionStatusAliasContract.fromContractMap({
+          ...statusAlias,
+          'purpose': 'mutateDeletion',
         }),
         throwsFormatException,
       );
@@ -241,6 +312,27 @@ void main() {
         () => MinimalDeletionTombstoneContract.fromContractMap({
           ...tombstone,
           'deletionEpoch': 9007199254740992,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => MinimalDeletionTombstoneContract.fromContractMap({
+          ...tombstone,
+          'completedAt': DateTime.utc(2026, 1, 1),
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AccountLifecycleContract.fromContractMap({
+          'schemaVersion': 1,
+          'state': 'deleted',
+          'epoch': 2,
+          'generationHash':
+              (fixture['generation'] as Map<String, dynamic>)['generationHash']
+                  as String,
+          'internalJobId': 'job_fixture_1',
+          'acceptedAt': DateTime.utc(2026, 1, 2),
+          'completedAt': DateTime.utc(2026, 1, 1),
         }),
         throwsFormatException,
       );
@@ -400,6 +492,11 @@ void main() {
         'resumeStage': null,
         'policyVersion': 'policy_v1',
         'inventoryVersion': AccountDeletionVersions.inventory,
+        'attempt': 0,
+        'leaseGeneration': 0,
+        'authorityFenceDurable': false,
+        'minimumCleanupReferencesCaptured': false,
+        'authDeletionCheckpointState': 'notScheduled',
         'authAbsent': false,
         'dataDispositionVerified': false,
         'publicPrivacyVerified': false,
@@ -444,6 +541,32 @@ void main() {
       expect(
         () => AccountDeletionJobContract.fromContractMap({
           ...base,
+          'authDeletionCheckpointState': 'complete',
+          'authAbsent': false,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AccountDeletionJobContract.fromContractMap({
+          ...base,
+          'authorityFenceDurable': true,
+          'minimumCleanupReferencesCaptured': true,
+          'authDeletionCheckpointState': 'notScheduled',
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AccountDeletionJobContract.fromContractMap({
+          ...base,
+          'authorityFenceDurable': true,
+          'minimumCleanupReferencesCaptured': true,
+          'authDeletionCheckpointState': 'scheduled',
+        }),
+        returnsNormally,
+      );
+      expect(
+        () => AccountDeletionJobContract.fromContractMap({
+          ...base,
           'state': 'complete',
         }),
         throwsFormatException,
@@ -452,6 +575,9 @@ void main() {
         () => AccountDeletionJobContract.fromContractMap({
           ...base,
           'state': 'complete',
+          'authorityFenceDurable': true,
+          'minimumCleanupReferencesCaptured': true,
+          'authDeletionCheckpointState': 'complete',
           'authAbsent': true,
           'dataDispositionVerified': true,
           'publicPrivacyVerified': true,
@@ -488,7 +614,92 @@ void main() {
         );
         expect(result.name, value['expected'], reason: value['name'] as String);
       }
+      final changed = (fixture['idempotencyCases'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere(
+            (value) =>
+                value['name'] ==
+                'secondDeviceChangedPreviewStillGetsReadOnlyAlias',
+          );
+      expect(changed['sameSemantic'], isFalse);
+      expect(changed['expected'], 'attachStatusAlias');
+      for (final raw in fixture['statusAliasCases'] as List<dynamic>) {
+        final value = raw as Map<String, dynamic>;
+        expect(value['purpose'], 'readOnlyDeletionStatus');
+        expect(value['canMutateWinningJob'], isFalse);
+        expect(value['canChangeAcceptedScope'], isFalse);
+        expect(value['grantsGeneralAuthority'], isFalse);
+      }
     });
+
+    test('submitted failures resolve saved status before authentication', () {
+      final sequence =
+          fixture['submittedOperationRecoverySequence'] as Map<String, dynamic>;
+      for (final code in [
+        'AD_UNAUTHENTICATED',
+        'AD_REAUTH_REQUIRED',
+        'AD_APP_ATTESTATION_REQUIRED',
+      ]) {
+        expect(
+          AccountDeletionContract.resolveSubmittedOperationFailure(
+            errorCode: code,
+            hasPersistedRequestMaterial: true,
+            statusResolution: SubmittedOperationStatusResolution.notAttempted,
+          ),
+          sequence['beforeStatusResolution'],
+        );
+        expect(
+          AccountDeletionContract.resolveSubmittedOperationFailure(
+            errorCode: code,
+            hasPersistedRequestMaterial: true,
+            statusResolution: SubmittedOperationStatusResolution.accepted,
+          ),
+          sequence['afterAcceptedStatusResolution'],
+        );
+        expect(
+          AccountDeletionContract.resolveSubmittedOperationFailure(
+            errorCode: code,
+            hasPersistedRequestMaterial: true,
+            statusResolution: SubmittedOperationStatusResolution.unresolved,
+          ),
+          'AD_STATUS_UNAVAILABLE',
+        );
+        expect(
+          AccountDeletionContract.resolveSubmittedOperationFailure(
+            errorCode: code,
+            hasPersistedRequestMaterial: true,
+            statusResolution: SubmittedOperationStatusResolution.notAccepted,
+          ),
+          code,
+        );
+      }
+      expect(sequence['newAuthenticationOnlyAfterNotAcceptedProof'], isTrue);
+      expect(sequence['statusCapabilityCanMutate'], isFalse);
+    });
+
+    test(
+      'Auth scheduling ignores cleanup blockers after its preconditions',
+      () {
+        for (final raw
+            in fixture['authDeletionIndependenceCases'] as List<dynamic>) {
+          final value = raw as Map<String, dynamic>;
+          expect(
+            AccountDeletionContract.authDeletionScheduleRequired(
+              authorityFenceDurable: value['authorityFenceDurable'] as bool,
+              minimumCleanupReferencesCaptured:
+                  value['minimumCleanupReferencesCaptured'] as bool,
+              authAbsent: value['authAbsent'] as bool,
+              hasUnknownAdapter: value['hasUnknownAdapter'] as bool,
+              retentionClassificationResolved:
+                  value['retentionClassificationResolved'] as bool,
+              custodyResolved: value['custodyResolved'] as bool,
+            ),
+            value['mustScheduleAuthDeletion'],
+            reason: value['name'] as String,
+          );
+        }
+      },
+    );
 
     test(
       'deleting, deleted, stale, and unscoped receipt replays deny grants',
@@ -533,10 +744,13 @@ void main() {
                 : HoldState.none,
             evidenceCode: 'fixture_verified',
             evidenceRef: 'evidence_fixture',
+            holdBoundaryAt: adapterId == 'v2_certified_evidence'
+                ? DateTime.utc(2027)
+                : null,
           ),
       ];
       if (!(testCase['allAdaptersComplete'] as bool)) {
-        adapters[0] = const AdapterResultContract(
+        adapters[0] = AdapterResultContract(
           adapterId: 'firebase_auth_identity',
           applicability: AdapterApplicability.applicable,
           state: AdapterResultState.blocked,
@@ -546,6 +760,7 @@ void main() {
           policyVersion: 'policy_v1',
           holdState: HoldState.none,
           evidenceRef: 'evidence_fixture',
+          holdBoundaryAt: null,
         );
       }
       final checkpoints = testCase['allCheckpoints'] as bool;
@@ -671,6 +886,7 @@ void main() {
         holdState: holdState ?? value.holdState,
         evidenceCode: evidenceCode ?? value.evidenceCode,
         evidenceRef: evidenceRef ?? value.evidenceRef,
+        holdBoundaryAt: value.holdBoundaryAt,
       );
       expect(
         AccountDeletionContract.isDeletionComplete(
@@ -700,6 +916,26 @@ void main() {
         ),
         isFalse,
       );
+      final datedNotApplicable = [...base.adapterResults];
+      datedNotApplicable[0] = AdapterResultContract(
+        adapterId: datedNotApplicable[0].adapterId,
+        applicability: AdapterApplicability.notApplicable,
+        state: AdapterResultState.notApplicable,
+        disposition: DispositionAction.notApplicable,
+        policyDecisionState: datedNotApplicable[0].policyDecisionState,
+        policyDecisionId: datedNotApplicable[0].policyDecisionId,
+        policyVersion: datedNotApplicable[0].policyVersion,
+        holdState: HoldState.none,
+        evidenceCode: datedNotApplicable[0].evidenceCode,
+        evidenceRef: datedNotApplicable[0].evidenceRef,
+        holdBoundaryAt: DateTime.utc(2027),
+      );
+      expect(
+        AccountDeletionContract.isDeletionComplete(
+          replace(adapterResults: datedNotApplicable),
+        ),
+        isFalse,
+      );
       final missingProviderEvidence = [...base.providerCheckpoints];
       missingProviderEvidence[0] = ProviderCheckpointContract(
         provider: missingProviderEvidence[0].provider,
@@ -717,18 +953,114 @@ void main() {
           ((fixture['schemas'] as Map<String, dynamic>)['adapterResult']
                   as Map<String, dynamic>)['required']
               as List<dynamic>;
-      expect(adapterSchema.cast<String>().toSet(), {
-        'adapterId',
-        'applicability',
-        'state',
-        'disposition',
-        'policyDecisionState',
-        'policyDecisionId',
-        'policyVersion',
-        'holdState',
-        'evidenceCode',
-        'evidenceRef',
-      });
+      expect(
+        adapterSchema.cast<String>().toSet(),
+        base.adapterResults.first.toContractMap().keys.toSet(),
+      );
+    });
+
+    test('nested v1 maps reject extra fields and future schemas', () {
+      final base = completeInput(
+        (fixture['completionCases'] as List<dynamic>).first
+            as Map<String, dynamic>,
+      );
+      Map<String, Object?> completionMap() => {
+        'schemaVersion': 1,
+        'authAbsent': base.authAbsent,
+        'checkpoints': {
+          'dataDispositionVerified': base.dataDispositionVerified,
+          'publicPrivacyVerified': base.publicPrivacyVerified,
+          'custodyRecorded': base.custodyRecorded,
+          'providerDispositionRecorded': base.providerDispositionRecorded,
+          'restoreSuppressionDurable': base.restoreSuppressionDurable,
+        },
+        'requiredAdapterIds': base.requiredAdapterIds,
+        'adapterResults': [
+          for (final result in base.adapterResults) result.toContractMap(),
+        ],
+        'providerCheckpoints': [
+          for (final checkpoint in base.providerCheckpoints)
+            checkpoint.toContractMap(),
+        ],
+        'unknownRequiredState': base.unknownRequiredState,
+      };
+
+      expect(
+        () => DeletionCompletionInput.fromContractMap(completionMap()),
+        returnsNormally,
+      );
+      expect(
+        () => DeletionCompletionInput.fromContractMap({
+          ...completionMap(),
+          'future': true,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => DeletionCompletionInput.fromContractMap({
+          ...completionMap(),
+          'schemaVersion': 2,
+        }),
+        throwsFormatException,
+      );
+      final checkpoints = Map<String, Object?>.from(
+        completionMap()['checkpoints']! as Map,
+      );
+      expect(
+        () => DeletionCompletionInput.fromContractMap({
+          ...completionMap(),
+          'checkpoints': {...checkpoints, 'future': true},
+        }),
+        throwsFormatException,
+      );
+      final adapterMaps = List<Map<String, Object?>>.from(
+        completionMap()['adapterResults']! as List,
+      );
+      expect(
+        () => AdapterResultContract.fromContractMap({
+          ...adapterMaps.first,
+          'future': true,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AdapterResultContract.fromContractMap({
+          ...adapterMaps.first,
+          'schemaVersion': 2,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AdapterResultContract.fromContractMap({
+          ...adapterMaps.first,
+          'holdBoundaryAt': 'invalid-date',
+        }),
+        throwsA(isA<TypeError>()),
+      );
+      final providerMaps = List<Map<String, Object?>>.from(
+        completionMap()['providerCheckpoints']! as List,
+      );
+      expect(
+        () => ProviderCheckpointContract.fromContractMap({
+          ...providerMaps.first,
+          'future': true,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => ProviderCheckpointContract.fromContractMap({
+          ...providerMaps.first,
+          'schemaVersion': 2,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => ProviderCheckpointContract.fromContractMap({
+          ...providerMaps.first,
+          'checkedAt': 'invalid-date',
+        }),
+        throwsA(isA<TypeError>()),
+      );
     });
 
     test('all matrix rows map to unique closed policy decisions', () {
@@ -746,6 +1078,11 @@ void main() {
       );
       expect(policyRegistry['activationApproved'], isFalse);
       expect(policyRegistry['policyVersion'], isNull);
+      expect(policyRegistry['governingMatrix'], fixture['governingMatrix']);
+      final governingMatrix =
+          fixture['governingMatrix'] as Map<String, dynamic>;
+      expect(governingMatrix['adapterCount'], 27);
+      expect(governingMatrix['normativeInvariants'], hasLength(5));
       final template =
           policyRegistry['decisionTemplate'] as Map<String, dynamic>;
       for (final field
@@ -778,6 +1115,17 @@ void main() {
         expect(gate['evidenceRefs'], isEmpty);
         expect(gate['status'], startsWith('closed'));
       }
+      final g10 = gates.cast<Map<String, dynamic>>().singleWhere(
+        (gate) => gate['id'] == 'G10',
+      );
+      expect(
+        g10['requiredEvidence'],
+        containsAll([
+          'auth_deletion_scheduled_after_durable_fence_and_minimum_references',
+          'blocked_cleanup_does_not_block_auth_deletion',
+          'auth_absence_does_not_bypass_cleanup_completion',
+        ]),
+      );
     });
   });
 
@@ -836,6 +1184,18 @@ void main() {
       expect(truths['pseudonymizationIsAnonymity'], isFalse);
       expect(truths['hashIsAnonymousByDefault'], isFalse);
       expect(truths['accountDeletionDeletesTenantOrTeam'], isFalse);
+      final journal =
+          fixture['localJournalReconciliationCase'] as Map<String, dynamic>;
+      expect(journal['serverDeletionContinuesIndependently'], isTrue);
+      expect(journal['statusCapabilityCanRecoverJournalContent'], isFalse);
+      expect(journal['statusAliasCanAuthorizeJournalMutation'], isFalse);
+      expect(journal['consentInheritedAcrossDevices'], isFalse);
+      final devices = journal['devices'] as List<dynamic>;
+      expect(devices, hasLength(2));
+      expect(
+        (devices[0] as Map<String, dynamic>)['manifestId'],
+        isNot((devices[1] as Map<String, dynamic>)['manifestId']),
+      );
     });
 
     test('last-owner custody outcomes match the shared contract', () {

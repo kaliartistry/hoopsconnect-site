@@ -16,6 +16,14 @@ Normative machine-readable sources:
 
 The retention policy is specified in `account-deletion-retention-policy.md`. Official-stat identity, evidence, and privacy rules are specified in `planning/official-stat-account-deletion-addendum.md`. The existing `planning/official-stat-contract.md` remains unchanged.
 
+The normative disposition matrix is the 27-row **“Exact disposition matrix”** in *HoopsConnect account deletion: architecture and Sol implementation handoff*, prepared September 8, 2026, SHA-256 `9a9d0150244fc124bbc8ab1697fba177a3c862de8b7099c5c684d02ed8537832`. The machine-readable fixture and retention registry pin that source, hash, and row count. Every later adapter implementation must preserve at least these matrix invariants:
+
+- withdrawing or reassigning an acknowledgment obligation never rewrites a truthful prior acknowledgment outcome;
+- deleting an invite issuer revokes pending invitations but does not invalidate another recipient's completed redemption;
+- privacy filtering never silently labels an incomplete ranking as complete;
+- legacy identity rekeying uses a controlled mapping, identity-bearing read hold, and rebuild suppression;
+- reverse indexes accelerate discovery but never replace independent reference reconciliation.
+
 ## Safety boundary
 
 Account deletion is a server-owned, irreversible saga. The authenticated account may request deletion of its own current Auth generation; it may not select another UID, perform disposition locally, or infer authority from a profile, role string, path, email, display name, membership fragment, or cached receipt.
@@ -37,7 +45,9 @@ Unknown fields, states, adapters, policy decisions, custody conditions, holds, p
 
 ## Versioned wire schemas
 
-All request records are plain maps with exact keys. Unknown fields are rejected.
+All v1 records are plain maps with exact keys. Unknown fields and future schema markers are rejected at every level, including the completion envelope, its checkpoint map, every adapter result, and every provider checkpoint. TypeScript structural typing is not a substitute for runtime exact-shape validation.
+
+Every numeric wire field (`schemaVersion`, lifecycle `epoch`, tombstone `deletionEpoch`, job `attempt`, and job `leaseGeneration`) uses the same mathematical safe-integer decoder in Dart VM, Dart compiled to JavaScript, and TypeScript. It accepts finite integer-valued JSON numbers in the inclusive range `[-9007199254740991, 9007199254740991]`, normalizes equivalent forms such as `1`, `1.0`, and `1e0`, and normalizes negative zero to zero. Strings, fractions, nonfinite values, and out-of-range values fail. Field-specific rules then require schema version 1 and nonnegative epochs/counters.
 
 `prepareDeletion` accepts only:
 
@@ -102,6 +112,8 @@ accepted -> fencingExternalAccess -> inventory -> disposition -> verify -> compl
 
 `accepted`, `fencingExternalAccess`, `inventory`, `disposition`, and `verify` may enter `retryWait` or `needsAttention` where the fixture permits. Those two states require exactly one `resumeStage` from `fencingExternalAccess`, `inventory`, `disposition`, or `verify`; all other states forbid `resumeStage`. `complete` is terminal.
 
+The job separately records nonnegative safe-integer `attempt` and `leaseGeneration` counters, `authorityFenceDurable`, `minimumCleanupReferencesCaptured`, and an Auth-deletion checkpoint (`notScheduled`, `scheduled`, `retryRequired`, `needsAttention`, or `complete`). As soon as the authority fence and the minimum cleanup references needed for resumable work are durable, single-user Auth deletion and absence verification must be scheduled independently. Unknown adapters, disputed retention classification, remaining custody work, or another cleanup failure cannot keep that checkpoint at `notScheduled`. Auth-task failures use their own retry/attention state while the account remains fenced. No numeric service deadline is chosen by AD01.
+
 Transient failure uses `retryWait` with bounded backoff. A policy gap, custody conflict, unsupported required adapter, unresolved external action, or exhausted retry budget uses `needsAttention`. Neither state reopens account authority. Operators resume from the recorded stage; they do not create a second deletion job.
 
 ## Fingerprints and idempotency
@@ -126,17 +138,19 @@ Idempotency outcomes are exact:
 - no existing job + authenticated current active generation: `acceptNew`;
 - same operation + same semantic and envelope fingerprints: `exactReplay`;
 - same operation with changed secret, custody, policy, impact, or other bound input: `conflict`;
-- another authenticated device, before Auth is disabled, presenting the same semantic request: `attachStatusAlias`;
+- a different operation from another authenticated device in the same account generation, before Auth is disabled: `attachStatusAlias`, even if its proposed preview or scope differs from the already accepted winner;
 - another device after disable: `denyFenced` and use its existing receipt or verified recovery;
 - a recreated or otherwise different generation never attaches to the old job.
 
-No retry may repeat destructive work merely because the original response was lost. Adapter operations must be idempotent under the internal job ID and must record evidence sufficient to distinguish not-started, applied, awaiting verification, and terminal outcomes.
+The same `operationId` remains strict: any changed semantic or envelope field is a conflict. A different operation's alias converges only on the winning job's immutable accepted semantic fingerprint; it cannot replace custody, policy, impact, disposition, or any other accepted scope and grants no mutation authority.
+
+No retry may repeat destructive work merely because the original response was lost. If a submitted operation has persisted request/status material and then receives an authentication, recent-authentication, or app-attestation failure, the client must resolve its saved read-only status capability first. Acceptance may have committed before the response was lost and Auth was removed. Until status proves otherwise the result is `AD_ACCEPTANCE_UNKNOWN`, not “not accepted”; recovered acceptance yields `AD_ALREADY_ACCEPTED`, and an unresolved capability yields `AD_STATUS_UNAVAILABLE`. New authentication or separately approved recovery is selected only after status resolution establishes that it is appropriate. Adapter operations must be idempotent under the internal job ID and must record evidence sufficient to distinguish not-started, applied, awaiting verification, and terminal outcomes.
 
 ## Status capability
 
 The client generates a cryptographically random 32-byte value and sends only the lowercase hexadecimal SHA-256 digest of the decoded secret bytes with `requestDeletion`. The clear secret itself uses canonical unpadded base64url, remains in the client receipt, and is presented only to `deletionStatus`.
 
-The server stores only `requestId`, `statusSecretHash`, `internalJobId`, `createdAt`, and an approved `expiryPolicyDecisionId`. It never stores the clear secret. Hash comparison must be constant-time.
+Each alias binds exactly `schemaVersion`, `requestId`, `internalJobId`, `generationHash`, the winning `acceptedSemanticFingerprint`, `bindingKind`, fixed purpose `readOnlyDeletionStatus`, `statusSecretHash`, `createdAt`, and an approved `expiryPolicyDecisionId`. `bindingKind` distinguishes the winning operation from same-generation convergence. The server never stores the clear secret. Hash comparison must be constant-time.
 
 This bearer capability permits only `readOwnCoarseDeletionStatus`. It cannot initiate or cancel deletion, restore an account, grant authority, mutate a job, expose inventory, or recover official-stat journals. Status retention and expiry remain a closed policy decision.
 
@@ -146,13 +160,15 @@ The inventory version is `account-deletion-adapter-inventory-v1`. Every adapter 
 
 Each result records:
 
+- `schemaVersion = 1`;
 - named `adapterId`;
 - `applicability`: `applicable`, `notApplicable`, or `unknown`;
 - `state`: `pending`, `blocked`, `complete`, `notApplicable`, or `unsupported`;
 - disposition: `erase`, `detach`, `pseudonymize`, `restrictedRetention`, `accessRevokedAwaitingExpiry`, `notApplicable`, or `unresolved`;
 - approved policy decision state and version;
 - hold state: `none`, `activeApproved`, `releasePending`, or `unknown`;
-- safe evidence code and internal evidence reference.
+- safe evidence code and internal evidence reference;
+- `holdBoundaryAt`, which is a finite timestamp for restricted retention and otherwise null.
 
 `unknown`, `pending`, `blocked`, `unsupported`, `unresolved`, an unapproved policy, or a missing required adapter prevents completion. `notApplicable` is terminal only when applicability, result, and disposition all say `notApplicable` and evidence explains why. `restrictedRetention` is terminal only under an `activeApproved` hold with named authority, scope, readers, duration/trigger, and review path.
 
@@ -180,7 +196,7 @@ Legacy and old-client paths remain subject to the same generation and lifecycle 
 
 ## Provider checkpoints
 
-Provider checkpoints are first-class and timestamped. `firebaseAuth` must reach `complete` with verified Auth absence. `appleCredential` may reach:
+Provider checkpoints are exact version-1 records and use finite `checkedAt` timestamps. `firebaseAuth` must reach `complete` with verified Auth absence. `appleCredential` may reach:
 
 - `complete` after verified revocation/disposition;
 - `notApplicable` only with evidence that no Apple relationship applies;
@@ -201,6 +217,8 @@ suppressionKeyVersion, acceptedAt, completedAt, minimumReplayCutoff
 It must not contain UID, email, name, raw generation hash, adapter inventory, official-stat journal, provider token, or clear status secret. `generationHmac` uses a separately managed keyed scheme, not a plain hash. The approved retention registry must define key custody, rotation, duration, readers, erasure, and compromise response.
 
 Before any restored backup, PITR image, object version, export, migration import, or processor replay serves traffic, the suppression ledger must be applied and every deleted generation re-disposed. A restore cannot recreate authority, identity bindings, public projections, device recipients, or deleted personal content.
+
+Every non-null lifecycle, tombstone, provider, or hold timestamp must represent a finite instant. Completion cannot precede acceptance, and the minimum replay cutoff cannot precede acceptance.
 
 ## Completion predicate
 
