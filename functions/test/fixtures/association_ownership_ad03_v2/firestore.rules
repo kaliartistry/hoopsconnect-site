@@ -1,0 +1,33 @@
+rules_version = '2';
+
+// ASSOCIATION_OWNERSHIP_AD03_V2_TEST_ONLY_PROJECT=demo-hoopsconnect
+// Server-private dormant candidate. firebase.json does not reference this file.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /associationOwnershipV2Root/{associationId} {
+      allow read, write: if false;
+      match /{privateDocument=**} {
+        allow read, write: if false;
+      }
+    }
+
+    match /associationOwnershipV2Tenants/{tenantId}/associations/{associationId} {
+      allow read, write: if false;
+      match /{privateDocument=**} {
+        allow read, write: if false;
+      }
+    }
+
+    match /recipientEligibilityV2Root/{uid} {
+      allow read, write: if false;
+    }
+
+    match /recipientEligibilityV2Tenants/{tenantId}/users/{uid} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
