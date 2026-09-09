@@ -618,6 +618,10 @@ function hasSyntheticEvidence(record, syntheticRules) {
 
 function relationshipContradictions(record, recordsByIdentity) {
   const contradictions = [...record.classificationEvidence.contradictions];
+  for (const relation of Object.keys(requiredRelationTargets[record.entityType] || {})) {
+    const matches = record.references.filter((reference) => reference.required && reference.relation === relation);
+    if (matches.length > 1) contradictions.push(`required_relation_${relation}_not_singular`);
+  }
   for (const reference of record.references.filter((candidate) => candidate.required)) {
     const target = recordsByIdentity.get(`${reference.targetSourcePath}#${reference.targetSourceKey}`);
     if (!target) continue;
@@ -653,9 +657,15 @@ function sourceSnapshotForPayload(payload) {
     inventorySchemaVersion: payload.inventorySchemaVersion,
     mapperVersion: payload.mapperVersion,
     records: payload.records.map((record) => ({
+      blocked: record.blocked,
+      classifications: record.classifications,
       classificationEvidenceHash: record.provenanceEvidenceHash,
+      containerSourceIdentities: record.containerSourceIdentities,
+      contradictionCodes: record.contradictionCodes,
+      duplicateCandidate: record.duplicateCandidate,
       entityType: record.entityType,
       fieldHash: record.fieldHash,
+      issues: record.issues,
       occurrenceEvidenceHashes: record.occurrenceEvidenceHashes,
       provenance: record.provenance,
       referenceEdges: record.referenceEdges.map((edge) => ({

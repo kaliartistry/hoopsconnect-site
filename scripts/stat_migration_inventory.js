@@ -134,7 +134,7 @@ async function loadManifest(options, argv) {
   if (options.readOnlyAcknowledgement !== acknowledgement) {
     throw new MigrationInventoryError(
       errorCodes.attemptedWriteMode,
-      `Firebase mode requires --acknowledge-read-only=${acknowledgement}.`,
+      'Firebase mode requires an exact project-and-association-bound read-only acknowledgement.',
     );
   }
   if (!manifest.source || manifest.source.associationId !== options.associationId

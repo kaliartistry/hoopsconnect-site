@@ -448,6 +448,25 @@ test('required references enforce target type and blocked dependency eligibility
   )));
   assert.ok(!wrongTypeReport.payload.proposedCreates.some((item) => item.sourceLabel === wrongTypeRecord.sourceLabel));
 
+  const ambiguous = loadFixture();
+  const ambiguousRoster = ambiguous.records.find((record) => record.entityType === 'legacyRosterEntry');
+  const teamB = ambiguous.records.find((record) => record.sourceKey === 'team-b');
+  ambiguousRoster.references.push({
+    ...clone(ambiguousRoster.references[0]),
+    targetSourceKey: teamB.sourceKey,
+    targetSourcePath: teamB.sourcePath,
+  });
+  const ambiguousRecord = dryRun(ambiguous).report.payload.records.find((record) => (
+    record.sourceIdentityHash === inventory.canonicalSha256(
+      `${ambiguousRoster.sourcePath}#${ambiguousRoster.sourceKey}`,
+    )
+  ));
+  assert.equal(ambiguousRecord.blocked, true);
+  assert.ok(ambiguousRecord.issues.some((issue) => (
+    issue.code === inventory.errorCodes.contradictorySource
+      && issue.contradictionCodes.includes('required_relation_team_not_singular')
+  )));
+
   const blockedParent = loadFixture();
   blockedParent.records.find((record) => record.sourceKey === 'team-a')
     .classificationEvidence.privacyRestrictedFields = ['contact'];
@@ -513,6 +532,16 @@ test('all duplicate occurrence evidence is deterministic and source-bound', () =
   tampered.payloadSha256 = inventory.canonicalSha256(tampered.payload);
   assert.throws(
     () => inventory.buildDryRunReport(tampered),
+    (error) => error.code === inventory.errorCodes.nondeterminism,
+  );
+  const eligibilityTampered = clone(first.operatorInventory);
+  const restricted = eligibilityTampered.payload.records.find((candidate) => (
+    candidate.classifications.includes('privacyRestricted')
+  ));
+  restricted.blocked = false;
+  eligibilityTampered.payloadSha256 = inventory.canonicalSha256(eligibilityTampered.payload);
+  assert.throws(
+    () => inventory.buildDryRunReport(eligibilityTampered),
     (error) => error.code === inventory.errorCodes.nondeterminism,
   );
 });
@@ -597,5 +626,69 @@ test('Firebase embedded identity keys must be explicit stable ID fields', async 
       pageSize: 1,
     }),
     (error) => error.code === inventory.errorCodes.malformedSource,
+  );
+  manifest.providerCollections[0].embeddedArrays[0].keyField = 'jerseyId';
+  await assert.rejects(
+    () => firebaseAdapter.loadReadOnlyFirebaseManifest({
+      baseUrl: 'http://127.0.0.1:8080/v1/projects/demo/databases/(default)/documents',
+      fetchImpl: async () => response,
+      manifest,
+      pageSize: 1,
+    }),
+    (error) => error.code === inventory.errorCodes.malformedSource,
+  );
+});
+
+test('Firebase raw response bytes and global read budget fail before over-read', async () => {
+  const oversized = new Response(`${' '.repeat((4 * 1024 * 1024) + 1)}{}`);
+  await assert.rejects(
+    () => firebaseAdapter.readCollection({
+      baseUrl: 'http://127.0.0.1:8080/v1/projects/demo/databases/(default)/documents',
+      bearerToken: null,
+      collectionPath: 'associations/jba/teams',
+      fetchImpl: async () => oversized,
+      pageSize: 1,
+    }),
+    (error) => error.code === inventory.errorCodes.oversizedReport,
+  );
+  let requestedUrl = null;
+  await assert.rejects(
+    () => firebaseAdapter.readCollection({
+      baseUrl: 'http://127.0.0.1:8080/v1/projects/demo/databases/(default)/documents',
+      bearerToken: null,
+      collectionPath: 'associations/jba/teams',
+      fetchImpl: async (url) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({documents: [{name: 'a', fields: {}}, {name: 'b', fields: {}}]}),
+        };
+      },
+      maxDocuments: 1,
+      pageSize: 250,
+    }),
+    (error) => error.code === inventory.errorCodes.oversizedPage,
+  );
+  assert.ok(requestedUrl.includes('pageSize=1'));
+});
+
+test('read-only acknowledgement errors never echo target identifiers', async () => {
+  const options = {
+    associationId: '8765550100',
+    inputPath: fixturePath,
+    mode: 'firebase',
+    pageSize: 25,
+    projectId: 'private-person@example.invalid',
+    readOnlyAcknowledgement: 'wrong',
+  };
+  await assert.rejects(
+    () => cli.loadManifest(options, []),
+    (error) => {
+      const safe = inventory.redactError(error);
+      return error.code === inventory.errorCodes.attemptedWriteMode
+        && !safe.includes(options.associationId)
+        && !safe.includes(options.projectId);
+    },
   );
 });

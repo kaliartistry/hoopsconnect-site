@@ -7,6 +7,7 @@ const MAX_PROVIDER_COLLECTIONS = 100;
 const MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024;
 const PROVIDER_TIMEOUT_MS = 30000;
 const stableEmbeddedKeyField = /^(?:id|[A-Za-z][A-Za-z0-9_]*(?:Id|Key))$/;
+const sensitiveEmbeddedKeyField = /email|phone|mobile|jersey|name|address|contact|guardian|parent|dob|birth/i;
 
 function requirePlainRecord(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -115,17 +116,31 @@ function listDocumentsUrl(baseUrl, collectionPath, pageSize, pageToken) {
   return `${target}?${query.toString()}`;
 }
 
-async function readCollection({baseUrl, bearerToken, collectionPath, fetchImpl, pageSize}) {
+async function readCollection({
+  baseUrl,
+  bearerToken,
+  collectionPath,
+  fetchImpl,
+  maxDocuments = MAX_RECORDS,
+  pageSize,
+}) {
+  if (!Number.isSafeInteger(maxDocuments) || maxDocuments < 1 || maxDocuments > MAX_RECORDS) {
+    throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider record budget is exhausted or invalid.');
+  }
   const documents = [];
   const checkpoints = [];
   const seenPageTokens = new Set();
   let pageToken = null;
   let previousDocumentName = null;
   do {
-    if (checkpoints.length > Math.ceil(MAX_RECORDS / pageSize) + 1) {
+    if (checkpoints.length > Math.ceil(maxDocuments / pageSize) + 1) {
       throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider page bound exceeded.');
     }
-    const url = listDocumentsUrl(baseUrl, collectionPath, pageSize, pageToken);
+    const requestPageSize = Math.min(pageSize, maxDocuments - documents.length);
+    if (requestPageSize < 1) {
+      throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider record budget exceeded.');
+    }
+    const url = listDocumentsUrl(baseUrl, collectionPath, requestPageSize, pageToken);
     const response = await fetchImpl(url, {
       headers: bearerToken ? {Authorization: `Bearer ${bearerToken}`} : {},
       method: 'GET',
@@ -138,12 +153,27 @@ async function readCollection({baseUrl, bearerToken, collectionPath, fetchImpl, 
         `Read-only Firestore request failed with HTTP ${response ? response.status : 'unknown'}.`,
       );
     }
-    const body = await response.json();
-    if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
+    const contentLength = Number(response.headers && response.headers.get
+      ? response.headers.get('content-length')
+      : NaN);
+    if (Number.isFinite(contentLength) && contentLength > MAX_PROVIDER_RESPONSE_BYTES) {
       throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
     }
+    let body;
+    if (typeof response.arrayBuffer === 'function') {
+      const rawBody = Buffer.from(await response.arrayBuffer());
+      if (rawBody.byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
+        throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+      }
+      body = JSON.parse(rawBody.toString('utf8'));
+    } else {
+      body = await response.json();
+      if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
+        throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+      }
+    }
     const page = Array.isArray(body.documents) ? body.documents : [];
-    if (page.length > pageSize) {
+    if (page.length > requestPageSize) {
       throw new MigrationInventoryError(errorCodes.oversizedPage, 'Provider returned an oversized page.');
     }
     for (const document of page) {
@@ -156,7 +186,7 @@ async function readCollection({baseUrl, bearerToken, collectionPath, fetchImpl, 
       }
       previousDocumentName = document.name;
       documents.push(document);
-      if (documents.length > MAX_RECORDS) {
+      if (documents.length > maxDocuments) {
         throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider record bound exceeded.');
       }
     }
@@ -254,7 +284,10 @@ function recordFromDocument(document, spec, associationId) {
 function embeddedRecords(parentRecord, spec) {
   const records = [];
   for (const embeddedSpec of spec.embeddedArrays || []) {
-    if (embeddedSpec.keyField && !stableEmbeddedKeyField.test(embeddedSpec.keyField)) {
+    if (embeddedSpec.keyField && (
+      !stableEmbeddedKeyField.test(embeddedSpec.keyField)
+      || sensitiveEmbeddedKeyField.test(embeddedSpec.keyField)
+    )) {
       throw new MigrationInventoryError(
         errorCodes.malformedSource,
         'Embedded keyField must name an explicit stable ID or key field.',
@@ -332,6 +365,7 @@ async function loadReadOnlyFirebaseManifest({
       bearerToken,
       collectionPath: spec.collectionPath,
       fetchImpl,
+      maxDocuments: MAX_RECORDS - records.length,
       pageSize,
     });
     providerSnapshotMarkers.push({
