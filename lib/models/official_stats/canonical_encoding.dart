@@ -1,9 +1,8 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-import 'package:unorm_dart/unorm_dart.dart' as unicode;
-
 import 'contract_versions.dart';
+import 'unicode_normalization.dart';
 
 /// Deterministic canonical JSON used for hashes, idempotency keys, and fencing.
 ///
@@ -30,7 +29,7 @@ abstract final class OfficialStatCanonicalEncoding {
 
   static Object? _normalize(Object? value) {
     if (value == null || value is bool) return value;
-    if (value is String) return unicode.nfc(value);
+    if (value is String) return OfficialStatUnicodeNormalization.nfc(value);
     // Dart2JS classifies integer-valued JavaScript numbers (including -0) as
     // Dart ints. Normalize zero before the int branch so every runtime emits
     // the contract's one canonical representation: the positive integer 0.

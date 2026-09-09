@@ -1,23 +1,14 @@
 import type {ExplicitFact, GameScope} from "../official_stats_contract";
 
 export const normalizedBoxScoreCalculatorVersion =
-  "hoopsconnect-normalized-box-score-v1" as const;
+  "hoopsconnect-normalized-box-score-v2" as const;
 export const normalizedBoxScoreUnicodeVersion =
-  "official-stat-unicode-nfc-v1" as const;
+  "official-stat-unicode-nfc-v2" as const;
 
 export const playerCountFields = [
-  "twoMade",
-  "twoAttempted",
-  "threeMade",
-  "threeAttempted",
-  "freeMade",
-  "freeAttempted",
-  "offensiveRebounds",
-  "defensiveRebounds",
-  "assists",
-  "steals",
-  "blocks",
-  "turnovers",
+  "twoMade", "twoAttempted", "threeMade", "threeAttempted",
+  "freeMade", "freeAttempted", "offensiveRebounds", "defensiveRebounds",
+  "assists", "steals", "blocks", "turnovers",
 ] as const;
 export type PlayerCountField = typeof playerCountFields[number];
 
@@ -30,13 +21,29 @@ export interface CalculatorProvenance {
   rulesetVersion: string;
 }
 
+export type RulesProfileId = "generic-explicit-v2" | "fiba-2024-reference-v1";
+export type PlayingTimeRoundingProfile =
+  | "nearest-half-up-v1"
+  | "fiba-2024-reference-sheet-v1";
+
+export interface PenaltyAccumulationGroupInput {
+  groupId: string;
+  periodNumbers: number[];
+  penaltyStartsAtFoul: ExplicitFact<number>;
+}
+
 export interface CalculatorRules {
+  rulesProfileId: RulesProfileId;
   regulationPeriodCount: number;
   completedTiesAllowed: boolean;
-  teamFoulPenaltyThresholds: {
-    regulation: ExplicitFact<number>;
-    overtime: ExplicitFact<number>;
+  overtimePolicy: {
+    allowed: boolean;
+    nominalDurationMs: ExplicitFact<number>;
   };
+  teamTimeCapacityMultiplier: ExplicitFact<number>;
+  playingTimeRoundingProfile: PlayingTimeRoundingProfile;
+  exceptionalScoringProfile: "fiba-2024-reference-attribution-v1";
+  penaltyAccumulationGroups: PenaltyAccumulationGroupInput[];
 }
 
 export interface PlayerTimeInput {
@@ -48,7 +55,7 @@ export interface PlayerTimeInput {
     | "notRecorded"
     | "notApplicable";
   timePrecisionMs: ExplicitFact<number>;
-  roundingMode: "nearestHalfUp" | "notApplicable";
+  roundingMode: "nearestHalfUp" | "fiba2024ReferenceSheet" | "notApplicable";
 }
 
 export interface PlayerDepartureInput {
@@ -82,27 +89,43 @@ export interface TeamInput {
   reportedTotals: CountFacts;
 }
 
-export interface PeriodInput {
-  number: number;
-  kind: "regulation" | "overtime";
-  overtimeIndex: ExplicitFact<number>;
-  durationMs: ExplicitFact<number>;
-  homeScore: number;
-  awayScore: number;
-  source: "liveCounter" | "officialSheet" | "historicalEvidence";
-}
+export type PeriodCompletionState =
+  | "completed"
+  | "partial"
+  | "suspended"
+  | "resumedCompleted"
+  | "abandoned"
+  | "adjudicated";
 
 export interface ScorePair {
   home: number;
   away: number;
 }
 
+export interface PeriodInput {
+  number: number;
+  kind: "regulation" | "overtime";
+  overtimeIndex: ExplicitFact<number>;
+  nominalDurationMs: ExplicitFact<number>;
+  elapsedDurationMs: ExplicitFact<number>;
+  completionState: PeriodCompletionState;
+  homeScore: number;
+  awayScore: number;
+  playerCounterPoints: ScorePair;
+  exceptionalScoringPoints: ScorePair;
+  source: "liveCounter" | "officialSheet" | "historicalEvidence";
+}
+
 export interface PlayedScoreAdjustmentInput {
   adjustmentId: string;
   teamEntryId: string;
-  kind: "ownBasket" | "goaltending";
+  violatingTeamEntryId: string;
+  kind: "accidentalOwnBasket" | "defensiveGoaltending";
   points: number;
   periodNumber: ExplicitFact<number>;
+  creditedParticipantId: ExplicitFact<string>;
+  creditedShot: "twoPointMade" | "threePointMade";
+  statisticalTreatment: "includedInPlayerCounters" | "additiveToPlayerCounters";
   evidenceRefs: ExplicitFact<string[]>;
 }
 
@@ -110,15 +133,8 @@ export interface AdministrativeResultInput {
   awardedScore: ExplicitFact<ScorePair>;
   winnerTeamEntryId: ExplicitFact<string>;
   evidenceRefs: ExplicitFact<string[]>;
-  standingsTreatment:
-    | "playedResult"
-    | "awardedResult"
-    | "excluded"
-    | "policyPending";
-  playerStatisticsTreatment:
-    | "includePlayedStatistics"
-    | "exclude"
-    | "policyPending";
+  standingsTreatment: "playedResult" | "awardedResult" | "excluded" | "policyPending";
+  playerStatisticsTreatment: "includePlayedStatistics" | "exclude" | "policyPending";
 }
 
 export interface OfficialScoreInput {
@@ -130,6 +146,7 @@ export interface OfficialScoreInput {
 export interface DisciplineIncidentInput {
   incidentId: string;
   teamEntryId: string;
+  context: "onCourt" | "bench" | "preGame" | "interval";
   chargedPartyKind: "player" | "coach" | "bench" | "team";
   chargedParticipantId: ExplicitFact<string>;
   relatedParticipantId: ExplicitFact<string>;
@@ -143,13 +160,13 @@ export interface DisciplineIncidentInput {
 }
 
 export interface NormalizedBoxScoreInput {
-  schemaVersion: 1;
+  schemaVersion: 2;
   calculatorVersion: typeof normalizedBoxScoreCalculatorVersion;
   canonicalEncodingVersion: "official-stat-canonical-json-v1";
   unicodeNormalizationVersion: typeof normalizedBoxScoreUnicodeVersion;
   scope: GameScope;
   resultDisposition: "played" | "forfeit" | "default" | "annulled" | "otherAdjudicated";
-  statisticsDisposition: "complete";
+  statisticsDisposition: "complete" | "resultOnly" | "excluded";
   provenance: CalculatorProvenance;
   rules: CalculatorRules;
   teams: [TeamInput, TeamInput];
@@ -162,39 +179,21 @@ export interface NormalizedBoxScoreInput {
 }
 
 export const calculatorErrorCodes = [
-  "invalidCanonicalValue",
-  "resourceLimitExceeded",
-  "invalidShape",
-  "unsupportedSchemaVersion",
-  "unsupportedCalculatorVersion",
-  "unsupportedCanonicalEncodingVersion",
-  "unsupportedUnicodeNormalizationVersion",
-  "invalidIdentifier",
-  "invalidString",
-  "invalidNonnegativeSafeInteger",
-  "arithmeticOverflow",
-  "invalidFact",
-  "requiredKnownCount",
-  "invalidTeamStructure",
-  "duplicateParticipant",
-  "participantTeamMismatch",
-  "invalidParticipation",
-  "dnpOrdinaryStat",
-  "invalidTimeProvenance",
-  "timeOutsideGameDuration",
-  "invalidDeparture",
-  "eventClockOutsidePeriod",
-  "makesExceedAttempts",
-  "reportedTeamTotalMismatch",
-  "invalidPeriodSequence",
-  "invalidOvertimeSequence",
-  "playedScorePeriodMismatch",
-  "playedScoreAttributionMismatch",
-  "invalidScoreAdjustment",
-  "invalidDisciplineIncident",
-  "invalidAdministrativeResult",
-  "officialScoreEvidenceRequired",
-  "officialScoreMismatch",
+  "invalidCanonicalValue", "resourceLimitExceeded", "invalidShape",
+  "unsupportedSchemaVersion", "unsupportedCalculatorVersion",
+  "unsupportedCanonicalEncodingVersion", "unsupportedUnicodeNormalizationVersion",
+  "invalidIdentifier", "invalidString", "invalidNonnegativeSafeInteger",
+  "arithmeticOverflow", "invalidFact", "requiredKnownCount",
+  "invalidTeamStructure", "duplicateParticipant", "participantTeamMismatch",
+  "invalidParticipation", "dnpOrdinaryStat", "invalidTimeProvenance",
+  "timeOutsideGameDuration", "invalidDeparture", "departureTimeConflict",
+  "eventClockOutsidePeriod", "makesExceedAttempts", "reportedTeamTotalMismatch",
+  "invalidRulesProfile", "invalidPenaltyPolicy", "invalidPeriodSequence",
+  "invalidPeriodState", "invalidOvertimeSequence", "playedScorePeriodMismatch",
+  "playedScoreAttributionMismatch", "invalidScoreAdjustment",
+  "invalidDisciplineIncident", "playerNotEnteredForIncident",
+  "invalidAdministrativeResult", "invalidNoPlayStatistics",
+  "officialScoreEvidenceRequired", "officialScoreMismatch",
 ] as const;
 export type CalculatorErrorCode = typeof calculatorErrorCodes[number];
 
@@ -211,16 +210,16 @@ export interface CalculatorDiagnostic {
   opponentTurnovers: number;
 }
 
-export type CalculatorRejected = {
+export type CalculatorRejected = Readonly<{
   calculatorVersion: typeof normalizedBoxScoreCalculatorVersion;
-  errors: [CalculatorError];
+  errors: readonly [Readonly<CalculatorError>];
   status: "rejected";
-};
+}>;
 
-export type CalculatorAccepted = {
+export type CalculatorAccepted = Readonly<{
   calculatorVersion: typeof normalizedBoxScoreCalculatorVersion;
   normalizedBoxScore: Readonly<Record<string, unknown>>;
   status: "accepted";
-};
+}>;
 
 export type CalculatorOutcome = CalculatorRejected | CalculatorAccepted;

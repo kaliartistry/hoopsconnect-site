@@ -64,6 +64,12 @@ jobs:
           flutter test --platform chrome test/models/account_deletion/account_deletion_wire_web_test.dart
           flutter test --platform chrome test/models/official_stats/normalized_box_score_calculator_web_test.dart
 
+      - name: Run optimized Dart2JS official-stat conformance
+        run: bash scripts/run_optimized_dart2js_conformance.sh
+
+      - name: Verify pinned Unicode normalization source
+        run: npm --prefix scripts run verify:unicode-normalization
+
       - name: Build Functions
         working-directory: functions
         run: npm run build

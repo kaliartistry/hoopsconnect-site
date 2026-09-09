@@ -1,5 +1,5 @@
 import {
-  canonicalEncode,
+  normalizeOfficialStatText,
   officialStatVersions,
   type ExplicitFact,
 } from "../official_stats_contract";
@@ -12,21 +12,22 @@ import {
   type CalculatorDiagnostic,
   type CalculatorErrorCode,
   type CalculatorOutcome,
-  type NormalizedBoxScoreInput,
   type PlayerCountField,
-  type PlayerLineInput,
   type ScorePair,
-  type TeamInput,
 } from "./types";
 
 export * from "./types";
 
 export const normalizedBoxScoreLimits = {
   maxCanonicalPayloadBytes: 128 * 1024,
+  maxRawTransportBytes: 128 * 1024,
+  maxContainerEntries: 1024,
+  maxObjectKeys: 128,
   maxDepth: 16,
   maxEvidenceRefsPerFact: 64,
   maxIncidents: 512,
   maxNodes: 20_000,
+  maxPenaltyGroups: 64,
   maxPeriods: 64,
   maxPlayedScoreAdjustments: 128,
   maxPlayersPerTeam: 64,
@@ -34,6 +35,7 @@ export const normalizedBoxScoreLimits = {
 } as const;
 
 const opaqueId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const asciiKey = /^[\x21-\x7e]+$/;
 const factStates = new Set(["known", "unknown", "notApplicable"]);
 const playerCounterSet = new Set<string>(playerCountFields);
 
@@ -51,36 +53,71 @@ function utf8Length(value: string): number {
   return Buffer.byteLength(value, "utf8");
 }
 
-function sortedObjectKeys(value: Record<string, unknown>): string[] {
-  return Object.keys(value).sort();
+function safeAdd(left: number, right: number, path: string): number {
+  const result = left + right;
+  if (!Number.isSafeInteger(result)) fail("arithmeticOverflow", path);
+  return result;
 }
 
+function safeMultiply(value: number, multiplier: number, path: string): number {
+  const result = value * multiplier;
+  if (!Number.isSafeInteger(result)) fail("arithmeticOverflow", path);
+  return result;
+}
+
+/**
+ * Performs bounded accounting before sorting or canonicalizing the full graph.
+ * Every scalar is charged by its exact canonical byte length and containers are
+ * width-limited before bounded key arrays are materialized.
+ */
 function preflight(value: unknown): void {
   let nodes = 0;
-  const visit = (current: unknown, path: string, depth: number): void => {
-    nodes += 1;
-    if (nodes > normalizedBoxScoreLimits.maxNodes || depth > normalizedBoxScoreLimits.maxDepth) {
+  let canonicalBytes = 0;
+  const charge = (bytes: number, path: string): void => {
+    canonicalBytes += bytes;
+    if (canonicalBytes > normalizedBoxScoreLimits.maxCanonicalPayloadBytes) {
       fail("resourceLimitExceeded", path);
     }
-    if (current === null || typeof current === "boolean") return;
+  };
+  const visit = (current: unknown, path: string, depth: number): void => {
+    nodes += 1;
+    if (nodes > normalizedBoxScoreLimits.maxNodes ||
+        depth > normalizedBoxScoreLimits.maxDepth) {
+      fail("resourceLimitExceeded", path);
+    }
+    if (current === null) {
+      charge(4, path);
+      return;
+    }
+    if (typeof current === "boolean") {
+      charge(current ? 4 : 5, path);
+      return;
+    }
     if (typeof current === "string") {
       if (utf8Length(current) > normalizedBoxScoreLimits.maxStringBytes) {
         fail("resourceLimitExceeded", path);
       }
+      charge(utf8Length(JSON.stringify(normalizeOfficialStatText(current))), path);
       return;
     }
     if (typeof current === "number") {
       if (!Number.isSafeInteger(current) || current < 0) {
         fail("invalidNonnegativeSafeInteger", path);
       }
+      charge(utf8Length(JSON.stringify(current)), path);
       return;
     }
     if (Array.isArray(current)) {
+      if (current.length > normalizedBoxScoreLimits.maxContainerEntries) {
+        fail("resourceLimitExceeded", path);
+      }
       if (Object.getPrototypeOf(current) !== Array.prototype ||
-          Object.getOwnPropertyNames(current).length !== current.length + 1 ||
           Object.getOwnPropertySymbols(current).length !== 0) {
         fail("invalidCanonicalValue", path);
       }
+      const ownNames = Object.getOwnPropertyNames(current);
+      if (ownNames.length !== current.length + 1) fail("invalidCanonicalValue", path);
+      charge(2 + Math.max(0, current.length - 1), path);
       for (let index = 0; index < current.length; index += 1) {
         const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
         if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
@@ -92,17 +129,25 @@ function preflight(value: unknown): void {
     }
     if (typeof current === "object") {
       const prototype = Object.getPrototypeOf(current);
-      if ((prototype !== Object.prototype && prototype !== null) ||
-          Object.getOwnPropertySymbols(current).length !== 0) {
+      if (prototype !== Object.prototype && prototype !== null) {
         fail("invalidCanonicalValue", path);
       }
       const record = current as Record<string, unknown>;
-      const keys = sortedObjectKeys(record);
-      if (Object.getOwnPropertyNames(record).length !== keys.length) {
+      const enumerableKeys: string[] = [];
+      for (const key in record) {
+        enumerableKeys.push(key);
+        if (enumerableKeys.length > normalizedBoxScoreLimits.maxObjectKeys) {
+          fail("resourceLimitExceeded", path);
+        }
+      }
+      if (Object.getOwnPropertySymbols(record).length !== 0 ||
+          Object.getOwnPropertyNames(record).length !== enumerableKeys.length) {
         fail("invalidCanonicalValue", path);
       }
-      for (const key of keys) {
-        if (!/^[\x21-\x7e]+$/.test(key)) fail("invalidCanonicalValue", path);
+      enumerableKeys.sort();
+      charge(2 + Math.max(0, enumerableKeys.length - 1), path);
+      for (const key of enumerableKeys) {
+        if (!asciiKey.test(key)) fail("invalidCanonicalValue", path);
         if (utf8Length(key) > normalizedBoxScoreLimits.maxStringBytes) {
           fail("resourceLimitExceeded", path);
         }
@@ -110,6 +155,7 @@ function preflight(value: unknown): void {
         if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
           fail("invalidCanonicalValue", `${path}.${key}`);
         }
+        charge(utf8Length(JSON.stringify(key)) + 1, path);
         visit(descriptor.value, `${path}.${key}`, depth + 1);
       }
       return;
@@ -117,18 +163,17 @@ function preflight(value: unknown): void {
     fail("invalidCanonicalValue", path);
   };
   visit(value, "$", 0);
-  let encoded: string;
-  try {
-    encoded = canonicalEncode(value);
-  } catch {
-    fail("invalidCanonicalValue", "$");
-  }
-  if (utf8Length(encoded) > normalizedBoxScoreLimits.maxCanonicalPayloadBytes) {
-    fail("resourceLimitExceeded", "$");
-  }
 }
 
-function record(value: unknown, path: string, exactKeys?: readonly string[]): Record<string, unknown> {
+function sortedObjectKeys(value: Record<string, unknown>): string[] {
+  return Object.keys(value).sort();
+}
+
+function record(
+  value: unknown,
+  path: string,
+  exactKeys?: readonly string[],
+): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     fail("invalidShape", path);
   }
@@ -136,7 +181,8 @@ function record(value: unknown, path: string, exactKeys?: readonly string[]): Re
   if (exactKeys) {
     const actual = sortedObjectKeys(result);
     const expected = [...exactKeys].sort();
-    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    if (actual.length !== expected.length ||
+        actual.some((key, index) => key !== expected[index])) {
       fail("invalidShape", path);
     }
   }
@@ -152,7 +198,7 @@ function textValue(value: unknown, path: string, maxBytes = 512): string {
   if (typeof value !== "string" || value.length === 0 || utf8Length(value) > maxBytes) {
     fail("invalidString", path);
   }
-  const normalized = value.normalize("NFC");
+  const normalized = normalizeOfficialStatText(value);
   if (utf8Length(normalized) > maxBytes) fail("invalidString", path);
   return normalized;
 }
@@ -169,13 +215,25 @@ function nonnegativeInteger(value: unknown, path: string): number {
   return value;
 }
 
+function positiveInteger(value: unknown, path: string): number {
+  const parsed = nonnegativeInteger(value, path);
+  if (parsed === 0) fail("invalidNonnegativeSafeInteger", path);
+  return parsed;
+}
+
 function booleanValue(value: unknown, path: string): boolean {
   if (typeof value !== "boolean") fail("invalidShape", path);
   return value;
 }
 
-function enumeration<T extends string>(value: unknown, path: string, values: readonly T[]): T {
-  if (typeof value !== "string" || !values.includes(value as T)) fail("invalidShape", path);
+function enumeration<T extends string>(
+  value: unknown,
+  path: string,
+  values: readonly T[],
+): T {
+  if (typeof value !== "string" || !values.includes(value as T)) {
+    fail("invalidShape", path);
+  }
   return value as T;
 }
 
@@ -195,13 +253,15 @@ function fact<T>(
     fail("invalidFact", path);
   }
   if (state === "unknown") {
-    if (raw.reasonCode !== null && (typeof raw.reasonCode !== "string" || raw.reasonCode.length === 0)) {
+    if (raw.reasonCode !== null &&
+        (typeof raw.reasonCode !== "string" || raw.reasonCode.length === 0)) {
       fail("invalidFact", `${path}.reasonCode`);
     }
     return {
       state: "unknown",
       value: null,
-      reasonCode: raw.reasonCode === null ? null : textValue(raw.reasonCode, `${path}.reasonCode`),
+      reasonCode: raw.reasonCode === null ?
+        null : textValue(raw.reasonCode, `${path}.reasonCode`),
     };
   }
   if (typeof raw.reasonCode !== "string" || raw.reasonCode.length === 0) {
@@ -212,6 +272,20 @@ function fact<T>(
     value: null,
     reasonCode: textValue(raw.reasonCode, `${path}.reasonCode`),
   };
+}
+
+function countFact(value: unknown, path: string): ExplicitFact<number> {
+  return fact(value, path, nonnegativeInteger);
+}
+
+function knownCount(value: unknown, path: string): number {
+  const parsed = countFact(value, path);
+  if (parsed.state !== "known") fail("requiredKnownCount", path);
+  return parsed.value;
+}
+
+function absentFact(value: ExplicitFact<unknown>, reason: string): boolean {
+  return value.state === "notApplicable" && value.reasonCode === reason;
 }
 
 function validateScope(value: unknown): Record<string, string> {
@@ -228,16 +302,6 @@ function validateScope(value: unknown): Record<string, string> {
   };
 }
 
-function countFact(value: unknown, path: string): ExplicitFact<number> {
-  return fact(value, path, nonnegativeInteger);
-}
-
-function knownCount(value: unknown, path: string): number {
-  const parsed = countFact(value, path);
-  if (parsed.state !== "known") fail("requiredKnownCount", path);
-  return parsed.value;
-}
-
 function stringList(value: unknown, path: string): string[] {
   const raw = array(value, path);
   if (raw.length > normalizedBoxScoreLimits.maxEvidenceRefsPerFact) {
@@ -246,24 +310,16 @@ function stringList(value: unknown, path: string): string[] {
   return raw.map((item, index) => textValue(item, `${path}[${index}]`));
 }
 
+function evidenceFact(value: unknown, path: string): ExplicitFact<string[]> {
+  return fact(value, path, stringList);
+}
+
 function scorePair(value: unknown, path: string): ScorePair {
   const raw = record(value, path, ["away", "home"]);
   return {
-    home: nonnegativeInteger(raw.home, `${path}.home`),
     away: nonnegativeInteger(raw.away, `${path}.away`),
+    home: nonnegativeInteger(raw.home, `${path}.home`),
   };
-}
-
-function safeAdd(left: number, right: number, path: string): number {
-  const result = left + right;
-  if (!Number.isSafeInteger(result)) fail("arithmeticOverflow", path);
-  return result;
-}
-
-function safeMultiply(value: number, multiplier: number, path: string): number {
-  const result = value * multiplier;
-  if (!Number.isSafeInteger(result)) fail("arithmeticOverflow", path);
-  return result;
 }
 
 function zeroCounts(): Record<PlayerCountField, number> {
@@ -274,8 +330,24 @@ function zeroCounts(): Record<PlayerCountField, number> {
 function parseCounts(rawValue: unknown, path: string): Record<PlayerCountField, number> {
   const raw = record(rawValue, path, playerCountFields);
   const result = zeroCounts();
-  for (const field of playerCountFields) result[field] = knownCount(raw[field], `${path}.${field}`);
+  for (const field of playerCountFields) {
+    result[field] = knownCount(raw[field], `${path}.${field}`);
+  }
   return result;
+}
+
+function addCounts(
+  target: Record<PlayerCountField, number>,
+  source: Readonly<Record<PlayerCountField, number>>,
+  path: string,
+): void {
+  for (const field of playerCountFields) {
+    target[field] = safeAdd(target[field], source[field], `${path}.${field}`);
+  }
+}
+
+function isZeroCounts(counts: Readonly<Record<PlayerCountField, number>>): boolean {
+  return playerCountFields.every((field) => counts[field] === 0);
 }
 
 function derivedTotals(
@@ -307,10 +379,12 @@ function derivedTotals(
 function shootingPercentages(
   totals: Readonly<Record<string, number>>,
 ): Record<string, ExplicitFact<Record<string, number>>> {
-  const ratio = (makes: number, attempts: number): ExplicitFact<Record<string, number>> =>
-    attempts === 0 ?
-      {state: "unknown", value: null, reasonCode: "zero_attempts"} :
-      {state: "known", value: {attempts, makes}};
+  const ratio = (
+    makes: number,
+    attempts: number,
+  ): ExplicitFact<Record<string, number>> => attempts === 0 ?
+    {state: "unknown", value: null, reasonCode: "zero_attempts"} :
+    {state: "known", value: {attempts, makes}};
   return {
     field: ratio(totals.fieldMade, totals.fieldAttempted),
     free: ratio(totals.freeMade, totals.freeAttempted),
@@ -319,41 +393,161 @@ function shootingPercentages(
   };
 }
 
-function addCounts(
-  target: Record<PlayerCountField, number>,
-  source: Readonly<Record<PlayerCountField, number>>,
-  path: string,
-): void {
-  for (const field of playerCountFields) {
-    target[field] = safeAdd(target[field], source[field], `${path}.${field}`);
+interface ParsedRules {
+  completedTiesAllowed: boolean;
+  exceptionalScoringProfile: "fiba-2024-reference-attribution-v1";
+  overtimePolicy: {
+    allowed: boolean;
+    nominalDurationMs: ExplicitFact<number>;
+  };
+  penaltyAccumulationGroups: Array<{
+    groupId: string;
+    penaltyStartsAtFoul: ExplicitFact<number>;
+    periodNumbers: number[];
+  }>;
+  playingTimeRoundingProfile:
+    | "nearest-half-up-v1"
+    | "fiba-2024-reference-sheet-v1";
+  regulationPeriodCount: number;
+  rulesProfileId: "generic-explicit-v2" | "fiba-2024-reference-v1";
+  teamTimeCapacityMultiplier: ExplicitFact<number>;
+}
+
+function validateRules(value: unknown): ParsedRules {
+  const raw = record(value, "$.rules", [
+    "completedTiesAllowed", "exceptionalScoringProfile", "overtimePolicy",
+    "penaltyAccumulationGroups", "playingTimeRoundingProfile",
+    "regulationPeriodCount", "rulesProfileId", "teamTimeCapacityMultiplier",
+  ]);
+  const rulesProfileId = enumeration(raw.rulesProfileId, "$.rules.rulesProfileId", [
+    "generic-explicit-v2", "fiba-2024-reference-v1",
+  ] as const);
+  const regulationPeriodCount = positiveInteger(
+    raw.regulationPeriodCount,
+    "$.rules.regulationPeriodCount",
+  );
+  const completedTiesAllowed = booleanValue(
+    raw.completedTiesAllowed,
+    "$.rules.completedTiesAllowed",
+  );
+  const overtimeRaw = record(raw.overtimePolicy, "$.rules.overtimePolicy", [
+    "allowed", "nominalDurationMs",
+  ]);
+  const overtimePolicy = {
+    allowed: booleanValue(overtimeRaw.allowed, "$.rules.overtimePolicy.allowed"),
+    nominalDurationMs: countFact(
+      overtimeRaw.nominalDurationMs,
+      "$.rules.overtimePolicy.nominalDurationMs",
+    ),
+  };
+  if (overtimePolicy.allowed) {
+    if (overtimePolicy.nominalDurationMs.state !== "known" ||
+        overtimePolicy.nominalDurationMs.value === 0) {
+      fail("invalidRulesProfile", "$.rules.overtimePolicy.nominalDurationMs");
+    }
+  } else if (!absentFact(overtimePolicy.nominalDurationMs, "overtime_not_allowed")) {
+    fail("invalidRulesProfile", "$.rules.overtimePolicy.nominalDurationMs");
   }
+  const teamTimeCapacityMultiplier = countFact(
+    raw.teamTimeCapacityMultiplier,
+    "$.rules.teamTimeCapacityMultiplier",
+  );
+  if (teamTimeCapacityMultiplier.state === "known" &&
+      teamTimeCapacityMultiplier.value === 0) {
+    fail("invalidRulesProfile", "$.rules.teamTimeCapacityMultiplier");
+  }
+  const playingTimeRoundingProfile = enumeration(
+    raw.playingTimeRoundingProfile,
+    "$.rules.playingTimeRoundingProfile",
+    ["nearest-half-up-v1", "fiba-2024-reference-sheet-v1"] as const,
+  );
+  const exceptionalScoringProfile = enumeration(
+    raw.exceptionalScoringProfile,
+    "$.rules.exceptionalScoringProfile",
+    ["fiba-2024-reference-attribution-v1"] as const,
+  );
+  const groupsRaw = array(raw.penaltyAccumulationGroups, "$.rules.penaltyAccumulationGroups");
+  if (groupsRaw.length > normalizedBoxScoreLimits.maxPenaltyGroups) {
+    fail("resourceLimitExceeded", "$.rules.penaltyAccumulationGroups");
+  }
+  const groupIds = new Set<string>();
+  const penaltyAccumulationGroups = groupsRaw.map((groupValue, index) => {
+    const path = `$.rules.penaltyAccumulationGroups[${index}]`;
+    const group = record(groupValue, path, [
+      "groupId", "penaltyStartsAtFoul", "periodNumbers",
+    ]);
+    const groupId = identifier(group.groupId, `${path}.groupId`);
+    if (groupIds.has(groupId)) fail("invalidPenaltyPolicy", `${path}.groupId`);
+    groupIds.add(groupId);
+    const periodValues = array(group.periodNumbers, `${path}.periodNumbers`);
+    if (periodValues.length === 0 || periodValues.length > normalizedBoxScoreLimits.maxPeriods) {
+      fail("invalidPenaltyPolicy", `${path}.periodNumbers`);
+    }
+    const periodNumbers = periodValues.map((number, numberIndex) =>
+      positiveInteger(number, `${path}.periodNumbers[${numberIndex}]`));
+    for (let i = 1; i < periodNumbers.length; i += 1) {
+      if (periodNumbers[i] <= periodNumbers[i - 1]) {
+        fail("invalidPenaltyPolicy", `${path}.periodNumbers`);
+      }
+    }
+    const penaltyStartsAtFoul = countFact(
+      group.penaltyStartsAtFoul,
+      `${path}.penaltyStartsAtFoul`,
+    );
+    if (penaltyStartsAtFoul.state === "notApplicable" ||
+        (penaltyStartsAtFoul.state === "known" && penaltyStartsAtFoul.value === 0)) {
+      fail("invalidPenaltyPolicy", `${path}.penaltyStartsAtFoul`);
+    }
+    return {groupId, penaltyStartsAtFoul, periodNumbers};
+  });
+  if (rulesProfileId === "fiba-2024-reference-v1") {
+    if (regulationPeriodCount !== 4 || completedTiesAllowed ||
+        !overtimePolicy.allowed ||
+        overtimePolicy.nominalDurationMs.state !== "known" ||
+        overtimePolicy.nominalDurationMs.value !== 300000 ||
+        teamTimeCapacityMultiplier.state !== "known" ||
+        teamTimeCapacityMultiplier.value !== 5 ||
+        playingTimeRoundingProfile !== "fiba-2024-reference-sheet-v1") {
+      fail("invalidRulesProfile", "$.rules");
+    }
+  }
+  return {
+    completedTiesAllowed,
+    exceptionalScoringProfile,
+    overtimePolicy,
+    penaltyAccumulationGroups,
+    playingTimeRoundingProfile,
+    regulationPeriodCount,
+    rulesProfileId,
+    teamTimeCapacityMultiplier,
+  };
 }
 
-function isZeroCounts(counts: Readonly<Record<PlayerCountField, number>>): boolean {
-  return playerCountFields.every((field) => counts[field] === 0);
-}
-
-function absentFact(value: ExplicitFact<unknown>, reason: string): boolean {
-  return value.state === "notApplicable" && value.reasonCode === reason;
+interface ParsedTime extends Record<string, unknown> {
+  playedTimeMs: ExplicitFact<number>;
+  roundingMode: string;
+  timePrecisionMs: ExplicitFact<number>;
+  timeSource: string;
 }
 
 function validateTime(
   rawValue: unknown,
   path: string,
   enteredPlay: boolean,
-): Record<string, unknown> {
+  roundingProfile: ParsedRules["playingTimeRoundingProfile"],
+): ParsedTime {
   const raw = record(rawValue, path, [
     "playedTimeMs", "roundingMode", "timePrecisionMs", "timeSource",
   ]);
   const playedTimeMs = countFact(raw.playedTimeMs, `${path}.playedTimeMs`);
   const timePrecisionMs = countFact(raw.timePrecisionMs, `${path}.timePrecisionMs`);
   const timeSource = enumeration(raw.timeSource, `${path}.timeSource`, [
-    "liveClock", "officialSheetExact", "officialSheetRounded", "notRecorded", "notApplicable",
+    "liveClock", "officialSheetExact", "officialSheetRounded", "notRecorded",
+    "notApplicable",
   ] as const);
   const roundingMode = enumeration(raw.roundingMode, `${path}.roundingMode`, [
-    "nearestHalfUp", "notApplicable",
+    "nearestHalfUp", "fiba2024ReferenceSheet", "notApplicable",
   ] as const);
-
   if (!enteredPlay) {
     if (timeSource !== "notApplicable" || roundingMode !== "notApplicable" ||
         !absentFact(playedTimeMs, "did_not_enter") ||
@@ -368,7 +562,6 @@ function validateTime(
       timeSource,
     };
   }
-
   if (timeSource === "notRecorded") {
     if (playedTimeMs.state !== "unknown" || roundingMode !== "notApplicable" ||
         !absentFact(timePrecisionMs, "no_time_source")) {
@@ -382,72 +575,72 @@ function validateTime(
       timeSource,
     };
   }
-
   if (timeSource === "notApplicable" || playedTimeMs.state !== "known" ||
       timePrecisionMs.state !== "known" || timePrecisionMs.value === 0) {
     fail("invalidTimeProvenance", path);
   }
-  const played = playedTimeMs.value;
-  const precision = timePrecisionMs.value;
   if (timeSource === "officialSheetRounded") {
-    if (roundingMode !== "nearestHalfUp" || played % precision !== 0) {
+    const expectedMode = roundingProfile === "nearest-half-up-v1" ?
+      "nearestHalfUp" : "fiba2024ReferenceSheet";
+    if (roundingMode !== expectedMode || playedTimeMs.value % timePrecisionMs.value !== 0) {
       fail("invalidTimeProvenance", path);
     }
-    const lowerInclusive = Math.max(0, played - Math.floor(precision / 2));
-    const upperExclusive = safeAdd(played, Math.ceil(precision / 2), path);
-    return {
-      playedTimeMs,
-      possibleIntervalMs: {state: "known", value: {lowerInclusive, upperExclusive}},
-      roundingMode,
-      timePrecisionMs,
-      timeSource,
-    };
+    if (roundingProfile === "fiba-2024-reference-sheet-v1" &&
+        timePrecisionMs.value !== 60000) {
+      fail("invalidTimeProvenance", `${path}.timePrecisionMs`);
+    }
+  } else if (roundingMode !== "notApplicable") {
+    fail("invalidTimeProvenance", path);
   }
-  if (roundingMode !== "notApplicable") fail("invalidTimeProvenance", path);
-  return {
-    playedTimeMs,
-    possibleIntervalMs: {
-      state: "known",
-      value: {lowerInclusive: played, upperExclusive: safeAdd(played, precision, path)},
-    },
-    roundingMode,
-    timePrecisionMs,
-    timeSource,
-  };
+  return {playedTimeMs, roundingMode, timePrecisionMs, timeSource};
 }
 
 function validateDeparture(rawValue: unknown, path: string): Record<string, unknown> {
-  const raw = record(rawValue, path, ["clockRemainingMs", "evidenceRefs", "kind", "periodNumber"]);
+  const raw = record(rawValue, path, [
+    "clockRemainingMs", "evidenceRefs", "kind", "periodNumber",
+  ]);
   const kind = enumeration(raw.kind, `${path}.kind`, [
     "none", "fouledOut", "ejected", "injured", "other",
   ] as const);
   const periodNumber = fact(raw.periodNumber, `${path}.periodNumber`, nonnegativeInteger);
-  const clockRemainingMs = fact(raw.clockRemainingMs, `${path}.clockRemainingMs`, nonnegativeInteger);
-  const evidenceRefs = fact(raw.evidenceRefs, `${path}.evidenceRefs`, stringList);
+  const clockRemainingMs = fact(
+    raw.clockRemainingMs,
+    `${path}.clockRemainingMs`,
+    nonnegativeInteger,
+  );
+  const evidenceRefs = evidenceFact(raw.evidenceRefs, `${path}.evidenceRefs`);
   if (kind === "none") {
     if (!absentFact(periodNumber, "no_departure") ||
         !absentFact(clockRemainingMs, "no_departure") ||
-        !absentFact(evidenceRefs, "no_departure")) fail("invalidDeparture", path);
+        !absentFact(evidenceRefs, "no_departure")) {
+      fail("invalidDeparture", path);
+    }
   } else {
-    if (periodNumber.state === "notApplicable" || clockRemainingMs.state === "notApplicable" ||
-        evidenceRefs.state !== "known") fail("invalidDeparture", path);
-    if (periodNumber.state === "known" && periodNumber.value === 0) fail("invalidDeparture", path);
-    if (evidenceRefs.state === "known" && evidenceRefs.value.length === 0) {
-      fail("invalidDeparture", `${path}.evidenceRefs`);
+    if (periodNumber.state === "notApplicable" ||
+        clockRemainingMs.state === "notApplicable" ||
+        evidenceRefs.state !== "known" || evidenceRefs.value.length === 0 ||
+        (periodNumber.state === "known" && periodNumber.value === 0)) {
+      fail("invalidDeparture", path);
     }
   }
   return {clockRemainingMs, evidenceRefs, kind, periodNumber};
+}
+
+interface TeamResult {
+  counts: Record<PlayerCountField, number>;
+  output: Record<string, unknown>;
 }
 
 function validatePlayer(
   rawValue: unknown,
   path: string,
   teamEntryId: string,
-): {input: PlayerLineInput; counts: Record<PlayerCountField, number>; output: Record<string, unknown>} {
+  roundingProfile: ParsedRules["playingTimeRoundingProfile"],
+): {counts: Record<PlayerCountField, number>; output: Record<string, unknown>} {
   const raw = record(rawValue, path, [
     "counts", "departure", "enteredPlay", "participantId", "participationStatus",
-    "participationReasonCode", "playerId", "rosterMembershipId", "rosterMembershipVersionId", "starter",
-    "teamEntryId", "time",
+    "participationReasonCode", "playerId", "rosterMembershipId",
+    "rosterMembershipVersionId", "starter", "teamEntryId", "time",
   ]);
   const participantId = identifier(raw.participantId, `${path}.participantId`);
   const playerId = identifier(raw.playerId, `${path}.playerId`);
@@ -462,9 +655,7 @@ function validatePlayer(
     "active", "dnp", "inactive",
   ] as const);
   const enteredPlay = booleanValue(raw.enteredPlay, `${path}.enteredPlay`);
-  if ((participationStatus === "active") !== enteredPlay) {
-    fail("invalidParticipation", path);
-  }
+  if ((participationStatus === "active") !== enteredPlay) fail("invalidParticipation", path);
   const participationReasonCode = fact(
     raw.participationReasonCode,
     `${path}.participationReasonCode`,
@@ -487,14 +678,14 @@ function validatePlayer(
   if (counts.threeMade > counts.threeAttempted) {
     fail("makesExceedAttempts", `${path}.counts.threeMade`);
   }
-  if (counts.freeMade > counts.freeAttempted) fail("makesExceedAttempts", `${path}.counts.freeMade`);
-  const time = validateTime(raw.time, `${path}.time`, enteredPlay);
+  if (counts.freeMade > counts.freeAttempted) {
+    fail("makesExceedAttempts", `${path}.counts.freeMade`);
+  }
+  const time = validateTime(raw.time, `${path}.time`, enteredPlay, roundingProfile);
   const departure = validateDeparture(raw.departure, `${path}.departure`);
-  if (!enteredPlay && (departure.kind as string) !== "none") fail("invalidDeparture", `${path}.departure`);
-  const input = rawValue as PlayerLineInput;
+  if (!enteredPlay && departure.kind !== "none") fail("invalidDeparture", `${path}.departure`);
   const totals = derivedTotals(counts);
   return {
-    input,
     counts,
     output: {
       departure,
@@ -506,11 +697,11 @@ function validatePlayer(
       playerId,
       rosterMembershipId,
       rosterMembershipVersionId,
+      shootingPercentages: shootingPercentages(totals),
       starter,
       teamEntryId,
       time,
       totals,
-      shootingPercentages: shootingPercentages(totals),
     },
   };
 }
@@ -520,7 +711,8 @@ function validateTeam(
   path: string,
   seenParticipants: Set<string>,
   seenPlayers: Set<string>,
-): {input: TeamInput; counts: Record<PlayerCountField, number>; output: Record<string, unknown>} {
+  roundingProfile: ParsedRules["playingTimeRoundingProfile"],
+): TeamResult {
   const raw = record(rawValue, path, ["players", "reportedTotals", "side", "teamEntryId", "teamOnly"]);
   const teamEntryId = identifier(raw.teamEntryId, `${path}.teamEntryId`);
   const side = enumeration(raw.side, `${path}.side`, ["home", "away"] as const);
@@ -531,13 +723,19 @@ function validateTeam(
   }
   const counts = zeroCounts();
   const players = playerValues.map((player, index) => {
-    const parsed = validatePlayer(player, `${path}.players[${index}]`, teamEntryId);
-    if (seenParticipants.has(parsed.output.participantId as string) ||
-        seenPlayers.has(parsed.output.playerId as string)) {
+    const parsed = validatePlayer(
+      player,
+      `${path}.players[${index}]`,
+      teamEntryId,
+      roundingProfile,
+    );
+    const participantId = parsed.output.participantId as string;
+    const playerId = parsed.output.playerId as string;
+    if (seenParticipants.has(participantId) || seenPlayers.has(playerId)) {
       fail("duplicateParticipant", `${path}.players[${index}]`);
     }
-    seenParticipants.add(parsed.output.participantId as string);
-    seenPlayers.add(parsed.output.playerId as string);
+    seenParticipants.add(participantId);
+    seenPlayers.add(playerId);
     addCounts(counts, parsed.counts, `${path}.players`);
     return parsed.output;
   });
@@ -545,8 +743,8 @@ function validateTeam(
     "defensiveRebounds", "offensiveRebounds", "turnovers",
   ]);
   const teamOnly = {
-    offensiveRebounds: knownCount(teamOnlyRaw.offensiveRebounds, `${path}.teamOnly.offensiveRebounds`),
     defensiveRebounds: knownCount(teamOnlyRaw.defensiveRebounds, `${path}.teamOnly.defensiveRebounds`),
+    offensiveRebounds: knownCount(teamOnlyRaw.offensiveRebounds, `${path}.teamOnly.offensiveRebounds`),
     turnovers: knownCount(teamOnlyRaw.turnovers, `${path}.teamOnly.turnovers`),
   };
   counts.offensiveRebounds = safeAdd(
@@ -568,12 +766,11 @@ function validateTeam(
   }
   const totals = derivedTotals(counts);
   return {
-    input: rawValue as TeamInput,
     counts,
     output: {
       players,
-      side,
       shootingPercentages: shootingPercentages(totals),
+      side,
       teamEntryId,
       teamOnly,
       totals,
@@ -581,75 +778,281 @@ function validateTeam(
   };
 }
 
+interface PeriodResult {
+  counterPoints: ScorePair;
+  periods: Record<string, unknown>[];
+  score: ScorePair;
+  totalElapsedMs: ExplicitFact<number>;
+}
+
 function validatePeriods(
   rawValue: unknown,
-  regulationPeriodCount: number,
-  requiresCompleteRegulation: boolean,
-): {periods: Record<string, unknown>[]; score: ScorePair} {
+  rules: ParsedRules,
+  requiresCompletePlay: boolean,
+): PeriodResult {
   const rawPeriods = array(rawValue, "$.periods");
   if (rawPeriods.length > normalizedBoxScoreLimits.maxPeriods) {
     fail("resourceLimitExceeded", "$.periods");
   }
-  if (requiresCompleteRegulation && rawPeriods.length < regulationPeriodCount) {
+  if (requiresCompletePlay && rawPeriods.length < rules.regulationPeriodCount) {
     fail("invalidPeriodSequence", "$.periods");
   }
-  const score = {home: 0, away: 0};
+  const score: ScorePair = {away: 0, home: 0};
+  const counterPoints: ScorePair = {away: 0, home: 0};
+  let totalElapsed: number | null = 0;
+  let cumulativeHome = 0;
+  let cumulativeAway = 0;
   const periods = rawPeriods.map((value, index) => {
     const path = `$.periods[${index}]`;
     const raw = record(value, path, [
-      "awayScore", "durationMs", "homeScore", "kind", "number", "overtimeIndex", "source",
+      "awayScore", "completionState", "elapsedDurationMs",
+      "exceptionalScoringPoints", "homeScore", "kind", "nominalDurationMs",
+      "number", "overtimeIndex", "playerCounterPoints", "source",
     ]);
-    const number = nonnegativeInteger(raw.number, `${path}.number`);
+    const number = positiveInteger(raw.number, `${path}.number`);
     if (number !== index + 1) fail("invalidPeriodSequence", `${path}.number`);
     const kind = enumeration(raw.kind, `${path}.kind`, ["regulation", "overtime"] as const);
     const overtimeIndex = fact(raw.overtimeIndex, `${path}.overtimeIndex`, nonnegativeInteger);
-    if (number <= regulationPeriodCount) {
+    if (number <= rules.regulationPeriodCount) {
       if (kind !== "regulation" || !absentFact(overtimeIndex, "regulation_period")) {
         fail("invalidPeriodSequence", path);
       }
     } else {
-      const expectedOvertime = number - regulationPeriodCount;
-      if (kind !== "overtime" || overtimeIndex.state !== "known" ||
-          overtimeIndex.value !== expectedOvertime) {
+      const expectedOvertime = number - rules.regulationPeriodCount;
+      if (!rules.overtimePolicy.allowed || kind !== "overtime" ||
+          overtimeIndex.state !== "known" || overtimeIndex.value !== expectedOvertime) {
         fail("invalidOvertimeSequence", path);
       }
     }
-    const durationMs = countFact(raw.durationMs, `${path}.durationMs`);
-    if (durationMs.state === "known" && durationMs.value === 0) {
-      fail("invalidPeriodSequence", `${path}.durationMs`);
+    const nominalDurationMs = countFact(raw.nominalDurationMs, `${path}.nominalDurationMs`);
+    if (nominalDurationMs.state !== "known" || nominalDurationMs.value === 0) {
+      fail("invalidPeriodState", `${path}.nominalDurationMs`);
+    }
+    if (kind === "overtime" &&
+        (rules.overtimePolicy.nominalDurationMs.state !== "known" ||
+         nominalDurationMs.value !== rules.overtimePolicy.nominalDurationMs.value)) {
+      fail("invalidOvertimeSequence", `${path}.nominalDurationMs`);
+    }
+    const elapsedDurationMs = countFact(raw.elapsedDurationMs, `${path}.elapsedDurationMs`);
+    const completionState = enumeration(raw.completionState, `${path}.completionState`, [
+      "completed", "partial", "suspended", "resumedCompleted", "abandoned", "adjudicated",
+    ] as const);
+    if (completionState === "completed" || completionState === "resumedCompleted") {
+      if (elapsedDurationMs.state !== "known" ||
+          elapsedDurationMs.value !== nominalDurationMs.value) {
+        fail("invalidPeriodState", `${path}.elapsedDurationMs`);
+      }
+    } else {
+      if (elapsedDurationMs.state === "notApplicable" ||
+          (elapsedDurationMs.state === "known" &&
+           elapsedDurationMs.value > nominalDurationMs.value)) {
+        fail("invalidPeriodState", `${path}.elapsedDurationMs`);
+      }
+      if (index !== rawPeriods.length - 1) fail("invalidPeriodState", `${path}.completionState`);
+    }
+    if (requiresCompletePlay && completionState !== "completed" &&
+        completionState !== "resumedCompleted") {
+      fail("invalidPeriodState", `${path}.completionState`);
     }
     const homeScore = nonnegativeInteger(raw.homeScore, `${path}.homeScore`);
     const awayScore = nonnegativeInteger(raw.awayScore, `${path}.awayScore`);
+    const playerCounterPoints = scorePair(raw.playerCounterPoints, `${path}.playerCounterPoints`);
+    const exceptionalScoringPoints = scorePair(
+      raw.exceptionalScoringPoints,
+      `${path}.exceptionalScoringPoints`,
+    );
+    if (playerCounterPoints.home !== homeScore || playerCounterPoints.away !== awayScore ||
+        exceptionalScoringPoints.home > playerCounterPoints.home ||
+        exceptionalScoringPoints.away > playerCounterPoints.away) {
+      fail("playedScoreAttributionMismatch", path);
+    }
     score.home = safeAdd(score.home, homeScore, "$.periods.homeScore");
     score.away = safeAdd(score.away, awayScore, "$.periods.awayScore");
+    counterPoints.home = safeAdd(
+      counterPoints.home,
+      playerCounterPoints.home,
+      "$.periods.playerCounterPoints.home",
+    );
+    counterPoints.away = safeAdd(
+      counterPoints.away,
+      playerCounterPoints.away,
+      "$.periods.playerCounterPoints.away",
+    );
+    cumulativeHome = safeAdd(cumulativeHome, homeScore, "$.periods.homeScore");
+    cumulativeAway = safeAdd(cumulativeAway, awayScore, "$.periods.awayScore");
+    if (kind === "overtime" && index < rawPeriods.length - 1 &&
+        cumulativeHome !== cumulativeAway) {
+      fail("invalidOvertimeSequence", path);
+    }
+    if (number === rules.regulationPeriodCount && rawPeriods.length > number &&
+        cumulativeHome !== cumulativeAway) {
+      fail("invalidOvertimeSequence", path);
+    }
+    if (totalElapsed !== null) {
+      if (elapsedDurationMs.state === "known") {
+        totalElapsed = safeAdd(totalElapsed, elapsedDurationMs.value, "$.periods.elapsedDurationMs");
+      } else {
+        totalElapsed = null;
+      }
+    }
     const source = enumeration(raw.source, `${path}.source`, [
       "liveCounter", "officialSheet", "historicalEvidence",
     ] as const);
-    return {awayScore, durationMs, homeScore, kind, number, overtimeIndex, source};
+    return {
+      awayScore,
+      completionState,
+      elapsedDurationMs,
+      exceptionalScoringPoints,
+      homeScore,
+      kind,
+      nominalDurationMs,
+      number,
+      overtimeIndex,
+      playerCounterPoints,
+      source,
+    };
   });
-  return {periods, score};
+  return {
+    counterPoints,
+    periods,
+    score,
+    totalElapsedMs: totalElapsed === null ?
+      {state: "unknown", value: null, reasonCode: "elapsed_duration_unknown"} :
+      {state: "known", value: totalElapsed},
+  };
+}
+
+interface PenaltyGroup {
+  groupId: string;
+  penaltyStartsAtFoul: ExplicitFact<number>;
+  periodNumbers: number[];
+}
+
+function validatePenaltyGroups(
+  rules: ParsedRules,
+  periods: readonly Record<string, unknown>[],
+): {groups: PenaltyGroup[]; groupByPeriod: Map<number, PenaltyGroup>} {
+  const groupByPeriod = new Map<number, PenaltyGroup>();
+  for (let groupIndex = 0; groupIndex < rules.penaltyAccumulationGroups.length; groupIndex += 1) {
+    const group = rules.penaltyAccumulationGroups[groupIndex];
+    for (const periodNumber of group.periodNumbers) {
+      if (periodNumber > periods.length || groupByPeriod.has(periodNumber)) {
+        fail(
+          "invalidPenaltyPolicy",
+          `$.rules.penaltyAccumulationGroups[${groupIndex}].periodNumbers`,
+        );
+      }
+      groupByPeriod.set(periodNumber, group);
+    }
+  }
+  for (let number = 1; number <= periods.length; number += 1) {
+    if (!groupByPeriod.has(number)) {
+      fail("invalidPenaltyPolicy", "$.rules.penaltyAccumulationGroups");
+    }
+  }
+  if (periods.length === 0 && rules.penaltyAccumulationGroups.length !== 0) {
+    fail("invalidPenaltyPolicy", "$.rules.penaltyAccumulationGroups");
+  }
+  if (rules.rulesProfileId === "fiba-2024-reference-v1") {
+    const expected = periods.length === 0 ? [] : [
+      [1],
+      ...(periods.length >= 2 ? [[2]] : []),
+      ...(periods.length >= 3 ? [[3]] : []),
+      ...(periods.length >= 4 ? [Array.from({length: periods.length - 3}, (_, index) => index + 4)] : []),
+    ];
+    if (rules.penaltyAccumulationGroups.length !== expected.length) {
+      fail("invalidPenaltyPolicy", "$.rules.penaltyAccumulationGroups");
+    }
+    for (let index = 0; index < expected.length; index += 1) {
+      const group = rules.penaltyAccumulationGroups[index];
+      if (group.periodNumbers.length !== expected[index].length ||
+          group.periodNumbers.some((number, numberIndex) => number !== expected[index][numberIndex]) ||
+          group.penaltyStartsAtFoul.state !== "known" ||
+          group.penaltyStartsAtFoul.value !== 5) {
+        fail("invalidPenaltyPolicy", `$.rules.penaltyAccumulationGroups[${index}]`);
+      }
+    }
+  }
+  return {groups: rules.penaltyAccumulationGroups, groupByPeriod};
+}
+
+function roundedTimeInterval(
+  time: ParsedTime,
+  profile: ParsedRules["playingTimeRoundingProfile"],
+  totalElapsedMs: ExplicitFact<number>,
+  path: string,
+): ExplicitFact<Record<string, number>> {
+  if (time.possibleIntervalMs) {
+    return time.possibleIntervalMs as ExplicitFact<Record<string, number>>;
+  }
+  const played = (time.playedTimeMs as {state: "known"; value: number}).value;
+  const precision = (time.timePrecisionMs as {state: "known"; value: number}).value;
+  if (time.timeSource !== "officialSheetRounded") {
+    return {
+      state: "known",
+      value: {
+        lowerInclusive: played,
+        upperExclusive: safeAdd(played, precision, path),
+      },
+    };
+  }
+  if (profile === "nearest-half-up-v1") {
+    return {
+      state: "known",
+      value: {
+        lowerInclusive: Math.max(0, played - Math.floor(precision / 2)),
+        upperExclusive: safeAdd(played, Math.ceil(precision / 2), path),
+      },
+    };
+  }
+  if (totalElapsedMs.state !== "known") fail("invalidTimeProvenance", path);
+  const maximum = totalElapsedMs.value;
+  if (played === 0 || played > maximum || precision !== 60000) {
+    fail("invalidTimeProvenance", path);
+  }
+  let lowerInclusive = Math.max(1, played - 30000);
+  let upperExclusive = Math.min(safeAdd(maximum, 1, path), safeAdd(played, 30000, path));
+  if (played === 60000) lowerInclusive = 1;
+  if (maximum % 60000 === 0 && played === maximum - 60000) {
+    lowerInclusive = Math.max(1, played - 30000);
+    upperExclusive = maximum;
+  }
+  if (played === maximum) {
+    lowerInclusive = maximum;
+    upperExclusive = safeAdd(maximum, 1, path);
+  }
+  if (lowerInclusive >= upperExclusive) fail("invalidTimeProvenance", path);
+  return {state: "known", value: {lowerInclusive, upperExclusive}};
+}
+
+function knownElapsedBefore(
+  periods: readonly Record<string, unknown>[],
+  periodNumber: number,
+): number | null {
+  let elapsed = 0;
+  for (let index = 0; index < periodNumber - 1; index += 1) {
+    const factValue = periods[index].elapsedDurationMs as ExplicitFact<number>;
+    if (factValue.state !== "known") return null;
+    elapsed = safeAdd(elapsed, factValue.value, "$.periods.elapsedDurationMs");
+  }
+  return elapsed;
 }
 
 function validatePlayerTimeline(
-  teams: readonly {output: Record<string, unknown>}[],
+  teams: readonly TeamResult[],
   periods: readonly Record<string, unknown>[],
+  totalElapsedMs: ExplicitFact<number>,
+  rules: ParsedRules,
 ): void {
-  let elapsedMs: number | null = 0;
-  for (const period of periods) {
-    const duration = period.durationMs as ExplicitFact<number>;
-    if (duration.state !== "known") {
-      elapsedMs = null;
-      break;
-    }
-    elapsedMs = safeAdd(elapsedMs!, duration.value, "$.periods.durationMs");
-  }
   for (const team of teams) {
     for (const player of team.output.players as Record<string, unknown>[]) {
-      const time = player.time as Record<string, unknown>;
-      const interval = time.possibleIntervalMs as ExplicitFact<Record<string, number>>;
-      if (elapsedMs !== null && interval.state === "known" &&
-          interval.value.lowerInclusive > elapsedMs) {
-        fail("timeOutsideGameDuration", `$.participants.${player.participantId}.time`);
+      const time = player.time as ParsedTime;
+      const path = `$.participants.${player.participantId}.time`;
+      const interval = roundedTimeInterval(time, rules.playingTimeRoundingProfile, totalElapsedMs, path);
+      time.possibleIntervalMs = interval;
+      if (totalElapsedMs.state === "known" && interval.state === "known" &&
+          interval.value.lowerInclusive > totalElapsedMs.value) {
+        fail("timeOutsideGameDuration", path);
       }
       const departure = player.departure as Record<string, unknown>;
       if (departure.kind === "none") continue;
@@ -658,41 +1061,200 @@ function validatePlayerTimeline(
       if (clock.state === "known" && periodNumber.state !== "known") {
         fail("eventClockOutsidePeriod", `$.participants.${player.participantId}.departure`);
       }
-      if (periodNumber.state === "known") {
-        if (periodNumber.value === 0 || periodNumber.value > periods.length) {
-          fail("invalidDeparture", `$.participants.${player.participantId}.departure.periodNumber`);
+      if (periodNumber.state !== "known") continue;
+      if (periodNumber.value === 0 || periodNumber.value > periods.length) {
+        fail("invalidDeparture", `$.participants.${player.participantId}.departure.periodNumber`);
+      }
+      const period = periods[periodNumber.value - 1];
+      const nominal = period.nominalDurationMs as ExplicitFact<number>;
+      const elapsed = period.elapsedDurationMs as ExplicitFact<number>;
+      if (clock.state === "known") {
+        if (nominal.state !== "known" || clock.value > nominal.value) {
+          fail(
+            "eventClockOutsidePeriod",
+            `$.participants.${player.participantId}.departure.clockRemainingMs`,
+          );
         }
-        const duration = periods[periodNumber.value - 1].durationMs as ExplicitFact<number>;
-        if (clock.state === "known" && duration.state === "known" && clock.value > duration.value) {
-          fail("eventClockOutsidePeriod", `$.participants.${player.participantId}.departure.clockRemainingMs`);
+        const elapsedAtDeparture = nominal.value - clock.value;
+        if (elapsed.state === "known" && elapsedAtDeparture > elapsed.value) {
+          fail(
+            "eventClockOutsidePeriod",
+            `$.participants.${player.participantId}.departure.clockRemainingMs`,
+          );
+        }
+        const before = knownElapsedBefore(periods, periodNumber.value);
+        if (before !== null && interval.state === "known") {
+          const opportunity = safeAdd(
+            before,
+            elapsedAtDeparture,
+            `$.participants.${player.participantId}.departure`,
+          );
+          if (interval.value.lowerInclusive > opportunity) {
+            fail("departureTimeConflict", `$.participants.${player.participantId}.time`);
+          }
         }
       }
     }
   }
 }
 
-function validateEvidenceFact(rawValue: unknown, path: string): ExplicitFact<string[]> {
-  return fact(rawValue, path, stringList);
+interface ParticipantRef {
+  counts: Record<string, number>;
+  enteredPlay: boolean;
+  output: Record<string, unknown>;
+  teamEntryId: string;
+}
+
+function validateScoreAdjustments(
+  rawValue: unknown,
+  periods: readonly Record<string, unknown>[],
+  teams: ReadonlySet<string>,
+  participants: ReadonlyMap<string, ParticipantRef>,
+): Record<string, unknown>[] {
+  const rawAdjustments = array(rawValue, "$.playedScoreAdjustments");
+  if (rawAdjustments.length > normalizedBoxScoreLimits.maxPlayedScoreAdjustments) {
+    fail("resourceLimitExceeded", "$.playedScoreAdjustments");
+  }
+  const adjustmentIds = new Set<string>();
+  const requiredShots = new Map<string, {three: number; two: number}>();
+  const adjustments = rawAdjustments.map((value, index) => {
+    const path = `$.playedScoreAdjustments[${index}]`;
+    const raw = record(value, path, [
+      "adjustmentId", "creditedParticipantId", "creditedShot", "evidenceRefs",
+      "kind", "periodNumber", "points", "statisticalTreatment", "teamEntryId",
+      "violatingTeamEntryId",
+    ]);
+    const adjustmentId = identifier(raw.adjustmentId, `${path}.adjustmentId`);
+    if (adjustmentIds.has(adjustmentId)) fail("invalidScoreAdjustment", `${path}.adjustmentId`);
+    adjustmentIds.add(adjustmentId);
+    const teamEntryId = identifier(raw.teamEntryId, `${path}.teamEntryId`);
+    const violatingTeamEntryId = identifier(
+      raw.violatingTeamEntryId,
+      `${path}.violatingTeamEntryId`,
+    );
+    if (!teams.has(teamEntryId) || !teams.has(violatingTeamEntryId) ||
+        teamEntryId === violatingTeamEntryId) {
+      fail("invalidScoreAdjustment", `${path}.violatingTeamEntryId`);
+    }
+    const kind = enumeration(raw.kind, `${path}.kind`, [
+      "accidentalOwnBasket", "defensiveGoaltending",
+    ] as const);
+    const points = positiveInteger(raw.points, `${path}.points`);
+    const creditedShot = enumeration(raw.creditedShot, `${path}.creditedShot`, [
+      "twoPointMade", "threePointMade",
+    ] as const);
+    if ((kind === "accidentalOwnBasket" && (points !== 2 || creditedShot !== "twoPointMade")) ||
+        (kind === "defensiveGoaltending" &&
+         ((points === 2 && creditedShot !== "twoPointMade") ||
+          (points === 3 && creditedShot !== "threePointMade") ||
+          (points !== 2 && points !== 3)))) {
+      fail("invalidScoreAdjustment", `${path}.points`);
+    }
+    const statisticalTreatment = enumeration(
+      raw.statisticalTreatment,
+      `${path}.statisticalTreatment`,
+      ["includedInPlayerCounters", "additiveToPlayerCounters"] as const,
+    );
+    if (statisticalTreatment !== "includedInPlayerCounters") {
+      fail("invalidScoreAdjustment", `${path}.statisticalTreatment`);
+    }
+    const periodNumber = fact(raw.periodNumber, `${path}.periodNumber`, nonnegativeInteger);
+    if (periodNumber.state !== "known" || periodNumber.value === 0 ||
+        periodNumber.value > periods.length) {
+      fail("invalidScoreAdjustment", `${path}.periodNumber`);
+    }
+    const creditedParticipantId = fact(
+      raw.creditedParticipantId,
+      `${path}.creditedParticipantId`,
+      identifier,
+    );
+    if (creditedParticipantId.state !== "known") {
+      fail("invalidScoreAdjustment", `${path}.creditedParticipantId`);
+    }
+    const participant = participants.get(creditedParticipantId.value);
+    if (!participant || !participant.enteredPlay || participant.teamEntryId !== teamEntryId) {
+      fail("invalidScoreAdjustment", `${path}.creditedParticipantId`);
+    }
+    const evidenceRefs = evidenceFact(raw.evidenceRefs, `${path}.evidenceRefs`);
+    if (evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
+      fail("invalidScoreAdjustment", `${path}.evidenceRefs`);
+    }
+    const shotRequirement = requiredShots.get(creditedParticipantId.value) ?? {three: 0, two: 0};
+    if (creditedShot === "twoPointMade") {
+      shotRequirement.two = safeAdd(shotRequirement.two, 1, `${path}.creditedShot`);
+    } else {
+      shotRequirement.three = safeAdd(shotRequirement.three, 1, `${path}.creditedShot`);
+    }
+    requiredShots.set(creditedParticipantId.value, shotRequirement);
+    return {
+      adjustmentId,
+      creditedParticipantId,
+      creditedShot,
+      evidenceRefs,
+      kind,
+      periodNumber,
+      points,
+      requiredCounterChanges: creditedShot === "twoPointMade" ?
+        {threeAttempted: 0, threeMade: 0, twoAttempted: 1, twoMade: 1} :
+        {threeAttempted: 1, threeMade: 1, twoAttempted: 0, twoMade: 0},
+      statisticalTreatment,
+      teamEntryId,
+      violatingTeamEntryId,
+    };
+  });
+  for (const [participantId, required] of requiredShots) {
+    const participant = participants.get(participantId)!;
+    if (participant.counts.twoMade < required.two ||
+        participant.counts.twoAttempted < required.two ||
+        participant.counts.threeMade < required.three ||
+        participant.counts.threeAttempted < required.three) {
+      fail("invalidScoreAdjustment", "$.playedScoreAdjustments");
+    }
+  }
+  return adjustments;
+}
+
+function validateExceptionalPointsByPeriod(
+  adjustments: readonly Record<string, unknown>[],
+  periods: readonly Record<string, unknown>[],
+  homeTeamId: string,
+  awayTeamId: string,
+): void {
+  const totals = new Map<string, number>();
+  for (const adjustment of adjustments) {
+    const periodNumber = (adjustment.periodNumber as {state: "known"; value: number}).value;
+    const teamEntryId = adjustment.teamEntryId as string;
+    const key = `${periodNumber}:${teamEntryId}`;
+    totals.set(key, safeAdd(totals.get(key) ?? 0, adjustment.points as number, "$.playedScoreAdjustments"));
+  }
+  for (const period of periods) {
+    const number = period.number as number;
+    const exceptional = period.exceptionalScoringPoints as ScorePair;
+    if ((totals.get(`${number}:${homeTeamId}`) ?? 0) !== exceptional.home ||
+        (totals.get(`${number}:${awayTeamId}`) ?? 0) !== exceptional.away) {
+      fail("invalidScoreAdjustment", `$.periods[${number - 1}].exceptionalScoringPoints`);
+    }
+  }
 }
 
 function validateDiscipline(
   rawValue: unknown,
-  teams: ReadonlyMap<string, Record<string, unknown>>,
-  participants: ReadonlyMap<string, {teamEntryId: string; enteredPlay: boolean}>,
+  teams: ReadonlySet<string>,
+  participants: ReadonlyMap<string, ParticipantRef>,
   periods: readonly Record<string, unknown>[],
-  penaltyThresholds: {regulation: ExplicitFact<number>; overtime: ExplicitFact<number>},
+  penaltyPolicy: {groups: PenaltyGroup[]; groupByPeriod: Map<number, PenaltyGroup>},
 ): {
   incidents: Record<string, unknown>[];
-  byTeam: Map<string, Record<string, unknown>>;
   byParticipant: Map<string, Record<string, unknown>>;
+  byTeam: Map<string, Record<string, unknown>>;
 } {
   const rawIncidents = array(rawValue, "$.disciplineIncidents");
   if (rawIncidents.length > normalizedBoxScoreLimits.maxIncidents) {
     fail("resourceLimitExceeded", "$.disciplineIncidents");
   }
   const incidentIds = new Set<string>();
-  const byTeam = new Map<string, Record<string, unknown>>();
   const byParticipant = new Map<string, Record<string, unknown>>();
+  const byTeam = new Map<string, Record<string, unknown>>();
   for (const participantId of participants.keys()) {
     byParticipant.set(participantId, {
       byType: {disqualifying: 0, personal: 0, technical: 0, unsportsmanlike: 0},
@@ -701,19 +1263,19 @@ function validateDiscipline(
       relatedIncidentIds: [],
     });
   }
-  for (const teamEntryId of teams.keys()) {
+  for (const teamEntryId of teams) {
     byTeam.set(teamEntryId, {
       byParty: {bench: 0, coach: 0, player: 0, team: 0},
       byType: {disqualifying: 0, personal: 0, technical: 0, unsportsmanlike: 0},
       chargedFouls: 0,
       playerDisqualificationCharges: 0,
-      teamFoulsByPeriod: {},
+      teamFoulsByPeriod: Object.fromEntries(periods.map((period) => [String(period.number), 0])),
     });
   }
   const incidents = rawIncidents.map((value, index) => {
     const path = `$.disciplineIncidents[${index}]`;
     const raw = record(value, path, [
-      "chargedParticipantId", "chargedPartyKind", "clockRemainingMs",
+      "chargedParticipantId", "chargedPartyKind", "clockRemainingMs", "context",
       "countsTowardPlayerDisqualification", "countsTowardTeamFoul", "evidenceRefs",
       "incidentId", "incidentType", "periodNumber", "relatedParticipantId",
       "scoresheetCode", "teamEntryId",
@@ -723,6 +1285,9 @@ function validateDiscipline(
     incidentIds.add(incidentId);
     const teamEntryId = identifier(raw.teamEntryId, `${path}.teamEntryId`);
     if (!teams.has(teamEntryId)) fail("invalidDisciplineIncident", `${path}.teamEntryId`);
+    const context = enumeration(raw.context, `${path}.context`, [
+      "onCourt", "bench", "preGame", "interval",
+    ] as const);
     const chargedPartyKind = enumeration(raw.chargedPartyKind, `${path}.chargedPartyKind`, [
       "player", "coach", "bench", "team",
     ] as const);
@@ -737,13 +1302,20 @@ function validateDiscipline(
       identifier,
     );
     if (chargedPartyKind === "player") {
-      if (chargedParticipantId.state !== "known") fail("invalidDisciplineIncident", path);
+      if (context !== "onCourt" || chargedParticipantId.state !== "known") {
+        fail("invalidDisciplineIncident", path);
+      }
       const participant = participants.get(chargedParticipantId.value);
       if (!participant || participant.teamEntryId !== teamEntryId) {
         fail("invalidDisciplineIncident", `${path}.chargedParticipantId`);
       }
-    } else if (!absentFact(chargedParticipantId, "not_player_charge")) {
-      fail("invalidDisciplineIncident", `${path}.chargedParticipantId`);
+      if (!participant.enteredPlay) {
+        fail("playerNotEnteredForIncident", `${path}.chargedParticipantId`);
+      }
+    } else {
+      if (context === "onCourt" || !absentFact(chargedParticipantId, "not_player_charge")) {
+        fail("invalidDisciplineIncident", `${path}.chargedParticipantId`);
+      }
     }
     if (relatedParticipantId.state === "known") {
       const related = participants.get(relatedParticipantId.value);
@@ -754,6 +1326,10 @@ function validateDiscipline(
     const incidentType = enumeration(raw.incidentType, `${path}.incidentType`, [
       "personal", "technical", "unsportsmanlike", "disqualifying",
     ] as const);
+    if (chargedPartyKind !== "player" &&
+        incidentType !== "technical" && incidentType !== "disqualifying") {
+      fail("invalidDisciplineIncident", `${path}.incidentType`);
+    }
     const scoresheetCode = textValue(raw.scoresheetCode, `${path}.scoresheetCode`, 64);
     const countsTowardTeamFoul = booleanValue(
       raw.countsTowardTeamFoul,
@@ -763,36 +1339,44 @@ function validateDiscipline(
       raw.countsTowardPlayerDisqualification,
       `${path}.countsTowardPlayerDisqualification`,
     );
-    if (countsTowardPlayerDisqualification && chargedPartyKind !== "player") {
-      fail("invalidDisciplineIncident", `${path}.countsTowardPlayerDisqualification`);
+    if ((countsTowardTeamFoul && (chargedPartyKind !== "player" || context !== "onCourt")) ||
+        (countsTowardPlayerDisqualification && chargedPartyKind !== "player")) {
+      fail("invalidDisciplineIncident", path);
     }
     const periodNumber = fact(raw.periodNumber, `${path}.periodNumber`, nonnegativeInteger);
-    if (periodNumber.state === "known" && periodNumber.value === 0) {
-      fail("invalidDisciplineIncident", `${path}.periodNumber`);
-    }
-    if (countsTowardTeamFoul && periodNumber.state !== "known") {
-      fail("invalidDisciplineIncident", `${path}.periodNumber`);
-    }
     const clockRemainingMs = fact(
       raw.clockRemainingMs,
       `${path}.clockRemainingMs`,
       nonnegativeInteger,
     );
-    if (clockRemainingMs.state === "known" && periodNumber.state !== "known") {
-      fail("eventClockOutsidePeriod", `${path}.clockRemainingMs`);
-    }
-    if (periodNumber.state === "known") {
-      if (periodNumber.value > periods.length) {
+    if (context === "preGame") {
+      if (!absentFact(periodNumber, "no_play_context") ||
+          !absentFact(clockRemainingMs, "no_play_context")) {
         fail("invalidDisciplineIncident", `${path}.periodNumber`);
       }
-      const duration = periods[periodNumber.value - 1].durationMs as ExplicitFact<number>;
-      if (clockRemainingMs.state === "known" && duration.state === "known" &&
-          clockRemainingMs.value > duration.value) {
-        fail("eventClockOutsidePeriod", `${path}.clockRemainingMs`);
+    } else {
+      if (periodNumber.state !== "known" || periodNumber.value === 0 ||
+          periodNumber.value > periods.length) {
+        fail("invalidDisciplineIncident", `${path}.periodNumber`);
+      }
+      const period = periods[periodNumber.value - 1];
+      const nominal = period.nominalDurationMs as ExplicitFact<number>;
+      const elapsed = period.elapsedDurationMs as ExplicitFact<number>;
+      if (clockRemainingMs.state === "known") {
+        if (nominal.state !== "known" || clockRemainingMs.value > nominal.value) {
+          fail("eventClockOutsidePeriod", `${path}.clockRemainingMs`);
+        }
+        if (elapsed.state === "known" &&
+            nominal.value - clockRemainingMs.value > elapsed.value) {
+          fail("eventClockOutsidePeriod", `${path}.clockRemainingMs`);
+        }
+      } else if (clockRemainingMs.state === "notApplicable" &&
+          !absentFact(clockRemainingMs, "interval_or_bench_context")) {
+        fail("invalidDisciplineIncident", `${path}.clockRemainingMs`);
       }
     }
-    const evidenceRefs = validateEvidenceFact(raw.evidenceRefs, `${path}.evidenceRefs`);
-    if (evidenceRefs.state === "known" && evidenceRefs.value.length === 0) {
+    const evidenceRefs = evidenceFact(raw.evidenceRefs, `${path}.evidenceRefs`);
+    if (evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
       fail("invalidDisciplineIncident", `${path}.evidenceRefs`);
     }
     const summary = byTeam.get(teamEntryId)!;
@@ -831,12 +1415,13 @@ function validateDiscipline(
     if (countsTowardTeamFoul && periodNumber.state === "known") {
       const teamFouls = summary.teamFoulsByPeriod as Record<string, number>;
       const key = String(periodNumber.value);
-      teamFouls[key] = safeAdd(teamFouls[key] ?? 0, 1, path);
+      teamFouls[key] = safeAdd(teamFouls[key], 1, path);
     }
     return {
       chargedParticipantId,
       chargedPartyKind,
       clockRemainingMs,
+      context,
       countsTowardPlayerDisqualification,
       countsTowardTeamFoul,
       evidenceRefs,
@@ -851,19 +1436,35 @@ function validateDiscipline(
   for (const summary of byTeam.values()) {
     const teamFouls = summary.teamFoulsByPeriod as Record<string, number>;
     const penaltyStateByPeriod: Record<string, unknown> = {};
-    for (const period of periods) {
-      const periodNumber = period.number as number;
-      const threshold = period.kind === "regulation" ?
-        penaltyThresholds.regulation : penaltyThresholds.overtime;
-      penaltyStateByPeriod[String(periodNumber)] = threshold.state === "known" ? {
-        state: "known",
-        value: {
-          inPenalty: (teamFouls[String(periodNumber)] ?? 0) >= threshold.value,
-          teamFouls: teamFouls[String(periodNumber)] ?? 0,
-          threshold: threshold.value,
-        },
-      } : threshold;
-    }
+    const penaltyGroups = penaltyPolicy.groups.map((group) => {
+      let groupTeamFouls = 0;
+      for (const periodNumber of group.periodNumbers) {
+        groupTeamFouls = safeAdd(
+          groupTeamFouls,
+          teamFouls[String(periodNumber)] ?? 0,
+          "$.disciplineIncidents",
+        );
+        const threshold = group.penaltyStartsAtFoul;
+        penaltyStateByPeriod[String(periodNumber)] = {
+          groupId: group.groupId,
+          groupTeamFoulsThroughPeriod: groupTeamFouls,
+          inPenalty: threshold.state === "known" ?
+            {state: "known", value: groupTeamFouls >= threshold.value} : threshold,
+          rawTeamFouls: teamFouls[String(periodNumber)] ?? 0,
+          threshold,
+        };
+      }
+      const threshold = group.penaltyStartsAtFoul;
+      return {
+        groupId: group.groupId,
+        inPenalty: threshold.state === "known" ?
+          {state: "known", value: groupTeamFouls >= threshold.value} : threshold,
+        periodNumbers: group.periodNumbers,
+        teamFouls: groupTeamFouls,
+        threshold,
+      };
+    });
+    summary.penaltyGroups = penaltyGroups;
     summary.penaltyStateByPeriod = penaltyStateByPeriod;
   }
   return {incidents, byParticipant, byTeam};
@@ -871,7 +1472,8 @@ function validateDiscipline(
 
 function validateAdministrativeResult(
   rawValue: unknown,
-  disposition: NormalizedBoxScoreInput["resultDisposition"],
+  disposition: "played" | "forfeit" | "default" | "annulled" | "otherAdjudicated",
+  statisticsDisposition: "complete" | "resultOnly" | "excluded",
   teamIds: ReadonlySet<string>,
   homeTeamEntryId: string,
 ): Record<string, unknown> {
@@ -885,7 +1487,7 @@ function validateAdministrativeResult(
     "$.administrativeResult.winnerTeamEntryId",
     identifier,
   );
-  const evidenceRefs = validateEvidenceFact(
+  const evidenceRefs = evidenceFact(
     raw.evidenceRefs,
     "$.administrativeResult.evidenceRefs",
   );
@@ -900,7 +1502,8 @@ function validateAdministrativeResult(
     ["includePlayedStatistics", "exclude", "policyPending"] as const,
   );
   if (disposition === "played") {
-    if (!absentFact(awardedScore, "not_adjudicated") ||
+    if (statisticsDisposition !== "complete" ||
+        !absentFact(awardedScore, "not_adjudicated") ||
         !absentFact(winnerTeamEntryId, "not_adjudicated") ||
         !absentFact(evidenceRefs, "not_adjudicated") ||
         standingsTreatment !== "playedResult" ||
@@ -911,8 +1514,16 @@ function validateAdministrativeResult(
     if (winnerTeamEntryId.state === "known" && !teamIds.has(winnerTeamEntryId.value)) {
       fail("invalidAdministrativeResult", "$.administrativeResult.winnerTeamEntryId");
     }
-    if (evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
-      fail("invalidAdministrativeResult", "$.administrativeResult.evidenceRefs");
+    if (evidenceRefs.state !== "known" || evidenceRefs.value.length === 0 ||
+        playerStatisticsTreatment === "policyPending") {
+      fail("invalidAdministrativeResult", "$.administrativeResult");
+    }
+    if (statisticsDisposition === "complete" &&
+        playerStatisticsTreatment !== "includePlayedStatistics") {
+      fail("invalidAdministrativeResult", "$.administrativeResult.playerStatisticsTreatment");
+    }
+    if (statisticsDisposition !== "complete" && playerStatisticsTreatment !== "exclude") {
+      fail("invalidAdministrativeResult", "$.administrativeResult.playerStatisticsTreatment");
     }
     if ((disposition === "forfeit" || disposition === "default") &&
         (awardedScore.state !== "known" || winnerTeamEntryId.state !== "known")) {
@@ -943,34 +1554,52 @@ function validateAdministrativeResult(
 function validateOfficialScore(rawValue: unknown, playedScore: ScorePair): Record<string, unknown> {
   const raw = record(rawValue, "$.officialScore", ["evidenceRefs", "reconciliationStatus", "score"]);
   const score = fact(raw.score, "$.officialScore.score", scorePair);
-  const evidenceRefs = validateEvidenceFact(raw.evidenceRefs, "$.officialScore.evidenceRefs");
+  const evidenceRefs = evidenceFact(raw.evidenceRefs, "$.officialScore.evidenceRefs");
   const reconciliationStatus = enumeration(
     raw.reconciliationStatus,
     "$.officialScore.reconciliationStatus",
     ["reconciled", "unreconciled", "notAvailable"] as const,
   );
-  if (reconciliationStatus !== "reconciled") {
-    fail("officialScoreEvidenceRequired", "$.officialScore.reconciliationStatus");
+  if (reconciliationStatus !== "reconciled" || score.state !== "known" ||
+      evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
+    fail("officialScoreEvidenceRequired", "$.officialScore");
   }
-  if (reconciliationStatus === "reconciled") {
-    if (score.state !== "known" || evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
-      fail("officialScoreEvidenceRequired", "$.officialScore");
-    }
-    if (score.value.home !== playedScore.home || score.value.away !== playedScore.away) {
-      fail("officialScoreMismatch", "$.officialScore.score");
-    }
+  if (score.value.home !== playedScore.home || score.value.away !== playedScore.away) {
+    fail("officialScoreMismatch", "$.officialScore.score");
   }
   return {evidenceRefs, reconciliationStatus, score};
 }
 
-function validateRoot(rawValue: unknown): NormalizedBoxScoreInput {
+interface ParsedRoot {
+  administrativeResult: unknown;
+  disciplineIncidents: unknown;
+  officialScore: unknown;
+  periods: unknown;
+  playedScore: unknown;
+  playedScoreAdjustments: unknown;
+  provenance: {
+    captureMode: "liveCapture" | "officialSheet" | "historicalImport";
+    rulesetVersion: string;
+    sourceId: string;
+    sourceLabel: string;
+  };
+  resultDisposition: "played" | "forfeit" | "default" | "annulled" | "otherAdjudicated";
+  rules: ParsedRules;
+  scope: Record<string, string>;
+  statisticsDisposition: "complete" | "resultOnly" | "excluded";
+  teams: unknown[];
+}
+
+function validateRoot(rawValue: unknown): ParsedRoot {
   const raw = record(rawValue, "$", [
     "administrativeResult", "calculatorVersion", "canonicalEncodingVersion",
     "disciplineIncidents", "officialScore", "periods", "playedScore",
     "playedScoreAdjustments", "provenance", "resultDisposition", "rules",
-    "schemaVersion", "scope", "statisticsDisposition", "teams", "unicodeNormalizationVersion",
+    "schemaVersion", "scope", "statisticsDisposition", "teams",
+    "unicodeNormalizationVersion",
   ]);
-  if (raw.schemaVersion !== 1) fail("unsupportedSchemaVersion", "$.schemaVersion");
+  const schemaVersion = nonnegativeInteger(raw.schemaVersion, "$.schemaVersion");
+  if (schemaVersion !== 2) fail("unsupportedSchemaVersion", "$.schemaVersion");
   if (raw.calculatorVersion !== normalizedBoxScoreCalculatorVersion) {
     fail("unsupportedCalculatorVersion", "$.calculatorVersion");
   }
@@ -980,164 +1609,164 @@ function validateRoot(rawValue: unknown): NormalizedBoxScoreInput {
   if (raw.unicodeNormalizationVersion !== normalizedBoxScoreUnicodeVersion) {
     fail("unsupportedUnicodeNormalizationVersion", "$.unicodeNormalizationVersion");
   }
-  validateScope(raw.scope);
-  enumeration(raw.resultDisposition, "$.resultDisposition", [
+  const scope = validateScope(raw.scope);
+  const resultDisposition = enumeration(raw.resultDisposition, "$.resultDisposition", [
     "played", "forfeit", "default", "annulled", "otherAdjudicated",
   ] as const);
-  if (raw.statisticsDisposition !== "complete") {
-    fail("invalidShape", "$.statisticsDisposition");
-  }
-  const provenance = record(raw.provenance, "$.provenance", [
+  const statisticsDisposition = enumeration(
+    raw.statisticsDisposition,
+    "$.statisticsDisposition",
+    ["complete", "resultOnly", "excluded"] as const,
+  );
+  const provenanceRaw = record(raw.provenance, "$.provenance", [
     "captureMode", "rulesetVersion", "sourceId", "sourceLabel",
   ]);
-  enumeration(provenance.captureMode, "$.provenance.captureMode", [
-    "liveCapture", "officialSheet", "historicalImport",
-  ] as const);
-  identifier(provenance.sourceId, "$.provenance.sourceId");
-  textValue(provenance.sourceLabel, "$.provenance.sourceLabel");
-  identifier(provenance.rulesetVersion, "$.provenance.rulesetVersion");
-  const rules = record(raw.rules, "$.rules", [
-    "completedTiesAllowed", "regulationPeriodCount", "teamFoulPenaltyThresholds",
-  ]);
-  const regulationPeriodCount = nonnegativeInteger(
-    rules.regulationPeriodCount,
-    "$.rules.regulationPeriodCount",
-  );
-  if (regulationPeriodCount === 0) fail("invalidPeriodSequence", "$.rules.regulationPeriodCount");
-  booleanValue(rules.completedTiesAllowed, "$.rules.completedTiesAllowed");
-  const penaltyThresholds = record(
-    rules.teamFoulPenaltyThresholds,
-    "$.rules.teamFoulPenaltyThresholds",
-    ["overtime", "regulation"],
-  );
-  for (const kind of ["regulation", "overtime"] as const) {
-    const threshold = countFact(
-      penaltyThresholds[kind],
-      `$.rules.teamFoulPenaltyThresholds.${kind}`,
-    );
-    if (threshold.state === "known" && threshold.value === 0) {
-      fail("invalidDisciplineIncident", `$.rules.teamFoulPenaltyThresholds.${kind}`);
-    }
-  }
+  const provenance = {
+    captureMode: enumeration(provenanceRaw.captureMode, "$.provenance.captureMode", [
+      "liveCapture", "officialSheet", "historicalImport",
+    ] as const),
+    rulesetVersion: identifier(provenanceRaw.rulesetVersion, "$.provenance.rulesetVersion"),
+    sourceId: identifier(provenanceRaw.sourceId, "$.provenance.sourceId"),
+    sourceLabel: textValue(provenanceRaw.sourceLabel, "$.provenance.sourceLabel"),
+  };
+  const rules = validateRules(raw.rules);
   const teams = array(raw.teams, "$.teams");
   if (teams.length !== 2) fail("invalidTeamStructure", "$.teams");
-  return rawValue as NormalizedBoxScoreInput;
+  return {
+    administrativeResult: raw.administrativeResult,
+    disciplineIncidents: raw.disciplineIncidents,
+    officialScore: raw.officialScore,
+    periods: raw.periods,
+    playedScore: raw.playedScore,
+    playedScoreAdjustments: raw.playedScoreAdjustments,
+    provenance,
+    resultDisposition,
+    rules,
+    scope,
+    statisticsDisposition,
+    teams,
+  };
+}
+
+function validateNoPlay(
+  root: ParsedRoot,
+  teamResults: readonly TeamResult[],
+  periodResult: PeriodResult,
+  playedScore: ScorePair,
+  adjustments: readonly Record<string, unknown>[],
+  incidents: readonly Record<string, unknown>[],
+): void {
+  if (root.statisticsDisposition === "complete") return;
+  if (root.resultDisposition === "played" || periodResult.periods.length !== 0 ||
+      playedScore.home !== 0 || playedScore.away !== 0 || adjustments.length !== 0) {
+    fail("invalidNoPlayStatistics", "$");
+  }
+  for (const team of teamResults) {
+    if (!isZeroCounts(team.counts)) fail("invalidNoPlayStatistics", "$.teams");
+    const teamOnly = team.output.teamOnly as Record<string, number>;
+    if (teamOnly.offensiveRebounds !== 0 || teamOnly.defensiveRebounds !== 0 ||
+        teamOnly.turnovers !== 0) {
+      fail("invalidNoPlayStatistics", "$.teams");
+    }
+    for (const player of team.output.players as Record<string, unknown>[]) {
+      if (player.enteredPlay) {
+        fail("invalidNoPlayStatistics", `$.participants.${player.participantId}.enteredPlay`);
+      }
+    }
+  }
+  for (const incident of incidents) {
+    if (incident.context !== "preGame" || incident.chargedPartyKind === "player" ||
+        incident.countsTowardTeamFoul || incident.countsTowardPlayerDisqualification) {
+      fail("invalidNoPlayStatistics", "$.disciplineIncidents");
+    }
+  }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function calculateAccepted(rawInput: unknown): CalculatorAccepted {
-  const input = validateRoot(rawInput);
-  const scope = validateScope(input.scope);
+  const root = validateRoot(rawInput);
+  const requiresCompletePlay = root.resultDisposition === "played";
+  const periodResult = validatePeriods(root.periods, root.rules, requiresCompletePlay);
+  const penaltyPolicy = validatePenaltyGroups(root.rules, periodResult.periods);
   const seenParticipants = new Set<string>();
   const seenPlayers = new Set<string>();
-  const teamResults = input.teams.map((team, index) =>
-    validateTeam(team, `$.teams[${index}]`, seenParticipants, seenPlayers));
+  const teamResults = root.teams.map((team, index) => validateTeam(
+    team,
+    `$.teams[${index}]`,
+    seenParticipants,
+    seenPlayers,
+    root.rules.playingTimeRoundingProfile,
+  ));
   if (teamResults[0].output.side === teamResults[1].output.side ||
       teamResults[0].output.teamEntryId === teamResults[1].output.teamEntryId) {
     fail("invalidTeamStructure", "$.teams");
   }
-  teamResults.sort((left, right) =>
-    left.output.side === "home" ? -1 : right.output.side === "home" ? 1 : 0);
+  teamResults.sort((left, right) => left.output.side === "home" ?
+    -1 : right.output.side === "home" ? 1 : 0);
   const homeTeam = teamResults[0];
   const awayTeam = teamResults[1];
-  const rulesRaw = input.rules;
-  const penaltyThresholds = {
-    overtime: countFact(
-      rulesRaw.teamFoulPenaltyThresholds.overtime,
-      "$.rules.teamFoulPenaltyThresholds.overtime",
-    ),
-    regulation: countFact(
-      rulesRaw.teamFoulPenaltyThresholds.regulation,
-      "$.rules.teamFoulPenaltyThresholds.regulation",
-    ),
-  };
-  const periodResult = validatePeriods(
-    input.periods,
-    rulesRaw.regulationPeriodCount,
-    input.resultDisposition === "played",
+  validatePlayerTimeline(
+    teamResults,
+    periodResult.periods,
+    periodResult.totalElapsedMs,
+    root.rules,
   );
-  validatePlayerTimeline(teamResults, periodResult.periods);
-  const playedScore = scorePair(input.playedScore, "$.playedScore");
-  if (periodResult.score.home !== playedScore.home || periodResult.score.away !== playedScore.away) {
+  const playedScore = scorePair(root.playedScore, "$.playedScore");
+  if (periodResult.score.home !== playedScore.home ||
+      periodResult.score.away !== playedScore.away) {
     fail("playedScorePeriodMismatch", "$.playedScore");
   }
-  if (input.resultDisposition === "played" && !rulesRaw.completedTiesAllowed &&
+  if (root.resultDisposition === "played" && !root.rules.completedTiesAllowed &&
       playedScore.home === playedScore.away) {
     fail("invalidPeriodSequence", "$.playedScore");
   }
-
-  const adjustmentValues = array(input.playedScoreAdjustments, "$.playedScoreAdjustments");
-  if (adjustmentValues.length > normalizedBoxScoreLimits.maxPlayedScoreAdjustments) {
-    fail("resourceLimitExceeded", "$.playedScoreAdjustments");
-  }
-  const adjustmentIds = new Set<string>();
-  const adjustmentPoints = new Map<string, number>([
-    [homeTeam.output.teamEntryId as string, 0],
-    [awayTeam.output.teamEntryId as string, 0],
-  ]);
-  const adjustments = adjustmentValues.map((value, index) => {
-    const path = `$.playedScoreAdjustments[${index}]`;
-    const raw = record(value, path, [
-      "adjustmentId", "evidenceRefs", "kind", "periodNumber", "points", "teamEntryId",
-    ]);
-    const adjustmentId = identifier(raw.adjustmentId, `${path}.adjustmentId`);
-    if (adjustmentIds.has(adjustmentId)) fail("invalidScoreAdjustment", `${path}.adjustmentId`);
-    adjustmentIds.add(adjustmentId);
-    const teamEntryId = identifier(raw.teamEntryId, `${path}.teamEntryId`);
-    if (!adjustmentPoints.has(teamEntryId)) fail("invalidScoreAdjustment", `${path}.teamEntryId`);
-    const kind = enumeration(raw.kind, `${path}.kind`, ["ownBasket", "goaltending"] as const);
-    const points = nonnegativeInteger(raw.points, `${path}.points`);
-    if (points === 0 || points > 3 || (kind === "ownBasket" && points !== 2)) {
-      fail("invalidScoreAdjustment", `${path}.points`);
-    }
-    const periodNumber = fact(raw.periodNumber, `${path}.periodNumber`, nonnegativeInteger);
-    if (periodNumber.state !== "known" || periodNumber.value === 0 ||
-        periodNumber.value > periodResult.periods.length) {
-      fail("invalidScoreAdjustment", `${path}.periodNumber`);
-    }
-    const evidenceRefs = validateEvidenceFact(raw.evidenceRefs, `${path}.evidenceRefs`);
-    if (evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
-      fail("invalidScoreAdjustment", `${path}.evidenceRefs`);
-    }
-    adjustmentPoints.set(
-      teamEntryId,
-      safeAdd(adjustmentPoints.get(teamEntryId)!, points, `${path}.points`),
-    );
-    return {adjustmentId, evidenceRefs, kind, periodNumber, points, teamEntryId};
-  });
-
-  const attributedHome = safeAdd(
-    (homeTeam.output.totals as Record<string, number>).points,
-    adjustmentPoints.get(homeTeam.output.teamEntryId as string)!,
-    "$.playedScore.home",
-  );
-  const attributedAway = safeAdd(
-    (awayTeam.output.totals as Record<string, number>).points,
-    adjustmentPoints.get(awayTeam.output.teamEntryId as string)!,
-    "$.playedScore.away",
-  );
-  if (attributedHome !== playedScore.home || attributedAway !== playedScore.away) {
+  const homeTotals = homeTeam.output.totals as Record<string, number>;
+  const awayTotals = awayTeam.output.totals as Record<string, number>;
+  if (periodResult.counterPoints.home !== homeTotals.points ||
+      periodResult.counterPoints.away !== awayTotals.points ||
+      homeTotals.points !== playedScore.home || awayTotals.points !== playedScore.away) {
     fail("playedScoreAttributionMismatch", "$.playedScore");
   }
-
-  const teamMap = new Map<string, Record<string, unknown>>([
-    [homeTeam.output.teamEntryId as string, homeTeam.output],
-    [awayTeam.output.teamEntryId as string, awayTeam.output],
+  const teamIds = new Set<string>([
+    homeTeam.output.teamEntryId as string,
+    awayTeam.output.teamEntryId as string,
   ]);
-  const participantMap = new Map<string, {teamEntryId: string; enteredPlay: boolean}>();
+  const participants = new Map<string, ParticipantRef>();
   for (const team of teamResults) {
     for (const player of team.output.players as Record<string, unknown>[]) {
-      participantMap.set(player.participantId as string, {
+      participants.set(player.participantId as string, {
+        counts: player.totals as Record<string, number>,
         enteredPlay: player.enteredPlay as boolean,
+        output: player,
         teamEntryId: player.teamEntryId as string,
       });
     }
   }
-  const discipline = validateDiscipline(
-    input.disciplineIncidents,
-    teamMap,
-    participantMap,
+  const adjustments = validateScoreAdjustments(
+    root.playedScoreAdjustments,
     periodResult.periods,
-    penaltyThresholds,
+    teamIds,
+    participants,
+  );
+  validateExceptionalPointsByPeriod(
+    adjustments,
+    periodResult.periods,
+    homeTeam.output.teamEntryId as string,
+    awayTeam.output.teamEntryId as string,
+  );
+  const discipline = validateDiscipline(
+    root.disciplineIncidents,
+    teamIds,
+    participants,
+    periodResult.periods,
+    penaltyPolicy,
   );
   for (const team of teamResults) {
     team.output.discipline = discipline.byTeam.get(team.output.teamEntryId as string)!;
@@ -1145,18 +1774,23 @@ function calculateAccepted(rawInput: unknown): CalculatorAccepted {
       player.discipline = discipline.byParticipant.get(player.participantId as string)!;
     }
   }
-  const teamIds = new Set(teamMap.keys());
   const administrativeResult = validateAdministrativeResult(
-    input.administrativeResult,
-    input.resultDisposition,
+    root.administrativeResult,
+    root.resultDisposition,
+    root.statisticsDisposition,
     teamIds,
     homeTeam.output.teamEntryId as string,
   );
-  const officialScore = validateOfficialScore(input.officialScore, playedScore);
-
+  const officialScore = validateOfficialScore(root.officialScore, playedScore);
+  validateNoPlay(
+    root,
+    teamResults,
+    periodResult,
+    playedScore,
+    adjustments,
+    discipline.incidents,
+  );
   const diagnostics: CalculatorDiagnostic[] = [];
-  const homeTotals = homeTeam.output.totals as Record<string, number>;
-  const awayTotals = awayTeam.output.totals as Record<string, number>;
   if (homeTotals.steals > awayTotals.turnovers) {
     diagnostics.push({
       code: "crossTeamStealsVsTurnoversNeedsReview",
@@ -1175,17 +1809,28 @@ function calculateAccepted(rawInput: unknown): CalculatorAccepted {
       steals: awayTotals.steals,
     });
   }
-  diagnostics.sort((left, right) =>
-    left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
-
+  diagnostics.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   const playedWinnerTeamEntryId: ExplicitFact<string> = playedScore.home === playedScore.away ?
-    {state: "unknown", value: null, reasonCode: "tied_played_score"} :
-    {
+    {state: "unknown", value: null, reasonCode: "tied_played_score"} : {
       state: "known",
       value: playedScore.home > playedScore.away ?
         homeTeam.output.teamEntryId as string : awayTeam.output.teamEntryId as string,
     };
-  return {
+  const teamPlayedTimeCapacityMs: ExplicitFact<number> =
+    periodResult.totalElapsedMs.state === "known" &&
+    root.rules.teamTimeCapacityMultiplier.state === "known" ? {
+        state: "known",
+        value: safeMultiply(
+          periodResult.totalElapsedMs.value,
+          root.rules.teamTimeCapacityMultiplier.value,
+          "$.rules.teamTimeCapacityMultiplier",
+        ),
+      } : {
+        state: "unknown",
+        value: null,
+        reasonCode: "capacity_input_unknown",
+      };
+  return deepFreeze({
     calculatorVersion: normalizedBoxScoreCalculatorVersion,
     normalizedBoxScore: {
       administrativeResult,
@@ -1197,52 +1842,58 @@ function calculateAccepted(rawInput: unknown): CalculatorAccepted {
       playedScore,
       playedScoreAdjustments: adjustments,
       playedWinnerTeamEntryId,
-      provenance: {
-        captureMode: input.provenance.captureMode,
-        rulesetVersion: input.provenance.rulesetVersion,
-        sourceId: input.provenance.sourceId,
-        sourceLabel: input.provenance.sourceLabel.normalize("NFC"),
-      },
-      resultDisposition: input.resultDisposition,
+      provenance: root.provenance,
+      resultDisposition: root.resultDisposition,
       rules: {
-        completedTiesAllowed: rulesRaw.completedTiesAllowed,
-        regulationPeriodCount: rulesRaw.regulationPeriodCount,
-        teamFoulPenaltyThresholds: penaltyThresholds,
+        ...root.rules,
+        teamPlayedTimeCapacityMs,
       },
-      schemaVersion: 1,
-      scope,
-      statisticsDisposition: input.statisticsDisposition,
+      schemaVersion: 2,
+      scope: root.scope,
+      statisticsDisposition: root.statisticsDisposition,
       teams: teamResults.map((team) => team.output),
+      totalElapsedPlayMs: periodResult.totalElapsedMs,
       unicodeNormalizationVersion: normalizedBoxScoreUnicodeVersion,
     },
     status: "accepted",
-  };
+  });
 }
 
-/**
- * Pure, deterministic, fail-closed normalized box-score calculator.
- *
- * Validation returns exactly the first error in the documented validation
- * sequence. It never imports Firebase, performs I/O, or mutates its input.
- */
+function rejected(code: CalculatorErrorCode, path: string): CalculatorOutcome {
+  return deepFreeze({
+    calculatorVersion: normalizedBoxScoreCalculatorVersion,
+    errors: [{code, path}],
+    status: "rejected",
+  });
+}
+
+/** Pure, deterministic, fail-closed normalized box-score calculator. */
 export function calculateNormalizedBoxScore(input: unknown): CalculatorOutcome {
   try {
     preflight(input);
     return calculateAccepted(input);
   } catch (error) {
-    if (error instanceof ValidationFailure) {
-      return {
-        calculatorVersion: normalizedBoxScoreCalculatorVersion,
-        errors: [{code: error.code, path: error.path}],
-        status: "rejected",
-      };
-    }
-    return {
-      calculatorVersion: normalizedBoxScoreCalculatorVersion,
-      errors: [{code: "invalidCanonicalValue", path: "$"}],
-      status: "rejected",
-    };
+    if (error instanceof ValidationFailure) return rejected(error.code, error.path);
+    return rejected("invalidCanonicalValue", "$");
   }
+}
+
+/**
+ * Raw JSON boundary for untrusted transports. The byte limit is enforced before
+ * JSON parsing; parsed values still pass the independent graph preflight.
+ */
+export function calculateNormalizedBoxScoreFromJson(rawJson: string): CalculatorOutcome {
+  if (typeof rawJson !== "string" ||
+      utf8Length(rawJson) > normalizedBoxScoreLimits.maxRawTransportBytes) {
+    return rejected("resourceLimitExceeded", "$");
+  }
+  let input: unknown;
+  try {
+    input = JSON.parse(rawJson);
+  } catch {
+    return rejected("invalidCanonicalValue", "$");
+  }
+  return calculateNormalizedBoxScore(input);
 }
 
 export function assertCalculatorErrorVocabulary(): void {

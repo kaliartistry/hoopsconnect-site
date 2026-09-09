@@ -1,13 +1,13 @@
+import 'dart:collection';
 import 'dart:convert';
-
-import 'package:unorm_dart/unorm_dart.dart' as unicode;
 
 import '../canonical_encoding.dart';
 import '../contract_versions.dart';
+import '../unicode_normalization.dart';
 
 const normalizedBoxScoreCalculatorVersion =
-    'hoopsconnect-normalized-box-score-v1';
-const normalizedBoxScoreUnicodeVersion = 'official-stat-unicode-nfc-v1';
+    'hoopsconnect-normalized-box-score-v2';
+const normalizedBoxScoreUnicodeVersion = 'official-stat-unicode-nfc-v2';
 
 const playerCountFields = <String>[
   'twoMade',
@@ -46,26 +46,36 @@ const calculatorErrorCodes = <String>[
   'invalidTimeProvenance',
   'timeOutsideGameDuration',
   'invalidDeparture',
+  'departureTimeConflict',
   'eventClockOutsidePeriod',
   'makesExceedAttempts',
   'reportedTeamTotalMismatch',
+  'invalidRulesProfile',
+  'invalidPenaltyPolicy',
   'invalidPeriodSequence',
+  'invalidPeriodState',
   'invalidOvertimeSequence',
   'playedScorePeriodMismatch',
   'playedScoreAttributionMismatch',
   'invalidScoreAdjustment',
   'invalidDisciplineIncident',
+  'playerNotEnteredForIncident',
   'invalidAdministrativeResult',
+  'invalidNoPlayStatistics',
   'officialScoreEvidenceRequired',
   'officialScoreMismatch',
 ];
 
 abstract final class NormalizedBoxScoreLimits {
   static const maxCanonicalPayloadBytes = 128 * 1024;
+  static const maxRawTransportBytes = 128 * 1024;
+  static const maxContainerEntries = 1024;
+  static const maxObjectKeys = 128;
   static const maxDepth = 16;
   static const maxEvidenceRefsPerFact = 64;
   static const maxIncidents = 512;
   static const maxNodes = 20000;
+  static const maxPenaltyGroups = 64;
   static const maxPeriods = 64;
   static const maxPlayedScoreAdjustments = 128;
   static const maxPlayersPerTeam = 64;
@@ -86,30 +96,43 @@ final _asciiKey = RegExp(r'^[\x21-\x7e]+$');
 
 int _utf8Length(String value) => utf8.encode(value).length;
 
-List<String> _sortedKeys(Map<Object?, Object?> value) {
-  final keys = <String>[];
-  for (final key in value.keys) {
-    if (key is! String) _fail('invalidCanonicalValue', r'$');
-    keys.add(key);
-  }
-  return keys..sort();
-}
-
-void _preflight(Object? value) {
+/// Builds a bounded, ordinary Dart snapshot before any schema parser can
+/// enumerate caller-controlled containers a second time.
+Object? _preflight(Object? value) {
   var nodes = 0;
+  var canonicalBytes = 0;
 
-  void visit(Object? current, String path, int depth) {
+  void charge(int bytes, String path) {
+    canonicalBytes += bytes;
+    if (canonicalBytes > NormalizedBoxScoreLimits.maxCanonicalPayloadBytes) {
+      _fail('resourceLimitExceeded', path);
+    }
+  }
+
+  Object? visit(Object? current, String path, int depth) {
     nodes += 1;
     if (nodes > NormalizedBoxScoreLimits.maxNodes ||
         depth > NormalizedBoxScoreLimits.maxDepth) {
       _fail('resourceLimitExceeded', path);
     }
-    if (current == null || current is bool) return;
+    if (current == null) {
+      charge(4, path);
+      return null;
+    }
+    if (current is bool) {
+      charge(current ? 4 : 5, path);
+      return current;
+    }
     if (current is String) {
       if (_utf8Length(current) > NormalizedBoxScoreLimits.maxStringBytes) {
         _fail('resourceLimitExceeded', path);
       }
-      return;
+      final normalized = OfficialStatUnicodeNormalization.nfc(current);
+      if (_utf8Length(normalized) > NormalizedBoxScoreLimits.maxStringBytes) {
+        _fail('resourceLimitExceeded', path);
+      }
+      charge(_utf8Length(jsonEncode(normalized)), path);
+      return normalized;
     }
     if (current is num) {
       if (!current.isFinite ||
@@ -118,39 +141,61 @@ void _preflight(Object? value) {
           current != current.truncateToDouble()) {
         _fail('invalidNonnegativeSafeInteger', path);
       }
-      return;
+      final normalized = current == 0 ? 0 : current.toInt();
+      charge(_utf8Length(jsonEncode(normalized)), path);
+      return normalized;
     }
-    if (current is List<Object?>) {
-      for (var index = 0; index < current.length; index += 1) {
-        visit(current[index], '$path[$index]', depth + 1);
+    if (current is List) {
+      final items = <Object?>[];
+      final iterator = current.iterator;
+      while (iterator.moveNext()) {
+        if (items.length >= NormalizedBoxScoreLimits.maxContainerEntries) {
+          _fail('resourceLimitExceeded', path);
+        }
+        items.add(iterator.current);
       }
-      return;
+      charge(2 + (items.isEmpty ? 0 : items.length - 1), path);
+      return <Object?>[
+        for (var index = 0; index < items.length; index += 1)
+          visit(items[index], '$path[$index]', depth + 1),
+      ];
     }
-    if (current is Map<Object?, Object?>) {
-      final keys = _sortedKeys(current);
-      for (final key in keys) {
-        if (!_asciiKey.hasMatch(key)) _fail('invalidCanonicalValue', path);
+    if (current is Map) {
+      final entries = <MapEntry<String, Object?>>[];
+      final keys = <String>{};
+      final iterator = current.entries.iterator;
+      while (iterator.moveNext()) {
+        if (entries.length >= NormalizedBoxScoreLimits.maxObjectKeys) {
+          _fail('resourceLimitExceeded', path);
+        }
+        final entry = iterator.current;
+        final key = entry.key;
+        if (key is! String || !_asciiKey.hasMatch(key)) {
+          _fail('invalidCanonicalValue', path);
+        }
         if (_utf8Length(key) > NormalizedBoxScoreLimits.maxStringBytes) {
           _fail('resourceLimitExceeded', path);
         }
-        visit(current[key], '$path.$key', depth + 1);
+        if (!keys.add(key)) _fail('invalidCanonicalValue', path);
+        entries.add(MapEntry<String, Object?>(key, entry.value));
       }
-      return;
+      entries.sort((left, right) => left.key.compareTo(right.key));
+      charge(2 + (entries.isEmpty ? 0 : entries.length - 1), path);
+      final snapshot = <String, Object?>{};
+      for (final entry in entries) {
+        charge(_utf8Length(jsonEncode(entry.key)) + 1, path);
+        snapshot[entry.key] = visit(
+          entry.value,
+          '$path.${entry.key}',
+          depth + 1,
+        );
+      }
+      return snapshot;
     }
     _fail('invalidCanonicalValue', path);
   }
 
-  visit(value, r'$', 0);
-  String encoded;
-  try {
-    encoded = OfficialStatCanonicalEncoding.encode(value);
-  } on Object {
-    _fail('invalidCanonicalValue', r'$');
-  }
-  if (_utf8Length(encoded) >
-      NormalizedBoxScoreLimits.maxCanonicalPayloadBytes) {
-    _fail('resourceLimitExceeded', r'$');
-  }
+  return visit(value, r'$', 0);
 }
 
 Map<String, Object?> _record(
@@ -184,7 +229,7 @@ String _text(Object? value, String path, [int maxBytes = 512]) {
   if (value is! String || value.isEmpty || _utf8Length(value) > maxBytes) {
     _fail('invalidString', path);
   }
-  final normalized = unicode.nfc(value);
+  final normalized = OfficialStatUnicodeNormalization.nfc(value);
   if (_utf8Length(normalized) > maxBytes) _fail('invalidString', path);
   return normalized;
 }
@@ -205,6 +250,12 @@ int _nonnegativeInteger(Object? value, String path) {
     _fail('invalidNonnegativeSafeInteger', path);
   }
   return value.toInt();
+}
+
+int _positiveInteger(Object? value, String path) {
+  final parsed = _nonnegativeInteger(value, path);
+  if (parsed == 0) _fail('invalidNonnegativeSafeInteger', path);
+  return parsed;
 }
 
 bool _boolean(Object? value, String path) {
@@ -403,10 +454,156 @@ bool _allCountsZero(Map<String, int> counts) =>
 bool _absentFact(Map<String, Object?> value, String reason) =>
     value['state'] == 'notApplicable' && value['reasonCode'] == reason;
 
+Map<String, Object?> _validateRules(Object? value) {
+  final raw = _record(value, r'$.rules', [
+    'completedTiesAllowed',
+    'exceptionalScoringProfile',
+    'overtimePolicy',
+    'penaltyAccumulationGroups',
+    'playingTimeRoundingProfile',
+    'regulationPeriodCount',
+    'rulesProfileId',
+    'teamTimeCapacityMultiplier',
+  ]);
+  final rulesProfileId = _enumeration(
+    raw['rulesProfileId'],
+    r'$.rules.rulesProfileId',
+    ['generic-explicit-v2', 'fiba-2024-reference-v1'],
+  );
+  final regulationPeriodCount = _positiveInteger(
+    raw['regulationPeriodCount'],
+    r'$.rules.regulationPeriodCount',
+  );
+  final completedTiesAllowed = _boolean(
+    raw['completedTiesAllowed'],
+    r'$.rules.completedTiesAllowed',
+  );
+  final overtimeRaw = _record(
+    raw['overtimePolicy'],
+    r'$.rules.overtimePolicy',
+    ['allowed', 'nominalDurationMs'],
+  );
+  final overtimePolicy = <String, Object?>{
+    'allowed': _boolean(
+      overtimeRaw['allowed'],
+      r'$.rules.overtimePolicy.allowed',
+    ),
+    'nominalDurationMs': _countFact(
+      overtimeRaw['nominalDurationMs'],
+      r'$.rules.overtimePolicy.nominalDurationMs',
+    ),
+  };
+  final overtimeDuration =
+      overtimePolicy['nominalDurationMs']! as Map<String, Object?>;
+  if (overtimePolicy['allowed'] == true) {
+    if (overtimeDuration['state'] != 'known' ||
+        overtimeDuration['value'] == 0) {
+      _fail('invalidRulesProfile', r'$.rules.overtimePolicy.nominalDurationMs');
+    }
+  } else if (!_absentFact(overtimeDuration, 'overtime_not_allowed')) {
+    _fail('invalidRulesProfile', r'$.rules.overtimePolicy.nominalDurationMs');
+  }
+  final teamTimeCapacityMultiplier = _countFact(
+    raw['teamTimeCapacityMultiplier'],
+    r'$.rules.teamTimeCapacityMultiplier',
+  );
+  if (teamTimeCapacityMultiplier['state'] == 'known' &&
+      teamTimeCapacityMultiplier['value'] == 0) {
+    _fail('invalidRulesProfile', r'$.rules.teamTimeCapacityMultiplier');
+  }
+  final playingTimeRoundingProfile = _enumeration(
+    raw['playingTimeRoundingProfile'],
+    r'$.rules.playingTimeRoundingProfile',
+    ['nearest-half-up-v1', 'fiba-2024-reference-sheet-v1'],
+  );
+  final exceptionalScoringProfile = _enumeration(
+    raw['exceptionalScoringProfile'],
+    r'$.rules.exceptionalScoringProfile',
+    ['fiba-2024-reference-attribution-v1'],
+  );
+  final groupValues = _list(
+    raw['penaltyAccumulationGroups'],
+    r'$.rules.penaltyAccumulationGroups',
+  );
+  if (groupValues.length > NormalizedBoxScoreLimits.maxPenaltyGroups) {
+    _fail('resourceLimitExceeded', r'$.rules.penaltyAccumulationGroups');
+  }
+  final groupIds = <String>{};
+  final groups = <Object?>[];
+  for (var index = 0; index < groupValues.length; index += 1) {
+    final path =
+        r'$.rules.penaltyAccumulationGroups'
+        '[$index]';
+    final group = _record(groupValues[index], path, [
+      'groupId',
+      'penaltyStartsAtFoul',
+      'periodNumbers',
+    ]);
+    final groupId = _identifier(group['groupId'], '$path.groupId');
+    if (!groupIds.add(groupId)) _fail('invalidPenaltyPolicy', '$path.groupId');
+    final periodValues = _list(group['periodNumbers'], '$path.periodNumbers');
+    if (periodValues.isEmpty ||
+        periodValues.length > NormalizedBoxScoreLimits.maxPeriods) {
+      _fail('invalidPenaltyPolicy', '$path.periodNumbers');
+    }
+    final periodNumbers = <Object?>[];
+    for (
+      var numberIndex = 0;
+      numberIndex < periodValues.length;
+      numberIndex += 1
+    ) {
+      final number = _positiveInteger(
+        periodValues[numberIndex],
+        '$path.periodNumbers[$numberIndex]',
+      );
+      if (periodNumbers.isNotEmpty && number <= (periodNumbers.last! as int)) {
+        _fail('invalidPenaltyPolicy', '$path.periodNumbers');
+      }
+      periodNumbers.add(number);
+    }
+    final penaltyStartsAtFoul = _countFact(
+      group['penaltyStartsAtFoul'],
+      '$path.penaltyStartsAtFoul',
+    );
+    if (penaltyStartsAtFoul['state'] == 'notApplicable' ||
+        (penaltyStartsAtFoul['state'] == 'known' &&
+            penaltyStartsAtFoul['value'] == 0)) {
+      _fail('invalidPenaltyPolicy', '$path.penaltyStartsAtFoul');
+    }
+    groups.add({
+      'groupId': groupId,
+      'penaltyStartsAtFoul': penaltyStartsAtFoul,
+      'periodNumbers': periodNumbers,
+    });
+  }
+  if (rulesProfileId == 'fiba-2024-reference-v1' &&
+      (regulationPeriodCount != 4 ||
+          completedTiesAllowed ||
+          overtimePolicy['allowed'] != true ||
+          overtimeDuration['state'] != 'known' ||
+          overtimeDuration['value'] != 300000 ||
+          teamTimeCapacityMultiplier['state'] != 'known' ||
+          teamTimeCapacityMultiplier['value'] != 5 ||
+          playingTimeRoundingProfile != 'fiba-2024-reference-sheet-v1')) {
+    _fail('invalidRulesProfile', r'$.rules');
+  }
+  return {
+    'completedTiesAllowed': completedTiesAllowed,
+    'exceptionalScoringProfile': exceptionalScoringProfile,
+    'overtimePolicy': overtimePolicy,
+    'penaltyAccumulationGroups': groups,
+    'playingTimeRoundingProfile': playingTimeRoundingProfile,
+    'regulationPeriodCount': regulationPeriodCount,
+    'rulesProfileId': rulesProfileId,
+    'teamTimeCapacityMultiplier': teamTimeCapacityMultiplier,
+  };
+}
+
 Map<String, Object?> _validateTime(
   Object? value,
   String path,
   bool enteredPlay,
+  String roundingProfile,
 ) {
   final raw = _record(value, path, [
     'playedTimeMs',
@@ -428,6 +625,7 @@ Map<String, Object?> _validateTime(
   ]);
   final roundingMode = _enumeration(raw['roundingMode'], '$path.roundingMode', [
     'nearestHalfUp',
+    'fiba2024ReferenceSheet',
     'notApplicable',
   ]);
   if (!enteredPlay) {
@@ -476,21 +674,18 @@ Map<String, Object?> _validateTime(
   final played = playedTimeMs['value']! as int;
   final precision = timePrecisionMs['value']! as int;
   if (timeSource == 'officialSheetRounded') {
-    if (roundingMode != 'nearestHalfUp' || played % precision != 0) {
+    final expectedMode = roundingProfile == 'nearest-half-up-v1'
+        ? 'nearestHalfUp'
+        : 'fiba2024ReferenceSheet';
+    if (roundingMode != expectedMode || played % precision != 0) {
       _fail('invalidTimeProvenance', path);
     }
-    final candidateLower = played - (precision ~/ 2);
-    final lowerInclusive = candidateLower < 0 ? 0 : candidateLower;
-    final upperExclusive = _safeAdd(played, (precision / 2).ceil(), path);
+    if (roundingProfile == 'fiba-2024-reference-sheet-v1' &&
+        precision != 60000) {
+      _fail('invalidTimeProvenance', '$path.timePrecisionMs');
+    }
     return {
       'playedTimeMs': playedTimeMs,
-      'possibleIntervalMs': {
-        'state': 'known',
-        'value': {
-          'lowerInclusive': lowerInclusive,
-          'upperExclusive': upperExclusive,
-        },
-      },
       'roundingMode': roundingMode,
       'timePrecisionMs': timePrecisionMs,
       'timeSource': timeSource,
@@ -575,6 +770,7 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
   Object? value,
   String path,
   String teamEntryId,
+  String roundingProfile,
 ) {
   final raw = _record(value, path, [
     'counts',
@@ -648,7 +844,12 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
   if (counts['freeMade']! > counts['freeAttempted']!) {
     _fail('makesExceedAttempts', '$path.counts.freeMade');
   }
-  final time = _validateTime(raw['time'], '$path.time', enteredPlay);
+  final time = _validateTime(
+    raw['time'],
+    '$path.time',
+    enteredPlay,
+    roundingProfile,
+  );
   final departure = _validateDeparture(raw['departure'], '$path.departure');
   if (!enteredPlay && departure['kind'] != 'none') {
     _fail('invalidDeparture', '$path.departure');
@@ -680,6 +881,7 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
   String path,
   Set<String> seenParticipants,
   Set<String> seenPlayers,
+  String roundingProfile,
 ) {
   final raw = _record(value, path, [
     'players',
@@ -704,6 +906,7 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
       playerValues[index],
       '$path.players[$index]',
       teamEntryId,
+      roundingProfile,
     );
     final participantId = parsed.output['participantId']! as String;
     final playerId = parsed.output['playerId']! as String;
@@ -765,34 +968,49 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
   );
 }
 
-({List<Object?> periods, Map<String, Object?> score}) _validatePeriods(
+({
+  Map<String, Object?> counterPoints,
+  List<Object?> periods,
+  Map<String, Object?> score,
+  Map<String, Object?> totalElapsedMs,
+})
+_validatePeriods(
   Object? value,
-  int regulationPeriodCount,
-  bool requiresCompleteRegulation,
+  Map<String, Object?> rules,
+  bool requiresCompletePlay,
 ) {
   final rawPeriods = _list(value, r'$.periods');
   if (rawPeriods.length > NormalizedBoxScoreLimits.maxPeriods) {
     _fail('resourceLimitExceeded', r'$.periods');
   }
-  if (requiresCompleteRegulation && rawPeriods.length < regulationPeriodCount) {
+  final regulationPeriodCount = rules['regulationPeriodCount']! as int;
+  if (requiresCompletePlay && rawPeriods.length < regulationPeriodCount) {
     _fail('invalidPeriodSequence', r'$.periods');
   }
   final score = <String, Object?>{'home': 0, 'away': 0};
+  final counterPoints = <String, Object?>{'home': 0, 'away': 0};
   final periods = <Object?>[];
+  int? totalElapsed = 0;
+  var cumulativeHome = 0;
+  var cumulativeAway = 0;
   for (var index = 0; index < rawPeriods.length; index += 1) {
     final path =
         r'$.periods'
         '[$index]';
     final raw = _record(rawPeriods[index], path, [
       'awayScore',
-      'durationMs',
+      'completionState',
+      'elapsedDurationMs',
+      'exceptionalScoringPoints',
       'homeScore',
       'kind',
+      'nominalDurationMs',
       'number',
       'overtimeIndex',
+      'playerCounterPoints',
       'source',
     ]);
-    final number = _nonnegativeInteger(raw['number'], '$path.number');
+    final number = _positiveInteger(raw['number'], '$path.number');
     if (number != index + 1) _fail('invalidPeriodSequence', '$path.number');
     final kind = _enumeration(raw['kind'], '$path.kind', [
       'regulation',
@@ -810,18 +1028,87 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
       }
     } else {
       final expectedOvertime = number - regulationPeriodCount;
-      if (kind != 'overtime' ||
+      final overtimePolicy = rules['overtimePolicy']! as Map<String, Object?>;
+      if (overtimePolicy['allowed'] != true ||
+          kind != 'overtime' ||
           overtimeIndex['state'] != 'known' ||
           overtimeIndex['value'] != expectedOvertime) {
         _fail('invalidOvertimeSequence', path);
       }
     }
-    final durationMs = _countFact(raw['durationMs'], '$path.durationMs');
-    if (durationMs['state'] == 'known' && durationMs['value'] == 0) {
-      _fail('invalidPeriodSequence', '$path.durationMs');
+    final nominalDurationMs = _countFact(
+      raw['nominalDurationMs'],
+      '$path.nominalDurationMs',
+    );
+    if (nominalDurationMs['state'] != 'known' ||
+        nominalDurationMs['value'] == 0) {
+      _fail('invalidPeriodState', '$path.nominalDurationMs');
+    }
+    if (kind == 'overtime') {
+      final overtimePolicy = rules['overtimePolicy']! as Map<String, Object?>;
+      final configured =
+          overtimePolicy['nominalDurationMs']! as Map<String, Object?>;
+      if (configured['state'] != 'known' ||
+          nominalDurationMs['value'] != configured['value']) {
+        _fail('invalidOvertimeSequence', '$path.nominalDurationMs');
+      }
+    }
+    final elapsedDurationMs = _countFact(
+      raw['elapsedDurationMs'],
+      '$path.elapsedDurationMs',
+    );
+    final completionState = _enumeration(
+      raw['completionState'],
+      '$path.completionState',
+      [
+        'completed',
+        'partial',
+        'suspended',
+        'resumedCompleted',
+        'abandoned',
+        'adjudicated',
+      ],
+    );
+    if (completionState == 'completed' ||
+        completionState == 'resumedCompleted') {
+      if (elapsedDurationMs['state'] != 'known' ||
+          elapsedDurationMs['value'] != nominalDurationMs['value']) {
+        _fail('invalidPeriodState', '$path.elapsedDurationMs');
+      }
+    } else {
+      if (elapsedDurationMs['state'] == 'notApplicable' ||
+          (elapsedDurationMs['state'] == 'known' &&
+              (elapsedDurationMs['value']! as int) >
+                  (nominalDurationMs['value']! as int))) {
+        _fail('invalidPeriodState', '$path.elapsedDurationMs');
+      }
+      if (index != rawPeriods.length - 1) {
+        _fail('invalidPeriodState', '$path.completionState');
+      }
+    }
+    if (requiresCompletePlay &&
+        completionState != 'completed' &&
+        completionState != 'resumedCompleted') {
+      _fail('invalidPeriodState', '$path.completionState');
     }
     final homeScore = _nonnegativeInteger(raw['homeScore'], '$path.homeScore');
     final awayScore = _nonnegativeInteger(raw['awayScore'], '$path.awayScore');
+    final playerCounterPoints = _scorePair(
+      raw['playerCounterPoints'],
+      '$path.playerCounterPoints',
+    );
+    final exceptionalScoringPoints = _scorePair(
+      raw['exceptionalScoringPoints'],
+      '$path.exceptionalScoringPoints',
+    );
+    if (playerCounterPoints['home'] != homeScore ||
+        playerCounterPoints['away'] != awayScore ||
+        (exceptionalScoringPoints['home']! as int) >
+            (playerCounterPoints['home']! as int) ||
+        (exceptionalScoringPoints['away']! as int) >
+            (playerCounterPoints['away']! as int)) {
+      _fail('playedScoreAttributionMismatch', path);
+    }
     score['home'] = _safeAdd(
       score['home']! as int,
       homeScore,
@@ -832,6 +1119,45 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
       awayScore,
       r'$.periods.awayScore',
     );
+    counterPoints['home'] = _safeAdd(
+      counterPoints['home']! as int,
+      playerCounterPoints['home']! as int,
+      r'$.periods.playerCounterPoints.home',
+    );
+    counterPoints['away'] = _safeAdd(
+      counterPoints['away']! as int,
+      playerCounterPoints['away']! as int,
+      r'$.periods.playerCounterPoints.away',
+    );
+    cumulativeHome = _safeAdd(
+      cumulativeHome,
+      homeScore,
+      r'$.periods.homeScore',
+    );
+    cumulativeAway = _safeAdd(
+      cumulativeAway,
+      awayScore,
+      r'$.periods.awayScore',
+    );
+    if (kind == 'overtime' &&
+        index < rawPeriods.length - 1 &&
+        cumulativeHome != cumulativeAway) {
+      _fail('invalidOvertimeSequence', path);
+    }
+    if (number == regulationPeriodCount &&
+        rawPeriods.length > number &&
+        cumulativeHome != cumulativeAway) {
+      _fail('invalidOvertimeSequence', path);
+    }
+    if (totalElapsed != null) {
+      totalElapsed = elapsedDurationMs['state'] == 'known'
+          ? _safeAdd(
+              totalElapsed,
+              elapsedDurationMs['value']! as int,
+              r'$.periods.elapsedDurationMs',
+            )
+          : null;
+    }
     final source = _enumeration(raw['source'], '$path.source', [
       'liveCounter',
       'officialSheet',
@@ -839,48 +1165,195 @@ Map<String, Object?> _validateDeparture(Object? value, String path) {
     ]);
     periods.add({
       'awayScore': awayScore,
-      'durationMs': durationMs,
+      'completionState': completionState,
+      'elapsedDurationMs': elapsedDurationMs,
+      'exceptionalScoringPoints': exceptionalScoringPoints,
       'homeScore': homeScore,
       'kind': kind,
+      'nominalDurationMs': nominalDurationMs,
       'number': number,
       'overtimeIndex': overtimeIndex,
+      'playerCounterPoints': playerCounterPoints,
       'source': source,
     });
   }
-  return (periods: periods, score: score);
+  return (
+    counterPoints: counterPoints,
+    periods: periods,
+    score: score,
+    totalElapsedMs: totalElapsed == null
+        ? <String, Object?>{
+            'reasonCode': 'elapsed_duration_unknown',
+            'state': 'unknown',
+            'value': null,
+          }
+        : <String, Object?>{'state': 'known', 'value': totalElapsed},
+  );
+}
+
+({List<Object?> groups, Map<int, Map<String, Object?>> groupByPeriod})
+_validatePenaltyGroups(Map<String, Object?> rules, List<Object?> periods) {
+  final groups = rules['penaltyAccumulationGroups']! as List<Object?>;
+  final groupByPeriod = <int, Map<String, Object?>>{};
+  for (var groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    final group = groups[groupIndex]! as Map<String, Object?>;
+    for (final periodNumberValue in group['periodNumbers']! as List<Object?>) {
+      final periodNumber = periodNumberValue! as int;
+      if (periodNumber > periods.length ||
+          groupByPeriod.containsKey(periodNumber)) {
+        _fail(
+          'invalidPenaltyPolicy',
+          r'$.rules.penaltyAccumulationGroups'
+              '[$groupIndex].periodNumbers',
+        );
+      }
+      groupByPeriod[periodNumber] = group;
+    }
+  }
+  for (var number = 1; number <= periods.length; number += 1) {
+    if (!groupByPeriod.containsKey(number)) {
+      _fail('invalidPenaltyPolicy', r'$.rules.penaltyAccumulationGroups');
+    }
+  }
+  if (periods.isEmpty && groups.isNotEmpty) {
+    _fail('invalidPenaltyPolicy', r'$.rules.penaltyAccumulationGroups');
+  }
+  if (rules['rulesProfileId'] == 'fiba-2024-reference-v1') {
+    final expected = <List<int>>[
+      if (periods.isNotEmpty) [1],
+      if (periods.length >= 2) [2],
+      if (periods.length >= 3) [3],
+      if (periods.length >= 4)
+        [for (var number = 4; number <= periods.length; number += 1) number],
+    ];
+    if (groups.length != expected.length) {
+      _fail('invalidPenaltyPolicy', r'$.rules.penaltyAccumulationGroups');
+    }
+    for (var index = 0; index < expected.length; index += 1) {
+      final group = groups[index]! as Map<String, Object?>;
+      final periodNumbers = group['periodNumbers']! as List<Object?>;
+      final threshold = group['penaltyStartsAtFoul']! as Map<String, Object?>;
+      if (periodNumbers.length != expected[index].length ||
+          [for (final value in periodNumbers) value as int].join(',') !=
+              expected[index].join(',') ||
+          threshold['state'] != 'known' ||
+          threshold['value'] != 5) {
+        _fail(
+          'invalidPenaltyPolicy',
+          r'$.rules.penaltyAccumulationGroups'
+              '[$index]',
+        );
+      }
+    }
+  }
+  return (groups: groups, groupByPeriod: groupByPeriod);
+}
+
+Map<String, Object?> _roundedTimeInterval(
+  Map<String, Object?> time,
+  String profile,
+  Map<String, Object?> totalElapsedMs,
+  String path,
+) {
+  if (time.containsKey('possibleIntervalMs')) {
+    return time['possibleIntervalMs']! as Map<String, Object?>;
+  }
+  final played =
+      (time['playedTimeMs']! as Map<String, Object?>)['value']! as int;
+  final precision =
+      (time['timePrecisionMs']! as Map<String, Object?>)['value']! as int;
+  if (time['timeSource'] != 'officialSheetRounded') {
+    return {
+      'state': 'known',
+      'value': {
+        'lowerInclusive': played,
+        'upperExclusive': _safeAdd(played, precision, path),
+      },
+    };
+  }
+  if (profile == 'nearest-half-up-v1') {
+    return {
+      'state': 'known',
+      'value': {
+        'lowerInclusive': played - (precision ~/ 2) < 0
+            ? 0
+            : played - (precision ~/ 2),
+        'upperExclusive': _safeAdd(played, (precision / 2).ceil(), path),
+      },
+    };
+  }
+  if (totalElapsedMs['state'] != 'known') {
+    _fail('invalidTimeProvenance', path);
+  }
+  final maximum = totalElapsedMs['value']! as int;
+  if (played == 0 || played > maximum || precision != 60000) {
+    _fail('invalidTimeProvenance', path);
+  }
+  var lowerInclusive = played - 30000 < 1 ? 1 : played - 30000;
+  var upperExclusive = _safeAdd(played, 30000, path);
+  final maximumExclusive = _safeAdd(maximum, 1, path);
+  if (upperExclusive > maximumExclusive) upperExclusive = maximumExclusive;
+  if (played == 60000) lowerInclusive = 1;
+  if (maximum % 60000 == 0 && played == maximum - 60000) {
+    lowerInclusive = played - 30000 < 1 ? 1 : played - 30000;
+    upperExclusive = maximum;
+  }
+  if (played == maximum) {
+    lowerInclusive = maximum;
+    upperExclusive = maximumExclusive;
+  }
+  if (lowerInclusive >= upperExclusive) {
+    _fail('invalidTimeProvenance', path);
+  }
+  return {
+    'state': 'known',
+    'value': {
+      'lowerInclusive': lowerInclusive,
+      'upperExclusive': upperExclusive,
+    },
+  };
+}
+
+int? _knownElapsedBefore(List<Object?> periods, int periodNumber) {
+  var elapsed = 0;
+  for (var index = 0; index < periodNumber - 1; index += 1) {
+    final period = periods[index]! as Map<String, Object?>;
+    final value = period['elapsedDurationMs']! as Map<String, Object?>;
+    if (value['state'] != 'known') return null;
+    elapsed = _safeAdd(
+      elapsed,
+      value['value']! as int,
+      r'$.periods.elapsedDurationMs',
+    );
+  }
+  return elapsed;
 }
 
 void _validatePlayerTimeline(
   List<({Map<String, int> counts, Map<String, Object?> output})> teams,
   List<Object?> periods,
+  Map<String, Object?> totalElapsedMs,
+  Map<String, Object?> rules,
 ) {
-  int? elapsedMs = 0;
-  for (final periodValue in periods) {
-    final period = periodValue! as Map<String, Object?>;
-    final duration = period['durationMs']! as Map<String, Object?>;
-    if (duration['state'] != 'known') {
-      elapsedMs = null;
-      break;
-    }
-    elapsedMs = _safeAdd(
-      elapsedMs!,
-      duration['value']! as int,
-      r'$.periods.durationMs',
-    );
-  }
   for (final team in teams) {
     for (final playerValue in team.output['players']! as List<Object?>) {
       final player = playerValue! as Map<String, Object?>;
       final time = player['time']! as Map<String, Object?>;
-      final interval = time['possibleIntervalMs']! as Map<String, Object?>;
-      if (elapsedMs != null && interval['state'] == 'known') {
+      final path =
+          r'$.participants.'
+          '${player['participantId']}.time';
+      final interval = _roundedTimeInterval(
+        time,
+        rules['playingTimeRoundingProfile']! as String,
+        totalElapsedMs,
+        path,
+      );
+      time['possibleIntervalMs'] = interval;
+      if (totalElapsedMs['state'] == 'known' && interval['state'] == 'known') {
         final bounds = interval['value']! as Map<String, Object?>;
-        if ((bounds['lowerInclusive']! as int) > elapsedMs) {
-          _fail(
-            'timeOutsideGameDuration',
-            r'$.participants.'
-                '${player['participantId']}.time',
-          );
+        if ((bounds['lowerInclusive']! as int) >
+            (totalElapsedMs['value']! as int)) {
+          _fail('timeOutsideGameDuration', path);
         }
       }
       final departure = player['departure']! as Map<String, Object?>;
@@ -894,25 +1367,49 @@ void _validatePlayerTimeline(
               '${player['participantId']}.departure',
         );
       }
-      if (periodNumber['state'] == 'known') {
-        final number = periodNumber['value']! as int;
-        if (number == 0 || number > periods.length) {
-          _fail(
-            'invalidDeparture',
-            r'$.participants.'
-                '${player['participantId']}.departure.periodNumber',
-          );
-        }
-        final period = periods[number - 1]! as Map<String, Object?>;
-        final duration = period['durationMs']! as Map<String, Object?>;
-        if (clock['state'] == 'known' &&
-            duration['state'] == 'known' &&
-            (clock['value']! as int) > (duration['value']! as int)) {
+      if (periodNumber['state'] != 'known') continue;
+      final number = periodNumber['value']! as int;
+      if (number == 0 || number > periods.length) {
+        _fail(
+          'invalidDeparture',
+          r'$.participants.'
+              '${player['participantId']}.departure.periodNumber',
+        );
+      }
+      final period = periods[number - 1]! as Map<String, Object?>;
+      final nominal = period['nominalDurationMs']! as Map<String, Object?>;
+      final elapsed = period['elapsedDurationMs']! as Map<String, Object?>;
+      if (clock['state'] == 'known') {
+        if (nominal['state'] != 'known' ||
+            (clock['value']! as int) > (nominal['value']! as int)) {
           _fail(
             'eventClockOutsidePeriod',
             r'$.participants.'
                 '${player['participantId']}.departure.clockRemainingMs',
           );
+        }
+        final elapsedAtDeparture =
+            (nominal['value']! as int) - (clock['value']! as int);
+        if (elapsed['state'] == 'known' &&
+            elapsedAtDeparture > (elapsed['value']! as int)) {
+          _fail(
+            'eventClockOutsidePeriod',
+            r'$.participants.'
+                '${player['participantId']}.departure.clockRemainingMs',
+          );
+        }
+        final before = _knownElapsedBefore(periods, number);
+        if (before != null && interval['state'] == 'known') {
+          final bounds = interval['value']! as Map<String, Object?>;
+          final opportunity = _safeAdd(
+            before,
+            elapsedAtDeparture,
+            r'$.participants.'
+            '${player['participantId']}.departure',
+          );
+          if ((bounds['lowerInclusive']! as int) > opportunity) {
+            _fail('departureTimeConflict', path);
+          }
         }
       }
     }
@@ -922,6 +1419,191 @@ void _validatePlayerTimeline(
 Map<String, Object?> _evidenceFact(Object? value, String path) =>
     _fact(value, path, _stringList);
 
+List<Object?> _validateScoreAdjustments(
+  Object? value,
+  List<Object?> periods,
+  Set<String> teamIds,
+  Map<String, Map<String, Object?>> participants,
+) {
+  final rawAdjustments = _list(value, r'$.playedScoreAdjustments');
+  if (rawAdjustments.length >
+      NormalizedBoxScoreLimits.maxPlayedScoreAdjustments) {
+    _fail('resourceLimitExceeded', r'$.playedScoreAdjustments');
+  }
+  final adjustmentIds = <String>{};
+  final requiredShots = <String, Map<String, int>>{};
+  final adjustments = <Object?>[];
+  for (var index = 0; index < rawAdjustments.length; index += 1) {
+    final path =
+        r'$.playedScoreAdjustments'
+        '[$index]';
+    final raw = _record(rawAdjustments[index], path, [
+      'adjustmentId',
+      'creditedParticipantId',
+      'creditedShot',
+      'evidenceRefs',
+      'kind',
+      'periodNumber',
+      'points',
+      'statisticalTreatment',
+      'teamEntryId',
+      'violatingTeamEntryId',
+    ]);
+    final adjustmentId = _identifier(raw['adjustmentId'], '$path.adjustmentId');
+    if (!adjustmentIds.add(adjustmentId)) {
+      _fail('invalidScoreAdjustment', '$path.adjustmentId');
+    }
+    final teamEntryId = _identifier(raw['teamEntryId'], '$path.teamEntryId');
+    final violatingTeamEntryId = _identifier(
+      raw['violatingTeamEntryId'],
+      '$path.violatingTeamEntryId',
+    );
+    if (!teamIds.contains(teamEntryId) ||
+        !teamIds.contains(violatingTeamEntryId) ||
+        teamEntryId == violatingTeamEntryId) {
+      _fail('invalidScoreAdjustment', '$path.violatingTeamEntryId');
+    }
+    final kind = _enumeration(raw['kind'], '$path.kind', [
+      'accidentalOwnBasket',
+      'defensiveGoaltending',
+    ]);
+    final points = _positiveInteger(raw['points'], '$path.points');
+    final creditedShot = _enumeration(
+      raw['creditedShot'],
+      '$path.creditedShot',
+      ['twoPointMade', 'threePointMade'],
+    );
+    if ((kind == 'accidentalOwnBasket' &&
+            (points != 2 || creditedShot != 'twoPointMade')) ||
+        (kind == 'defensiveGoaltending' &&
+            ((points == 2 && creditedShot != 'twoPointMade') ||
+                (points == 3 && creditedShot != 'threePointMade') ||
+                (points != 2 && points != 3)))) {
+      _fail('invalidScoreAdjustment', '$path.points');
+    }
+    final statisticalTreatment = _enumeration(
+      raw['statisticalTreatment'],
+      '$path.statisticalTreatment',
+      ['includedInPlayerCounters', 'additiveToPlayerCounters'],
+    );
+    if (statisticalTreatment != 'includedInPlayerCounters') {
+      _fail('invalidScoreAdjustment', '$path.statisticalTreatment');
+    }
+    final periodNumber = _fact(
+      raw['periodNumber'],
+      '$path.periodNumber',
+      _nonnegativeInteger,
+    );
+    if (periodNumber['state'] != 'known' ||
+        periodNumber['value'] == 0 ||
+        (periodNumber['value']! as int) > periods.length) {
+      _fail('invalidScoreAdjustment', '$path.periodNumber');
+    }
+    final creditedParticipantId = _fact(
+      raw['creditedParticipantId'],
+      '$path.creditedParticipantId',
+      _identifier,
+    );
+    if (creditedParticipantId['state'] != 'known') {
+      _fail('invalidScoreAdjustment', '$path.creditedParticipantId');
+    }
+    final participant = participants[creditedParticipantId['value']];
+    if (participant == null ||
+        participant['enteredPlay'] != true ||
+        participant['teamEntryId'] != teamEntryId) {
+      _fail('invalidScoreAdjustment', '$path.creditedParticipantId');
+    }
+    final evidenceRefs = _evidenceFact(
+      raw['evidenceRefs'],
+      '$path.evidenceRefs',
+    );
+    if (evidenceRefs['state'] != 'known' ||
+        (evidenceRefs['value']! as List<Object?>).isEmpty) {
+      _fail('invalidScoreAdjustment', '$path.evidenceRefs');
+    }
+    final shotRequirement = requiredShots.putIfAbsent(
+      creditedParticipantId['value']! as String,
+      () => {'three': 0, 'two': 0},
+    );
+    final requirementKey = creditedShot == 'twoPointMade' ? 'two' : 'three';
+    shotRequirement[requirementKey] = _safeAdd(
+      shotRequirement[requirementKey]!,
+      1,
+      '$path.creditedShot',
+    );
+    adjustments.add({
+      'adjustmentId': adjustmentId,
+      'creditedParticipantId': creditedParticipantId,
+      'creditedShot': creditedShot,
+      'evidenceRefs': evidenceRefs,
+      'kind': kind,
+      'periodNumber': periodNumber,
+      'points': points,
+      'requiredCounterChanges': creditedShot == 'twoPointMade'
+          ? {
+              'threeAttempted': 0,
+              'threeMade': 0,
+              'twoAttempted': 1,
+              'twoMade': 1,
+            }
+          : {
+              'threeAttempted': 1,
+              'threeMade': 1,
+              'twoAttempted': 0,
+              'twoMade': 0,
+            },
+      'statisticalTreatment': statisticalTreatment,
+      'teamEntryId': teamEntryId,
+      'violatingTeamEntryId': violatingTeamEntryId,
+    });
+  }
+  for (final entry in requiredShots.entries) {
+    final counts = participants[entry.key]!['counts']! as Map<String, int>;
+    if (counts['twoMade']! < entry.value['two']! ||
+        counts['twoAttempted']! < entry.value['two']! ||
+        counts['threeMade']! < entry.value['three']! ||
+        counts['threeAttempted']! < entry.value['three']!) {
+      _fail('invalidScoreAdjustment', r'$.playedScoreAdjustments');
+    }
+  }
+  return adjustments;
+}
+
+void _validateExceptionalPointsByPeriod(
+  List<Object?> adjustments,
+  List<Object?> periods,
+  String homeTeamId,
+  String awayTeamId,
+) {
+  final totals = <String, int>{};
+  for (final adjustmentValue in adjustments) {
+    final adjustment = adjustmentValue! as Map<String, Object?>;
+    final periodNumber =
+        (adjustment['periodNumber']! as Map<String, Object?>)['value']! as int;
+    final teamEntryId = adjustment['teamEntryId']! as String;
+    final key = '$periodNumber:$teamEntryId';
+    totals[key] = _safeAdd(
+      totals[key] ?? 0,
+      adjustment['points']! as int,
+      r'$.playedScoreAdjustments',
+    );
+  }
+  for (final periodValue in periods) {
+    final period = periodValue! as Map<String, Object?>;
+    final number = period['number']! as int;
+    final exceptional =
+        period['exceptionalScoringPoints']! as Map<String, Object?>;
+    if ((totals['$number:$homeTeamId'] ?? 0) != exceptional['home'] ||
+        (totals['$number:$awayTeamId'] ?? 0) != exceptional['away']) {
+      _fail(
+        'invalidScoreAdjustment',
+        r'$.periods'
+            '[${number - 1}].exceptionalScoringPoints',
+      );
+    }
+  }
+}
+
 ({
   List<Object?> incidents,
   Map<String, Map<String, Object?>> byParticipant,
@@ -930,10 +1612,10 @@ Map<String, Object?> _evidenceFact(Object? value, String path) =>
 _validateDiscipline(
   Object? value,
   Set<String> teamIds,
-  Map<String, ({bool enteredPlay, String teamEntryId})> participants,
+  Map<String, Map<String, Object?>> participants,
   List<Object?> periods,
-  ({Map<String, Object?> overtime, Map<String, Object?> regulation})
-  penaltyThresholds,
+  ({List<Object?> groups, Map<int, Map<String, Object?>> groupByPeriod})
+  penaltyPolicy,
 ) {
   final rawIncidents = _list(value, r'$.disciplineIncidents');
   if (rawIncidents.length > NormalizedBoxScoreLimits.maxIncidents) {
@@ -966,7 +1648,10 @@ _validateDiscipline(
         },
         'chargedFouls': 0,
         'playerDisqualificationCharges': 0,
-        'teamFoulsByPeriod': <String, Object?>{},
+        'teamFoulsByPeriod': <String, Object?>{
+          for (final period in periods)
+            '${(period! as Map<String, Object?>)['number']}': 0,
+        },
       },
   };
   final incidents = <Object?>[];
@@ -978,6 +1663,7 @@ _validateDiscipline(
       'chargedParticipantId',
       'chargedPartyKind',
       'clockRemainingMs',
+      'context',
       'countsTowardPlayerDisqualification',
       'countsTowardTeamFoul',
       'evidenceRefs',
@@ -996,6 +1682,12 @@ _validateDiscipline(
     if (!teamIds.contains(teamEntryId)) {
       _fail('invalidDisciplineIncident', '$path.teamEntryId');
     }
+    final context = _enumeration(raw['context'], '$path.context', [
+      'onCourt',
+      'bench',
+      'preGame',
+      'interval',
+    ]);
     final chargedPartyKind = _enumeration(
       raw['chargedPartyKind'],
       '$path.chargedPartyKind',
@@ -1012,19 +1704,25 @@ _validateDiscipline(
       _identifier,
     );
     if (chargedPartyKind == 'player') {
-      if (chargedParticipantId['state'] != 'known') {
+      if (context != 'onCourt' || chargedParticipantId['state'] != 'known') {
         _fail('invalidDisciplineIncident', path);
       }
       final participant = participants[chargedParticipantId['value']];
-      if (participant == null || participant.teamEntryId != teamEntryId) {
+      if (participant == null || participant['teamEntryId'] != teamEntryId) {
         _fail('invalidDisciplineIncident', '$path.chargedParticipantId');
       }
-    } else if (!_absentFact(chargedParticipantId, 'not_player_charge')) {
-      _fail('invalidDisciplineIncident', '$path.chargedParticipantId');
+      if (participant['enteredPlay'] != true) {
+        _fail('playerNotEnteredForIncident', '$path.chargedParticipantId');
+      }
+    } else {
+      if (context == 'onCourt' ||
+          !_absentFact(chargedParticipantId, 'not_player_charge')) {
+        _fail('invalidDisciplineIncident', '$path.chargedParticipantId');
+      }
     }
     if (relatedParticipantId['state'] == 'known') {
       final participant = participants[relatedParticipantId['value']];
-      if (participant == null || participant.teamEntryId != teamEntryId) {
+      if (participant == null || participant['teamEntryId'] != teamEntryId) {
         _fail('invalidDisciplineIncident', '$path.relatedParticipantId');
       }
     }
@@ -1033,6 +1731,11 @@ _validateDiscipline(
       '$path.incidentType',
       ['personal', 'technical', 'unsportsmanlike', 'disqualifying'],
     );
+    if (chargedPartyKind != 'player' &&
+        incidentType != 'technical' &&
+        incidentType != 'disqualifying') {
+      _fail('invalidDisciplineIncident', '$path.incidentType');
+    }
     final scoresheetCode = _text(
       raw['scoresheetCode'],
       '$path.scoresheetCode',
@@ -1046,50 +1749,56 @@ _validateDiscipline(
       raw['countsTowardPlayerDisqualification'],
       '$path.countsTowardPlayerDisqualification',
     );
-    if (countsTowardPlayerDisqualification && chargedPartyKind != 'player') {
-      _fail(
-        'invalidDisciplineIncident',
-        '$path.countsTowardPlayerDisqualification',
-      );
+    if ((countsTowardTeamFoul &&
+            (chargedPartyKind != 'player' || context != 'onCourt')) ||
+        (countsTowardPlayerDisqualification && chargedPartyKind != 'player')) {
+      _fail('invalidDisciplineIncident', path);
     }
     final periodNumber = _fact(
       raw['periodNumber'],
       '$path.periodNumber',
       _nonnegativeInteger,
     );
-    if (periodNumber['state'] == 'known' && periodNumber['value'] == 0) {
-      _fail('invalidDisciplineIncident', '$path.periodNumber');
-    }
-    if (countsTowardTeamFoul && periodNumber['state'] != 'known') {
-      _fail('invalidDisciplineIncident', '$path.periodNumber');
-    }
     final clockRemainingMs = _fact(
       raw['clockRemainingMs'],
       '$path.clockRemainingMs',
       _nonnegativeInteger,
     );
-    if (clockRemainingMs['state'] == 'known' &&
-        periodNumber['state'] != 'known') {
-      _fail('eventClockOutsidePeriod', '$path.clockRemainingMs');
-    }
-    if (periodNumber['state'] == 'known') {
-      final number = periodNumber['value']! as int;
-      if (number > periods.length) {
+    if (context == 'preGame') {
+      if (!_absentFact(periodNumber, 'no_play_context') ||
+          !_absentFact(clockRemainingMs, 'no_play_context')) {
         _fail('invalidDisciplineIncident', '$path.periodNumber');
       }
+    } else {
+      if (periodNumber['state'] != 'known' ||
+          periodNumber['value'] == 0 ||
+          (periodNumber['value']! as int) > periods.length) {
+        _fail('invalidDisciplineIncident', '$path.periodNumber');
+      }
+      final number = periodNumber['value']! as int;
       final period = periods[number - 1]! as Map<String, Object?>;
-      final duration = period['durationMs']! as Map<String, Object?>;
-      if (clockRemainingMs['state'] == 'known' &&
-          duration['state'] == 'known' &&
-          (clockRemainingMs['value']! as int) > (duration['value']! as int)) {
-        _fail('eventClockOutsidePeriod', '$path.clockRemainingMs');
+      final nominal = period['nominalDurationMs']! as Map<String, Object?>;
+      final elapsed = period['elapsedDurationMs']! as Map<String, Object?>;
+      if (clockRemainingMs['state'] == 'known') {
+        if (nominal['state'] != 'known' ||
+            (clockRemainingMs['value']! as int) > (nominal['value']! as int)) {
+          _fail('eventClockOutsidePeriod', '$path.clockRemainingMs');
+        }
+        if (elapsed['state'] == 'known' &&
+            (nominal['value']! as int) - (clockRemainingMs['value']! as int) >
+                (elapsed['value']! as int)) {
+          _fail('eventClockOutsidePeriod', '$path.clockRemainingMs');
+        }
+      } else if (clockRemainingMs['state'] == 'notApplicable' &&
+          !_absentFact(clockRemainingMs, 'interval_or_bench_context')) {
+        _fail('invalidDisciplineIncident', '$path.clockRemainingMs');
       }
     }
     final evidenceRefs = _evidenceFact(
       raw['evidenceRefs'],
       '$path.evidenceRefs',
     );
-    if (evidenceRefs['state'] == 'known' &&
+    if (evidenceRefs['state'] != 'known' ||
         (evidenceRefs['value']! as List<Object?>).isEmpty) {
       _fail('invalidDisciplineIncident', '$path.evidenceRefs');
     }
@@ -1151,6 +1860,7 @@ _validateDiscipline(
       'chargedParticipantId': chargedParticipantId,
       'chargedPartyKind': chargedPartyKind,
       'clockRemainingMs': clockRemainingMs,
+      'context': context,
       'countsTowardPlayerDisqualification': countsTowardPlayerDisqualification,
       'countsTowardTeamFoul': countsTowardTeamFoul,
       'evidenceRefs': evidenceRefs,
@@ -1165,25 +1875,45 @@ _validateDiscipline(
   for (final summary in byTeam.values) {
     final teamFouls = summary['teamFoulsByPeriod']! as Map<String, Object?>;
     final penaltyStateByPeriod = <String, Object?>{};
-    for (final periodValue in periods) {
-      final period = periodValue! as Map<String, Object?>;
-      final periodNumber = period['number']! as int;
-      final threshold = period['kind'] == 'regulation'
-          ? penaltyThresholds.regulation
-          : penaltyThresholds.overtime;
-      penaltyStateByPeriod['$periodNumber'] = threshold['state'] == 'known'
-          ? {
-              'state': 'known',
-              'value': {
-                'inPenalty':
-                    ((teamFouls['$periodNumber'] ?? 0) as int) >=
-                    (threshold['value']! as int),
-                'teamFouls': (teamFouls['$periodNumber'] ?? 0) as int,
-                'threshold': threshold['value'],
-              },
-            }
-          : threshold;
+    final penaltyGroups = <Object?>[];
+    for (final groupValue in penaltyPolicy.groups) {
+      final group = groupValue! as Map<String, Object?>;
+      var groupTeamFouls = 0;
+      final threshold = group['penaltyStartsAtFoul']! as Map<String, Object?>;
+      for (final numberValue in group['periodNumbers']! as List<Object?>) {
+        final periodNumber = numberValue! as int;
+        groupTeamFouls = _safeAdd(
+          groupTeamFouls,
+          (teamFouls['$periodNumber'] ?? 0) as int,
+          r'$.disciplineIncidents',
+        );
+        penaltyStateByPeriod['$periodNumber'] = {
+          'groupId': group['groupId'],
+          'groupTeamFoulsThroughPeriod': groupTeamFouls,
+          'inPenalty': threshold['state'] == 'known'
+              ? {
+                  'state': 'known',
+                  'value': groupTeamFouls >= (threshold['value']! as int),
+                }
+              : threshold,
+          'rawTeamFouls': (teamFouls['$periodNumber'] ?? 0) as int,
+          'threshold': threshold,
+        };
+      }
+      penaltyGroups.add({
+        'groupId': group['groupId'],
+        'inPenalty': threshold['state'] == 'known'
+            ? {
+                'state': 'known',
+                'value': groupTeamFouls >= (threshold['value']! as int),
+              }
+            : threshold,
+        'periodNumbers': group['periodNumbers'],
+        'teamFouls': groupTeamFouls,
+        'threshold': threshold,
+      });
     }
+    summary['penaltyGroups'] = penaltyGroups;
     summary['penaltyStateByPeriod'] = penaltyStateByPeriod;
   }
   return (incidents: incidents, byParticipant: byParticipant, byTeam: byTeam);
@@ -1192,6 +1922,7 @@ _validateDiscipline(
 Map<String, Object?> _validateAdministrativeResult(
   Object? value,
   String disposition,
+  String statisticsDisposition,
   Set<String> teamIds,
   String homeTeamEntryId,
 ) {
@@ -1227,7 +1958,8 @@ Map<String, Object?> _validateAdministrativeResult(
     ['includePlayedStatistics', 'exclude', 'policyPending'],
   );
   if (disposition == 'played') {
-    if (!_absentFact(awardedScore, 'not_adjudicated') ||
+    if (statisticsDisposition != 'complete' ||
+        !_absentFact(awardedScore, 'not_adjudicated') ||
         !_absentFact(winnerTeamEntryId, 'not_adjudicated') ||
         !_absentFact(evidenceRefs, 'not_adjudicated') ||
         standingsTreatment != 'playedResult' ||
@@ -1243,10 +1975,22 @@ Map<String, Object?> _validateAdministrativeResult(
       );
     }
     if (evidenceRefs['state'] != 'known' ||
-        (evidenceRefs['value']! as List<Object?>).isEmpty) {
+        (evidenceRefs['value']! as List<Object?>).isEmpty ||
+        playerStatisticsTreatment == 'policyPending') {
+      _fail('invalidAdministrativeResult', r'$.administrativeResult');
+    }
+    if (statisticsDisposition == 'complete' &&
+        playerStatisticsTreatment != 'includePlayedStatistics') {
       _fail(
         'invalidAdministrativeResult',
-        r'$.administrativeResult.evidenceRefs',
+        r'$.administrativeResult.playerStatisticsTreatment',
+      );
+    }
+    if (statisticsDisposition != 'complete' &&
+        playerStatisticsTreatment != 'exclude') {
+      _fail(
+        'invalidAdministrativeResult',
+        r'$.administrativeResult.playerStatisticsTreatment',
       );
     }
     if ((disposition == 'forfeit' || disposition == 'default') &&
@@ -1301,23 +2045,16 @@ Map<String, Object?> _validateOfficialScore(
     r'$.officialScore.reconciliationStatus',
     ['reconciled', 'unreconciled', 'notAvailable'],
   );
-  if (reconciliationStatus != 'reconciled') {
-    _fail(
-      'officialScoreEvidenceRequired',
-      r'$.officialScore.reconciliationStatus',
-    );
+  if (reconciliationStatus != 'reconciled' ||
+      score['state'] != 'known' ||
+      evidenceRefs['state'] != 'known' ||
+      (evidenceRefs['value']! as List<Object?>).isEmpty) {
+    _fail('officialScoreEvidenceRequired', r'$.officialScore');
   }
-  if (reconciliationStatus == 'reconciled') {
-    if (score['state'] != 'known' ||
-        evidenceRefs['state'] != 'known' ||
-        (evidenceRefs['value']! as List<Object?>).isEmpty) {
-      _fail('officialScoreEvidenceRequired', r'$.officialScore');
-    }
-    final knownScore = score['value']! as Map<String, Object?>;
-    if (knownScore['home'] != playedScore['home'] ||
-        knownScore['away'] != playedScore['away']) {
-      _fail('officialScoreMismatch', r'$.officialScore.score');
-    }
+  final knownScore = score['value']! as Map<String, Object?>;
+  if (knownScore['home'] != playedScore['home'] ||
+      knownScore['away'] != playedScore['away']) {
+    _fail('officialScoreMismatch', r'$.officialScore.score');
   }
   return {
     'evidenceRefs': evidenceRefs,
@@ -1345,7 +2082,11 @@ Map<String, Object?> _validateRoot(Object? value) {
     'teams',
     'unicodeNormalizationVersion',
   ]);
-  if (raw['schemaVersion'] != 1) {
+  final schemaVersion = _nonnegativeInteger(
+    raw['schemaVersion'],
+    r'$.schemaVersion',
+  );
+  if (schemaVersion != 2) {
     _fail('unsupportedSchemaVersion', r'$.schemaVersion');
   }
   if (raw['calculatorVersion'] != normalizedBoxScoreCalculatorVersion) {
@@ -1361,74 +2102,135 @@ Map<String, Object?> _validateRoot(Object? value) {
       r'$.unicodeNormalizationVersion',
     );
   }
-  _validateScope(raw['scope']);
-  _enumeration(raw['resultDisposition'], r'$.resultDisposition', [
-    'played',
-    'forfeit',
-    'default',
-    'annulled',
-    'otherAdjudicated',
-  ]);
-  if (raw['statisticsDisposition'] != 'complete') {
-    _fail('invalidShape', r'$.statisticsDisposition');
-  }
-  final provenance = _record(raw['provenance'], r'$.provenance', [
+  final scope = _validateScope(raw['scope']);
+  final resultDisposition = _enumeration(
+    raw['resultDisposition'],
+    r'$.resultDisposition',
+    ['played', 'forfeit', 'default', 'annulled', 'otherAdjudicated'],
+  );
+  final statisticsDisposition = _enumeration(
+    raw['statisticsDisposition'],
+    r'$.statisticsDisposition',
+    ['complete', 'resultOnly', 'excluded'],
+  );
+  final provenanceRaw = _record(raw['provenance'], r'$.provenance', [
     'captureMode',
     'rulesetVersion',
     'sourceId',
     'sourceLabel',
   ]);
-  _enumeration(provenance['captureMode'], r'$.provenance.captureMode', [
-    'liveCapture',
-    'officialSheet',
-    'historicalImport',
-  ]);
-  _identifier(provenance['sourceId'], r'$.provenance.sourceId');
-  _text(provenance['sourceLabel'], r'$.provenance.sourceLabel');
-  _identifier(provenance['rulesetVersion'], r'$.provenance.rulesetVersion');
-  final rules = _record(raw['rules'], r'$.rules', [
-    'completedTiesAllowed',
-    'regulationPeriodCount',
-    'teamFoulPenaltyThresholds',
-  ]);
-  final regulationPeriodCount = _nonnegativeInteger(
-    rules['regulationPeriodCount'],
-    r'$.rules.regulationPeriodCount',
-  );
-  if (regulationPeriodCount == 0) {
-    _fail('invalidPeriodSequence', r'$.rules.regulationPeriodCount');
-  }
-  _boolean(rules['completedTiesAllowed'], r'$.rules.completedTiesAllowed');
-  final penaltyThresholds = _record(
-    rules['teamFoulPenaltyThresholds'],
-    r'$.rules.teamFoulPenaltyThresholds',
-    ['overtime', 'regulation'],
-  );
-  for (final kind in ['regulation', 'overtime']) {
-    final threshold = _countFact(
-      penaltyThresholds[kind],
-      r'$.rules.teamFoulPenaltyThresholds.'
-      '$kind',
-    );
-    if (threshold['state'] == 'known' && threshold['value'] == 0) {
-      _fail(
-        'invalidDisciplineIncident',
-        r'$.rules.teamFoulPenaltyThresholds.'
-            '$kind',
-      );
-    }
-  }
+  final provenance = <String, Object?>{
+    'captureMode': _enumeration(
+      provenanceRaw['captureMode'],
+      r'$.provenance.captureMode',
+      ['liveCapture', 'officialSheet', 'historicalImport'],
+    ),
+    'rulesetVersion': _identifier(
+      provenanceRaw['rulesetVersion'],
+      r'$.provenance.rulesetVersion',
+    ),
+    'sourceId': _identifier(
+      provenanceRaw['sourceId'],
+      r'$.provenance.sourceId',
+    ),
+    'sourceLabel': _text(
+      provenanceRaw['sourceLabel'],
+      r'$.provenance.sourceLabel',
+    ),
+  };
+  final rules = _validateRules(raw['rules']);
   final teams = _list(raw['teams'], r'$.teams');
   if (teams.length != 2) _fail('invalidTeamStructure', r'$.teams');
-  return raw;
+  return {
+    'administrativeResult': raw['administrativeResult'],
+    'disciplineIncidents': raw['disciplineIncidents'],
+    'officialScore': raw['officialScore'],
+    'periods': raw['periods'],
+    'playedScore': raw['playedScore'],
+    'playedScoreAdjustments': raw['playedScoreAdjustments'],
+    'provenance': provenance,
+    'resultDisposition': resultDisposition,
+    'rules': rules,
+    'scope': scope,
+    'statisticsDisposition': statisticsDisposition,
+    'teams': teams,
+  };
+}
+
+void _validateNoPlay(
+  Map<String, Object?> root,
+  List<({Map<String, int> counts, Map<String, Object?> output})> teams,
+  List<Object?> periods,
+  Map<String, Object?> playedScore,
+  List<Object?> adjustments,
+  List<Object?> incidents,
+) {
+  if (root['statisticsDisposition'] == 'complete') return;
+  if (root['resultDisposition'] == 'played' ||
+      periods.isNotEmpty ||
+      playedScore['home'] != 0 ||
+      playedScore['away'] != 0 ||
+      adjustments.isNotEmpty) {
+    _fail('invalidNoPlayStatistics', r'$');
+  }
+  for (final team in teams) {
+    if (!_allCountsZero(team.counts)) {
+      _fail('invalidNoPlayStatistics', r'$.teams');
+    }
+    final teamOnly = team.output['teamOnly']! as Map<String, int>;
+    if (teamOnly['offensiveRebounds'] != 0 ||
+        teamOnly['defensiveRebounds'] != 0 ||
+        teamOnly['turnovers'] != 0) {
+      _fail('invalidNoPlayStatistics', r'$.teams');
+    }
+    for (final playerValue in team.output['players']! as List<Object?>) {
+      final player = playerValue! as Map<String, Object?>;
+      if (player['enteredPlay'] == true) {
+        _fail(
+          'invalidNoPlayStatistics',
+          r'$.participants.'
+              '${player['participantId']}.enteredPlay',
+        );
+      }
+    }
+  }
+  for (final incidentValue in incidents) {
+    final incident = incidentValue! as Map<String, Object?>;
+    if (incident['context'] != 'preGame' ||
+        incident['chargedPartyKind'] == 'player' ||
+        incident['countsTowardTeamFoul'] == true ||
+        incident['countsTowardPlayerDisqualification'] == true) {
+      _fail('invalidNoPlayStatistics', r'$.disciplineIncidents');
+    }
+  }
+}
+
+Object? _deepUnmodifiable(Object? value) {
+  if (value is Map) {
+    return UnmodifiableMapView<String, Object?>({
+      for (final entry in value.entries)
+        entry.key as String: _deepUnmodifiable(entry.value),
+    });
+  }
+  if (value is List) {
+    return List<Object?>.unmodifiable(value.map(_deepUnmodifiable));
+  }
+  return value;
 }
 
 Map<String, Object?> _calculateAccepted(Object? rawInput) {
-  final input = _validateRoot(rawInput);
-  final scope = _validateScope(input['scope']);
+  final root = _validateRoot(rawInput);
+  final rules = root['rules']! as Map<String, Object?>;
+  final requiresCompletePlay = root['resultDisposition'] == 'played';
+  final periodResult = _validatePeriods(
+    root['periods'],
+    rules,
+    requiresCompletePlay,
+  );
+  final penaltyPolicy = _validatePenaltyGroups(rules, periodResult.periods);
   final seenParticipants = <String>{};
   final seenPlayers = <String>{};
-  final rawTeams = _list(input['teams'], r'$.teams');
+  final rawTeams = root['teams']! as List<Object?>;
   final teamResults =
       <({Map<String, int> counts, Map<String, Object?> output})>[
         for (var index = 0; index < rawTeams.length; index += 1)
@@ -1438,6 +2240,7 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
             '[$index]',
             seenParticipants,
             seenPlayers,
+            rules['playingTimeRoundingProfile']! as String,
           ),
       ];
   if (teamResults[0].output['side'] == teamResults[1].output['side'] ||
@@ -1452,149 +2255,64 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
   });
   final homeTeam = teamResults[0];
   final awayTeam = teamResults[1];
-  final rules = _record(input['rules'], r'$.rules');
-  final penaltyThresholdRaw = _record(
-    rules['teamFoulPenaltyThresholds'],
-    r'$.rules.teamFoulPenaltyThresholds',
+  _validatePlayerTimeline(
+    teamResults,
+    periodResult.periods,
+    periodResult.totalElapsedMs,
+    rules,
   );
-  final penaltyThresholds = (
-    overtime: _countFact(
-      penaltyThresholdRaw['overtime'],
-      r'$.rules.teamFoulPenaltyThresholds.overtime',
-    ),
-    regulation: _countFact(
-      penaltyThresholdRaw['regulation'],
-      r'$.rules.teamFoulPenaltyThresholds.regulation',
-    ),
-  );
-  final periodResult = _validatePeriods(
-    input['periods'],
-    rules['regulationPeriodCount']! as int,
-    input['resultDisposition'] == 'played',
-  );
-  _validatePlayerTimeline(teamResults, periodResult.periods);
-  final playedScore = _scorePair(input['playedScore'], r'$.playedScore');
+  final playedScore = _scorePair(root['playedScore'], r'$.playedScore');
   if (periodResult.score['home'] != playedScore['home'] ||
       periodResult.score['away'] != playedScore['away']) {
     _fail('playedScorePeriodMismatch', r'$.playedScore');
   }
-  if (input['resultDisposition'] == 'played' &&
+  if (root['resultDisposition'] == 'played' &&
       rules['completedTiesAllowed'] == false &&
       playedScore['home'] == playedScore['away']) {
     _fail('invalidPeriodSequence', r'$.playedScore');
   }
-
-  final adjustmentValues = _list(
-    input['playedScoreAdjustments'],
-    r'$.playedScoreAdjustments',
-  );
-  if (adjustmentValues.length >
-      NormalizedBoxScoreLimits.maxPlayedScoreAdjustments) {
-    _fail('resourceLimitExceeded', r'$.playedScoreAdjustments');
-  }
-  final adjustmentIds = <String>{};
-  final adjustmentPoints = <String, int>{
-    homeTeam.output['teamEntryId']! as String: 0,
-    awayTeam.output['teamEntryId']! as String: 0,
-  };
-  final adjustments = <Object?>[];
-  for (var index = 0; index < adjustmentValues.length; index += 1) {
-    final path =
-        r'$.playedScoreAdjustments'
-        '[$index]';
-    final raw = _record(adjustmentValues[index], path, [
-      'adjustmentId',
-      'evidenceRefs',
-      'kind',
-      'periodNumber',
-      'points',
-      'teamEntryId',
-    ]);
-    final adjustmentId = _identifier(raw['adjustmentId'], '$path.adjustmentId');
-    if (!adjustmentIds.add(adjustmentId)) {
-      _fail('invalidScoreAdjustment', '$path.adjustmentId');
-    }
-    final teamEntryId = _identifier(raw['teamEntryId'], '$path.teamEntryId');
-    if (!adjustmentPoints.containsKey(teamEntryId)) {
-      _fail('invalidScoreAdjustment', '$path.teamEntryId');
-    }
-    final kind = _enumeration(raw['kind'], '$path.kind', [
-      'ownBasket',
-      'goaltending',
-    ]);
-    final points = _nonnegativeInteger(raw['points'], '$path.points');
-    if (points == 0 || points > 3 || (kind == 'ownBasket' && points != 2)) {
-      _fail('invalidScoreAdjustment', '$path.points');
-    }
-    final periodNumber = _fact(
-      raw['periodNumber'],
-      '$path.periodNumber',
-      _nonnegativeInteger,
-    );
-    if (periodNumber['state'] != 'known' ||
-        periodNumber['value'] == 0 ||
-        (periodNumber['value']! as int) > periodResult.periods.length) {
-      _fail('invalidScoreAdjustment', '$path.periodNumber');
-    }
-    final evidenceRefs = _evidenceFact(
-      raw['evidenceRefs'],
-      '$path.evidenceRefs',
-    );
-    if (evidenceRefs['state'] != 'known' ||
-        (evidenceRefs['value']! as List<Object?>).isEmpty) {
-      _fail('invalidScoreAdjustment', '$path.evidenceRefs');
-    }
-    adjustmentPoints[teamEntryId] = _safeAdd(
-      adjustmentPoints[teamEntryId]!,
-      points,
-      '$path.points',
-    );
-    adjustments.add({
-      'adjustmentId': adjustmentId,
-      'evidenceRefs': evidenceRefs,
-      'kind': kind,
-      'periodNumber': periodNumber,
-      'points': points,
-      'teamEntryId': teamEntryId,
-    });
-  }
   final homeTotals = homeTeam.output['totals']! as Map<String, int>;
   final awayTotals = awayTeam.output['totals']! as Map<String, int>;
-  final attributedHome = _safeAdd(
-    homeTotals['points']!,
-    adjustmentPoints[homeTeam.output['teamEntryId']]!,
-    r'$.playedScore.home',
-  );
-  final attributedAway = _safeAdd(
-    awayTotals['points']!,
-    adjustmentPoints[awayTeam.output['teamEntryId']]!,
-    r'$.playedScore.away',
-  );
-  if (attributedHome != playedScore['home'] ||
-      attributedAway != playedScore['away']) {
+  if (periodResult.counterPoints['home'] != homeTotals['points'] ||
+      periodResult.counterPoints['away'] != awayTotals['points'] ||
+      homeTotals['points'] != playedScore['home'] ||
+      awayTotals['points'] != playedScore['away']) {
     _fail('playedScoreAttributionMismatch', r'$.playedScore');
   }
-
   final teamIds = <String>{
     homeTeam.output['teamEntryId']! as String,
     awayTeam.output['teamEntryId']! as String,
   };
-  final participants = <String, ({bool enteredPlay, String teamEntryId})>{};
+  final participants = <String, Map<String, Object?>>{};
   for (final team in teamResults) {
-    for (final player in team.output['players']! as List<Object?>) {
-      final playerMap = player! as Map<String, Object?>;
-      participants[playerMap['participantId']! as String] = (
-        enteredPlay: playerMap['enteredPlay']! as bool,
-        teamEntryId: playerMap['teamEntryId']! as String,
-      );
+    for (final playerValue in team.output['players']! as List<Object?>) {
+      final player = playerValue! as Map<String, Object?>;
+      participants[player['participantId']! as String] = {
+        'counts': player['totals']! as Map<String, int>,
+        'enteredPlay': player['enteredPlay'],
+        'output': player,
+        'teamEntryId': player['teamEntryId'],
+      };
     }
   }
+  final adjustments = _validateScoreAdjustments(
+    root['playedScoreAdjustments'],
+    periodResult.periods,
+    teamIds,
+    participants,
+  );
+  _validateExceptionalPointsByPeriod(
+    adjustments,
+    periodResult.periods,
+    homeTeam.output['teamEntryId']! as String,
+    awayTeam.output['teamEntryId']! as String,
+  );
   final discipline = _validateDiscipline(
-    input['disciplineIncidents'],
+    root['disciplineIncidents'],
     teamIds,
     participants,
     periodResult.periods,
-    penaltyThresholds,
+    penaltyPolicy,
   );
   for (final team in teamResults) {
     team.output['discipline'] = discipline.byTeam[team.output['teamEntryId']]!;
@@ -1604,14 +2322,23 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
     }
   }
   final administrativeResult = _validateAdministrativeResult(
-    input['administrativeResult'],
-    input['resultDisposition']! as String,
+    root['administrativeResult'],
+    root['resultDisposition']! as String,
+    root['statisticsDisposition']! as String,
     teamIds,
     homeTeam.output['teamEntryId']! as String,
   );
   final officialScore = _validateOfficialScore(
-    input['officialScore'],
+    root['officialScore'],
     playedScore,
+  );
+  _validateNoPlay(
+    root,
+    teamResults,
+    periodResult.periods,
+    playedScore,
+    adjustments,
+    discipline.incidents,
   );
   final diagnostics = <Object?>[];
   if (homeTotals['steals']! > awayTotals['turnovers']!) {
@@ -1642,9 +2369,9 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
   );
   final playedWinnerTeamEntryId = playedScore['home'] == playedScore['away']
       ? <String, Object?>{
+          'reasonCode': 'tied_played_score',
           'state': 'unknown',
           'value': null,
-          'reasonCode': 'tied_played_score',
         }
       : <String, Object?>{
           'state': 'known',
@@ -1652,8 +2379,25 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
               ? homeTeam.output['teamEntryId']
               : awayTeam.output['teamEntryId'],
         };
-  final provenance = _record(input['provenance'], r'$.provenance');
-  return {
+  final multiplier =
+      rules['teamTimeCapacityMultiplier']! as Map<String, Object?>;
+  final totalElapsed = periodResult.totalElapsedMs;
+  final teamPlayedTimeCapacityMs =
+      totalElapsed['state'] == 'known' && multiplier['state'] == 'known'
+      ? <String, Object?>{
+          'state': 'known',
+          'value': _safeMultiply(
+            totalElapsed['value']! as int,
+            multiplier['value']! as int,
+            r'$.rules.teamTimeCapacityMultiplier',
+          ),
+        }
+      : <String, Object?>{
+          'reasonCode': 'capacity_input_unknown',
+          'state': 'unknown',
+          'value': null,
+        };
+  final result = <String, Object?>{
     'calculatorVersion': normalizedBoxScoreCalculatorVersion,
     'normalizedBoxScore': {
       'administrativeResult': administrativeResult,
@@ -1666,29 +2410,30 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
       'playedScore': playedScore,
       'playedScoreAdjustments': adjustments,
       'playedWinnerTeamEntryId': playedWinnerTeamEntryId,
-      'provenance': {
-        'captureMode': provenance['captureMode'],
-        'rulesetVersion': provenance['rulesetVersion'],
-        'sourceId': provenance['sourceId'],
-        'sourceLabel': unicode.nfc(provenance['sourceLabel']! as String),
-      },
-      'resultDisposition': input['resultDisposition'],
-      'rules': {
-        'completedTiesAllowed': rules['completedTiesAllowed'],
-        'regulationPeriodCount': rules['regulationPeriodCount'],
-        'teamFoulPenaltyThresholds': {
-          'overtime': penaltyThresholds.overtime,
-          'regulation': penaltyThresholds.regulation,
-        },
-      },
-      'schemaVersion': 1,
-      'scope': scope,
-      'statisticsDisposition': input['statisticsDisposition'],
+      'provenance': root['provenance'],
+      'resultDisposition': root['resultDisposition'],
+      'rules': {...rules, 'teamPlayedTimeCapacityMs': teamPlayedTimeCapacityMs},
+      'schemaVersion': 2,
+      'scope': root['scope'],
+      'statisticsDisposition': root['statisticsDisposition'],
       'teams': [for (final team in teamResults) team.output],
+      'totalElapsedPlayMs': totalElapsed,
       'unicodeNormalizationVersion': normalizedBoxScoreUnicodeVersion,
     },
     'status': 'accepted',
   };
+  return _deepUnmodifiable(result)! as Map<String, Object?>;
+}
+
+Map<String, Object?> _rejected(String code, String path) {
+  final result = <String, Object?>{
+    'calculatorVersion': normalizedBoxScoreCalculatorVersion,
+    'errors': [
+      {'code': code, 'path': path},
+    ],
+    'status': 'rejected',
+  };
+  return _deepUnmodifiable(result)! as Map<String, Object?>;
 }
 
 /// Pure deterministic normalized box-score calculator.
@@ -1697,23 +2442,26 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
 /// performs no I/O, imports no Firebase runtime, and never mutates [input].
 Map<String, Object?> calculateNormalizedBoxScore(Object? input) {
   try {
-    _preflight(input);
-    return _calculateAccepted(input);
+    final boundedInput = _preflight(input);
+    return _calculateAccepted(boundedInput);
   } on _ValidationFailure catch (error) {
-    return {
-      'calculatorVersion': normalizedBoxScoreCalculatorVersion,
-      'errors': [
-        {'code': error.code, 'path': error.path},
-      ],
-      'status': 'rejected',
-    };
+    return _rejected(error.code, error.path);
   } on Object {
-    return {
-      'calculatorVersion': normalizedBoxScoreCalculatorVersion,
-      'errors': [
-        {'code': 'invalidCanonicalValue', 'path': r'$'},
-      ],
-      'status': 'rejected',
-    };
+    return _rejected('invalidCanonicalValue', r'$');
   }
+}
+
+/// Raw JSON boundary for untrusted transports. The byte limit is enforced
+/// before parsing and the decoded graph receives the independent preflight.
+Map<String, Object?> calculateNormalizedBoxScoreFromJson(String rawJson) {
+  if (_utf8Length(rawJson) > NormalizedBoxScoreLimits.maxRawTransportBytes) {
+    return _rejected('resourceLimitExceeded', r'$');
+  }
+  Object? decoded;
+  try {
+    decoded = jsonDecode(rawJson);
+  } on Object {
+    return _rejected('invalidCanonicalValue', r'$');
+  }
+  return calculateNormalizedBoxScore(decoded);
 }

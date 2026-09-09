@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:stat-migration": "node --test test/stat_migration_inventory.test.js",
+    "verify:unicode-normalization": "node verify_unicode_normalization_source.js",
     "preflight": "node check_repository_safety.js",
     "seed:mock": "node seed_mock_league.js",
     "stat-migration:fixture": "node stat_migration_inventory.js --mode=fixture",
