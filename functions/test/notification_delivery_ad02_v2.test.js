@@ -282,18 +282,36 @@ test('provider invocation followed by submitted persistence failure stays uncert
   assert.equal(provider.calls.length, 1);
 });
 
-test('provider rejection records terminal failure and releases barrier', async () => {
+test('provider rejection stays submitted and barrier-held for AD04 reconciliation', async () => {
   const store = new MemoryDeliveryStore();
   const provider = new MemoryProvider();
   provider.failure = new Error('provider unavailable');
-  const result = await sendAuthorizedNotificationChunksV2(request(store, provider));
-  assert.equal(result.submitted, 1);
-  assert.equal(result.failed, 1);
+  await assert.rejects(
+    sendAuthorizedNotificationChunksV2(request(store, provider)),
+    /provider unavailable/,
+  );
   const attempt = [...store.attempts.values()][0];
-  assert.equal(attempt.state, 'failed');
-  assert.equal(attempt.barrier, false);
-  assert.equal(attempt.outcome.successCount, 0);
-  assert.equal(attempt.outcome.failureCount, 1);
+  assert.equal(attempt.state, 'submitted');
+  assert.equal(attempt.barrier, true);
+  assert.equal(attempt.outcome, undefined);
+
+  const retry = await sendAuthorizedNotificationChunksV2(request(store, provider));
+  assert.equal(retry.duplicates, 1);
+  assert.equal(provider.calls.length, 1);
+});
+
+test('invalid provider response stays submitted and barrier-held', async () => {
+  const store = new MemoryDeliveryStore();
+  const provider = new MemoryProvider();
+  provider.response = {successCount: 1, failureCount: 1};
+  await assert.rejects(
+    sendAuthorizedNotificationChunksV2(request(store, provider)),
+    /invalid uncertain outcome/,
+  );
+  const attempt = [...store.attempts.values()][0];
+  assert.equal(attempt.state, 'submitted');
+  assert.equal(attempt.barrier, true);
+  assert.equal(attempt.outcome, undefined);
 });
 
 test('terminal persistence failure preserves submitted state and deletion barrier', async () => {

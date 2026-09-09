@@ -417,16 +417,19 @@ export async function sendAuthorizedNotificationChunksV2(input: {
     summary.submitted += 1;
 
     const settled = await providerPromise;
-    let state: "succeeded" | "partial" | "failed" = "failed";
-    let successCount = 0;
-    let failureCount = dispatch.bindings.length;
-    if (settled.ok && validProviderResponse(settled.response, dispatch.bindings.length)) {
-      successCount = settled.response.successCount;
-      failureCount = settled.response.failureCount;
-      state = failureCount === 0
-        ? "succeeded"
-        : successCount === 0 ? "failed" : "partial";
+    if (!settled.ok) {
+      throw settled.error instanceof Error
+        ? settled.error
+        : new Error("AD02 V2 notification provider outcome is uncertain.");
     }
+    if (!validProviderResponse(settled.response, dispatch.bindings.length)) {
+      throw new Error("AD02 V2 notification provider returned an invalid uncertain outcome.");
+    }
+    const successCount = settled.response.successCount;
+    const failureCount = settled.response.failureCount;
+    const state: "succeeded" | "partial" | "failed" = failureCount === 0
+      ? "succeeded"
+      : successCount === 0 ? "failed" : "partial";
     await input.store.completeAndRelease({
       attemptId: attempt.attemptId,
       state,

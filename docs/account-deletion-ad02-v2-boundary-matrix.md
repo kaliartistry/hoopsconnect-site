@@ -76,8 +76,11 @@ reserved -> dispatchCommitted -> submitted -> succeeded | partial | failed
 the final authority/token recheck. The provider function is invoked before the
 store may claim `submitted`. A crash before or after invocation therefore
 leaves a truthful uncertain state and a held barrier. A retry reports the
-existing attempt and never resends it. AD04 must provide a provider-specific
-reconciler before deletion can wait on or release these records in production.
+existing attempt and never resends it. A provider rejection or malformed
+response is also uncertain because submission may have been accepted before
+the local failure became visible; neither releases the barrier. AD04 must
+provide a provider-specific reconciler before deletion can wait on or release
+these records in production.
 
 ## Explicitly rejected old behavior
 
