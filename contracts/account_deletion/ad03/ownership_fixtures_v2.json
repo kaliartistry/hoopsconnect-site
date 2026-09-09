@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 2,
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "productionCustodyConfigured": false,
+  "productionOwnerBootstrapImplemented": false,
+  "firebaseIamMutationAllowed": false,
+  "associationClosureOwnedByAd03": false,
+  "architectureSha256": "9a9d0150244fc124bbc8ab1697fba177a3c862de8b7099c5c684d02ed8537832",
+  "projectId": "demo-hoopsconnect",
+  "associationId": "jba",
+  "freshAuthMaxAgeSecV2": 300,
+  "recipientEvidenceMaxAgeSecV2": 300,
+  "transferTtlSecV2": 600,
+  "rootScope": {
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null
+  },
+  "tenantScope": {
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": "league-tenant"
+  },
+  "generations": {
+    "ownerA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ownerB": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "recipientC": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "ownerBindings": {
+    "ownerA": {
+      "ownerBindingSchemaVersionV2": 2,
+      "ownerBindingIdV2": "1dffe2287200f6f25e00c02f49f2583d09237a56a29daf9d8d9df1ac2f6d8986",
+      "authProjectIdV2": "demo-hoopsconnect",
+      "authTenantIdV2": null,
+      "authUidV2": "owner-a",
+      "accountGenerationV2": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "accountLifecycleEpochV2": 7,
+      "bindingVersionV2": 1
+    },
+    "ownerB": {
+      "ownerBindingSchemaVersionV2": 2,
+      "ownerBindingIdV2": "33a29869044c366d3aefc28ce2429ce2c5b2882b20d8d926aa16f942535a1ab6",
+      "authProjectIdV2": "demo-hoopsconnect",
+      "authTenantIdV2": null,
+      "authUidV2": "owner-b",
+      "accountGenerationV2": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "accountLifecycleEpochV2": 7,
+      "bindingVersionV2": 1
+    },
+    "recipientC": {
+      "ownerBindingSchemaVersionV2": 2,
+      "ownerBindingIdV2": "f97930de4bf31db34ca11bf71b3c3ba21ffdd086d3fef6f704fb62df80472f07",
+      "authProjectIdV2": "demo-hoopsconnect",
+      "authTenantIdV2": null,
+      "authUidV2": "recipient-c",
+      "accountGenerationV2": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "accountLifecycleEpochV2": 7,
+      "bindingVersionV2": 1
+    }
+  },
+  "paths": {
+    "rootControl": "associationOwnershipV2Root/jba",
+    "tenantControl": "associationOwnershipV2Tenants/league-tenant/associations/jba",
+    "rootRecipientEvidence": "recipientEligibilityV2Root/recipient-c",
+    "tenantRecipientEvidence": "recipientEligibilityV2Tenants/league-tenant/users/recipient-c"
+  },
+  "testCustodyPolicyFingerprintV2": "8ec120b92e91dc1c8a5ea8f0eebc4f596fb3564cf71ebbd515e0a3185887a5e0",
+  "testCustodyPolicy": {
+    "serviceCustodyPolicySchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "associationId": "jba",
+    "custodyPolicyIdV2": "fixture-custody-policy",
+    "custodyPolicyVersionV2": 1,
+    "configurationClassV2": "testFixture",
+    "decisionStateV2": "testOnly",
+    "namedOperatorRefV2": "fixture:operator",
+    "namedCaseOwnerRefV2": "fixture:case-owner",
+    "escalationCoverageRefV2": "fixture:coverage",
+    "independentInfrastructureOwnerRefV2": "fixture:infrastructure-owner",
+    "recoveryDeadlineSecV2": 86400
+  },
+  "unresolvedProductionCustodyPolicy": {
+    "serviceCustodyPolicySchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "associationId": "jba",
+    "custodyPolicyIdV2": "production-custody-unresolved",
+    "custodyPolicyVersionV2": 1,
+    "configurationClassV2": "production",
+    "decisionStateV2": "unresolved",
+    "namedOperatorRefV2": null,
+    "namedCaseOwnerRefV2": null,
+    "escalationCoverageRefV2": null,
+    "independentInfrastructureOwnerRefV2": null,
+    "recoveryDeadlineSecV2": null
+  },
+  "custodyBarrier": {
+    "ordinaryStates": ["operating", "transferPending"],
+    "suspensionStates": ["custodyRequired", "suspendedToCustody", "recoveryReview"],
+    "blockedOrdinaryOperations": [
+      "ordinaryMembershipMutation",
+      "ordinaryInviteMutation",
+      "ordinaryRoleMutation",
+      "ordinaryRosterMutation",
+      "ordinaryGameAssignment",
+      "ordinaryStatAcceptance",
+      "ordinaryReviewCertification",
+      "ordinaryPublication"
+    ],
+    "ad06OwnedOperation": "historicalPresentation"
+  },
+  "raceExpectations": {
+    "twoOwnersOrdinaryDelete": {
+      "successfulTransactions": 1,
+      "staleTransactions": 1,
+      "remainingRecoverableOwners": 1,
+      "finalState": "operating"
+    },
+    "lastOwnerMissingCustody": {
+      "finalState": "custodyRequired",
+      "caseState": "operatorUnassigned",
+      "safeErrorCodeV2": "CUSTODY_CONFLICT",
+      "custodyOutcomeV2": "policyBlockedButDeletionMustReceiveOperationalResolution",
+      "personalDeletionMayContinueV2": true,
+      "requiresOperationalAttentionV2": true
+    },
+    "lastOwnerTestCustody": {
+      "finalState": "suspendedToCustody",
+      "caseState": "suspended",
+      "personalDeletionMayContinueV2": true,
+      "requiresOperationalAttentionV2": false
+    }
+  },
+  "activationGates": {
+    "G3": false,
+    "G4": false,
+    "reasons": [
+      "named production custody and recovery operators unresolved",
+      "independent infrastructure owner unresolved",
+      "production owner bootstrap absent",
+      "production membership and command transaction wiring absent"
+    ]
+  },
+  "deferredOwners": {
+    "integratedDeletionAcceptanceRace": "AD04",
+    "privacyEpochAndPublicProjectionCustody": "AD06",
+    "encryptedLocalJournalQuarantine": "AD07",
+    "productionActivationAndRehearsal": "AD09"
+  }
+}
