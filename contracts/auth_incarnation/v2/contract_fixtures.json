@@ -1,0 +1,133 @@
+{
+  "fixtureVersion": 1,
+  "activationAllowed": false,
+  "schemaVersion": 2,
+  "sessionAttemptIdV2": "fixture-attempt-v2",
+  "sessionAttemptEpochV2": 1,
+  "maxSafeInteger": 9007199254740991,
+  "numericSemantics": {
+    "accepted": [0, -0.0, 7, 7.0, 7e0, 9007199254740991],
+    "rejected": [-1, 7.5, 9007199254740992]
+  },
+  "authorityPathContract": {
+    "nullTenant": {
+      "lifecycle": "accountLifecycleV2Root/{uid}",
+      "membership": "membershipsV2Root/{uid}",
+      "projection": "storageAuthorizationsV2Root/{uid}"
+    },
+    "concreteTenant": {
+      "lifecycle": "accountLifecycleV2Tenants/{tenantId}/users/{uid}",
+      "membership": "membershipsV2Tenants/{tenantId}/users/{uid}",
+      "projection": "storageAuthorizationsV2Tenants/{tenantId}/users/{uid}"
+    }
+  },
+  "scope": {
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "operator"
+  },
+  "tokenProof": {
+    "authIncarnationSchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "operator",
+    "accountGenerationV2": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "accountLifecycleEpochV2": 7,
+    "authTimeSec": 1700000001
+  },
+  "lifecycle": {
+    "authIncarnationSchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "operator",
+    "accountGenerationV2": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "accountLifecycleEpochV2": 7,
+    "lifecycleStateV2": "active",
+    "reauthAfterSecV2": 1700000000
+  },
+  "membership": {
+    "authIncarnationSchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "operator",
+    "accountGenerationV2": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "accountLifecycleEpochV2": 7,
+    "membershipStatusV2": "active",
+    "associationId": "jba",
+    "capabilities": ["association.read", "stats.enter"]
+  },
+  "projection": {
+    "authIncarnationSchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "operator",
+    "accountGenerationV2": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "accountLifecycleEpochV2": 7,
+    "lifecycleStateV2": "active",
+    "membershipStatusV2": "active",
+    "reauthAfterSecV2": 1700000000,
+    "associationId": "jba",
+    "capabilities": ["association.read", "stats.enter"]
+  },
+  "pendingBinding": {
+    "authIncarnationSchemaVersionV2": 2,
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "operator",
+    "accountGenerationV2": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "accountLifecycleEpochV2": 0,
+    "bindingStateV2": "pending",
+    "reauthAfterSecV2": 1700000000
+  },
+  "accountAuthorizationVectors": [
+    {"name": "all-exact-active", "expectedAuthorized": true},
+    {"name": "missing-token", "target": "tokenProof", "omitTarget": true, "expectedAuthorized": false, "expectedCode": "missing_token_proof"},
+    {"name": "malformed-token-generation", "target": "tokenProof", "patch": {"accountGenerationV2": "ABC"}, "expectedAuthorized": false, "expectedCode": "invalid_token_proof"},
+    {"name": "v1-token-cannot-substitute", "target": "tokenProof", "removeKeys": ["authIncarnationSchemaVersionV2", "accountGenerationV2", "accountLifecycleEpochV2"], "patch": {"accountGenerationHashV1": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, "expectedAuthorized": false, "expectedCode": "invalid_token_proof"},
+    {"name": "pending-lifecycle", "target": "lifecycle", "patch": {"lifecycleStateV2": "pending"}, "expectedAuthorized": false, "expectedCode": "lifecycle_inactive"},
+    {"name": "deleting-lifecycle", "target": "lifecycle", "patch": {"lifecycleStateV2": "deleting"}, "expectedAuthorized": false, "expectedCode": "lifecycle_inactive"},
+    {"name": "deleted-lifecycle", "target": "lifecycle", "patch": {"lifecycleStateV2": "deleted"}, "expectedAuthorized": false, "expectedCode": "lifecycle_inactive"},
+    {"name": "suspended-membership", "target": "membership", "patch": {"membershipStatusV2": "suspended"}, "expectedAuthorized": false, "expectedCode": "membership_inactive"},
+    {"name": "token-project-mismatch", "target": "tokenProof", "patch": {"authProjectIdV2": "other-project"}, "expectedAuthorized": false, "expectedCode": "scope_mismatch"},
+    {"name": "lifecycle-tenant-mismatch", "target": "lifecycle", "patch": {"authTenantIdV2": "tenant-a"}, "expectedAuthorized": false, "expectedCode": "scope_mismatch"},
+    {"name": "membership-uid-mismatch", "target": "membership", "patch": {"authUidV2": "other-user"}, "expectedAuthorized": false, "expectedCode": "scope_mismatch"},
+    {"name": "token-generation-mismatch", "target": "tokenProof", "patch": {"accountGenerationV2": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}, "expectedAuthorized": false, "expectedCode": "generation_mismatch"},
+    {"name": "membership-generation-mismatch", "target": "membership", "patch": {"accountGenerationV2": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}, "expectedAuthorized": false, "expectedCode": "generation_mismatch"},
+    {"name": "token-epoch-mismatch", "target": "tokenProof", "patch": {"accountLifecycleEpochV2": 8}, "expectedAuthorized": false, "expectedCode": "epoch_mismatch"},
+    {"name": "membership-epoch-mismatch", "target": "membership", "patch": {"accountLifecycleEpochV2": 8}, "expectedAuthorized": false, "expectedCode": "epoch_mismatch"},
+    {"name": "auth-time-equals-boundary", "target": "tokenProof", "patch": {"authTimeSec": 1700000000}, "expectedAuthorized": false, "expectedCode": "reauthentication_required"},
+    {"name": "auth-time-before-boundary", "target": "tokenProof", "patch": {"authTimeSec": 1699999999}, "expectedAuthorized": false, "expectedCode": "reauthentication_required"},
+    {"name": "missing-capability", "requiredCapability": "members.manage", "expectedAuthorized": false, "expectedCode": "capability_denied"},
+    {"name": "duplicate-capability-is-malformed", "target": "membership", "patch": {"capabilities": ["stats.enter", "stats.enter"]}, "expectedAuthorized": false, "expectedCode": "invalid_membership"},
+    {"name": "unknown-capability-is-malformed", "target": "membership", "patch": {"capabilities": ["stats.enter", "unknown.grant"]}, "expectedAuthorized": false, "expectedCode": "invalid_membership"},
+    {"name": "legacy-unbound-privilege-denied", "target": "membership", "removeKeys": ["authIncarnationSchemaVersionV2", "authProjectIdV2", "authTenantIdV2", "authUidV2", "accountGenerationV2", "accountLifecycleEpochV2"], "patch": {"role": "superAdmin", "status": "active"}, "expectedAuthorized": false, "expectedCode": "invalid_membership"}
+  ],
+  "storageAuthorizationVectors": [
+    {"name": "all-exact-storage", "expectedAuthorized": true},
+    {"name": "storage-missing-token", "target": "tokenProof", "omitTarget": true, "expectedAuthorized": false, "expectedCode": "missing_token_proof"},
+    {"name": "storage-old-generation", "target": "projection", "patch": {"accountGenerationV2": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}, "expectedAuthorized": false, "expectedCode": "generation_mismatch"},
+    {"name": "storage-stale-epoch", "target": "projection", "patch": {"accountLifecycleEpochV2": 6}, "expectedAuthorized": false, "expectedCode": "epoch_mismatch"},
+    {"name": "storage-tenant-mismatch", "target": "projection", "patch": {"authTenantIdV2": "tenant-a"}, "expectedAuthorized": false, "expectedCode": "scope_mismatch"},
+    {"name": "storage-deleting", "target": "projection", "patch": {"lifecycleStateV2": "deleting"}, "expectedAuthorized": false, "expectedCode": "lifecycle_inactive"},
+    {"name": "storage-suspended", "target": "projection", "patch": {"membershipStatusV2": "suspended"}, "expectedAuthorized": false, "expectedCode": "membership_inactive"},
+    {"name": "storage-auth-time-equality", "target": "tokenProof", "patch": {"authTimeSec": 1700000000}, "expectedAuthorized": false, "expectedCode": "reauthentication_required"},
+    {"name": "storage-no-capability", "requiredCapability": "members.manage", "expectedAuthorized": false, "expectedCode": "capability_denied"},
+    {"name": "storage-unknown-capability-is-malformed", "target": "projection", "patch": {"capabilities": ["association.read", "unknown.grant"]}, "expectedAuthorized": false, "expectedCode": "invalid_projection"},
+    {"name": "storage-v1-projection-cannot-substitute", "target": "projection", "removeKeys": ["authIncarnationSchemaVersionV2", "accountGenerationV2", "accountLifecycleEpochV2"], "patch": {"generationHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "lifecycleEpoch": 7}, "expectedAuthorized": false, "expectedCode": "invalid_projection"}
+  ],
+  "invalidGenerations": [
+    "",
+    "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+    "g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "0123456789abcdef"
+  ],
+  "sessionRequirements": {
+    "attemptIdentity": ["attemptId", "sessionAttemptEpochV2", "sessionAttemptNonceV2", "authProjectIdV2", "authTenantIdV2", "authUidV2", "accountGenerationV2", "accountLifecycleEpochV2"],
+    "sessionAttemptEpochUsesStrictlyIncreasingGateHighWater": true,
+    "sessionAttemptNonceIsEphemeralPerIssuanceInMemoryIdentity": true,
+    "attemptIssuanceReturnsAlreadyAdvancedGate": true,
+    "publicReducerMayInstallPreissuedAttempt": false,
+    "proofReadyRequiresEvaluatorBinding": true,
+    "staleCompletionMayOpenReady": false
+  }
+}
