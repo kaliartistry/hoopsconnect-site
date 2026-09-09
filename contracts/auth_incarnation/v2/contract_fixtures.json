@@ -3,6 +3,7 @@
   "activationAllowed": false,
   "schemaVersion": 2,
   "sessionAttemptIdV2": "fixture-attempt-v2",
+  "sessionAttemptEpochV2": 1,
   "maxSafeInteger": 9007199254740991,
   "numericSemantics": {
     "accepted": [0, -0.0, 7, 7.0, 7e0, 9007199254740991],

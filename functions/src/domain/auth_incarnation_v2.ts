@@ -80,6 +80,7 @@ export type AuthIncarnationDenialCodeV2 =
 
 export interface ValidatedActiveAuthorityV2 {
   readonly sessionAttemptIdV2: string;
+  readonly sessionAttemptEpochV2: number;
   readonly scope: AuthIncarnationScopeV2;
   readonly accountGenerationV2: string;
   readonly accountLifecycleEpochV2: number;
@@ -283,12 +284,14 @@ function denied(code: AuthIncarnationDenialCodeV2): AuthIncarnationAuthorization
 
 function activeBinding(
   sessionAttemptIdV2: string,
+  sessionAttemptEpochV2: number,
   token: AuthIncarnationTokenProofV2,
   lifecycle: AccountLifecycleAuthorityV2,
   membership: MembershipAuthorityV2,
 ): ValidatedActiveAuthorityV2 {
   const binding = Object.freeze({
     sessionAttemptIdV2,
+    sessionAttemptEpochV2,
     scope: Object.freeze({
       authProjectIdV2: token.authProjectIdV2,
       authTenantIdV2: token.authTenantIdV2,
@@ -306,6 +309,7 @@ function activeBinding(
 
 export function evaluateAccountAuthorizationV2(input: {
   sessionAttemptIdV2: unknown;
+  sessionAttemptEpochV2: unknown;
   expectedScope: unknown;
   tokenProof: unknown | null | undefined;
   lifecycle: unknown;
@@ -313,8 +317,14 @@ export function evaluateAccountAuthorizationV2(input: {
   requiredCapability: string;
 }): AuthIncarnationAuthorizationDecisionV2 {
   let sessionAttemptIdV2: string;
+  let sessionAttemptEpochV2: number;
   try {
     sessionAttemptIdV2 = identifier(input.sessionAttemptIdV2, "session attempt ID");
+    sessionAttemptEpochV2 = safeCounter(
+      input.sessionAttemptEpochV2,
+      "session attempt epoch",
+    );
+    if (sessionAttemptEpochV2 === 0) invalid("session attempt epoch");
   } catch {
     return denied("invalid_token_proof");
   }
@@ -365,20 +375,33 @@ export function evaluateAccountAuthorizationV2(input: {
   }
   return {
     authorized: true,
-    binding: activeBinding(sessionAttemptIdV2, token, lifecycle, membership),
+    binding: activeBinding(
+      sessionAttemptIdV2,
+      sessionAttemptEpochV2,
+      token,
+      lifecycle,
+      membership,
+    ),
   };
 }
 
 export function evaluateStorageAuthorizationV2(input: {
   sessionAttemptIdV2: unknown;
+  sessionAttemptEpochV2: unknown;
   expectedScope: unknown;
   tokenProof: unknown | null | undefined;
   projection: unknown;
   requiredCapability: string;
 }): AuthIncarnationAuthorizationDecisionV2 {
   let sessionAttemptIdV2: string;
+  let sessionAttemptEpochV2: number;
   try {
     sessionAttemptIdV2 = identifier(input.sessionAttemptIdV2, "session attempt ID");
+    sessionAttemptEpochV2 = safeCounter(
+      input.sessionAttemptEpochV2,
+      "session attempt epoch",
+    );
+    if (sessionAttemptEpochV2 === 0) invalid("session attempt epoch");
   } catch {
     return denied("invalid_token_proof");
   }
@@ -439,7 +462,13 @@ export function evaluateStorageAuthorizationV2(input: {
   };
   return {
     authorized: true,
-    binding: activeBinding(sessionAttemptIdV2, token, lifecycle, membership),
+    binding: activeBinding(
+      sessionAttemptIdV2,
+      sessionAttemptEpochV2,
+      token,
+      lifecycle,
+      membership,
+    ),
   };
 }
 

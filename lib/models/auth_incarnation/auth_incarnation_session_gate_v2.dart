@@ -23,17 +23,22 @@ enum AuthIncarnationSessionEventKindV2 {
 
 final class AuthIncarnationSessionAttemptV2 {
   final String attemptId;
+  final int sessionAttemptEpochV2;
   final AuthIncarnationScopeV2 scope;
   final String accountGenerationV2;
   final int accountLifecycleEpochV2;
 
-  AuthIncarnationSessionAttemptV2({
+  AuthIncarnationSessionAttemptV2._issued({
     required String attemptId,
+    required int sessionAttemptEpochV2,
     required AuthIncarnationScopeV2 scope,
     required String accountGenerationV2,
     required int accountLifecycleEpochV2,
   }) : this._(
          attemptId: _validateAttemptId(attemptId),
+         sessionAttemptEpochV2: _validateSessionAttemptEpoch(
+           sessionAttemptEpochV2,
+         ),
          scope: AuthIncarnationScopeV2.fromMap(scope.toMap()),
          accountGenerationV2: _validateGeneration(accountGenerationV2),
          accountLifecycleEpochV2: _validateEpoch(accountLifecycleEpochV2),
@@ -41,6 +46,7 @@ final class AuthIncarnationSessionAttemptV2 {
 
   const AuthIncarnationSessionAttemptV2._({
     required this.attemptId,
+    required this.sessionAttemptEpochV2,
     required this.scope,
     required this.accountGenerationV2,
     required this.accountLifecycleEpochV2,
@@ -62,6 +68,15 @@ final class AuthIncarnationSessionAttemptV2 {
     return value;
   }
 
+  static int _validateSessionAttemptEpoch(int value) {
+    if (value <= 0 || value > AuthIncarnationV2.maxSafeInteger) {
+      throw const FormatException(
+        'Invalid Auth incarnation V2 session attempt epoch.',
+      );
+    }
+    return value;
+  }
+
   static int _validateEpoch(int value) {
     if (value < 0 || value > AuthIncarnationV2.maxSafeInteger) {
       throw const FormatException(
@@ -72,7 +87,9 @@ final class AuthIncarnationSessionAttemptV2 {
   }
 
   bool sameAttempt(AuthIncarnationSessionAttemptV2 other) =>
-      attemptId == other.attemptId && sameSessionIdentity(other);
+      attemptId == other.attemptId &&
+      sessionAttemptEpochV2 == other.sessionAttemptEpochV2 &&
+      sameSessionIdentity(other);
 
   bool sameSessionIdentity(AuthIncarnationSessionAttemptV2 other) =>
       scope.sameAs(other.scope) &&
@@ -81,6 +98,7 @@ final class AuthIncarnationSessionAttemptV2 {
 
   bool matchesBinding(ValidatedActiveAuthorityV2 binding) =>
       attemptId == binding.sessionAttemptIdV2 &&
+      sessionAttemptEpochV2 == binding.sessionAttemptEpochV2 &&
       scope.sameAs(binding.scope) &&
       accountGenerationV2 == binding.accountGenerationV2 &&
       accountLifecycleEpochV2 == binding.accountLifecycleEpochV2;
@@ -166,11 +184,34 @@ final class AuthIncarnationSessionEventV2 {
 final class AuthIncarnationSessionGateV2 {
   final AuthIncarnationSessionStateV2 state;
   final AuthIncarnationSessionAttemptV2? attempt;
+  final int sessionAttemptHighWaterV2;
 
-  const AuthIncarnationSessionGateV2._(this.state, this.attempt);
+  const AuthIncarnationSessionGateV2._(
+    this.state,
+    this.attempt,
+    this.sessionAttemptHighWaterV2,
+  );
 
   const AuthIncarnationSessionGateV2.signedOut()
-    : this._(AuthIncarnationSessionStateV2.signedOut, null);
+    : this._(AuthIncarnationSessionStateV2.signedOut, null, 0);
+
+  AuthIncarnationSessionAttemptV2 issueAttempt({
+    required String attemptId,
+    required AuthIncarnationScopeV2 scope,
+    required String accountGenerationV2,
+    required int accountLifecycleEpochV2,
+  }) {
+    if (sessionAttemptHighWaterV2 == AuthIncarnationV2.maxSafeInteger) {
+      throw StateError('Auth incarnation V2 session attempt epoch exhausted.');
+    }
+    return AuthIncarnationSessionAttemptV2._issued(
+      attemptId: attemptId,
+      sessionAttemptEpochV2: sessionAttemptHighWaterV2 + 1,
+      scope: scope,
+      accountGenerationV2: accountGenerationV2,
+      accountLifecycleEpochV2: accountLifecycleEpochV2,
+    );
+  }
 
   bool get permitsProtectedListeners =>
       state == AuthIncarnationSessionStateV2.ready;
@@ -179,21 +220,38 @@ final class AuthIncarnationSessionGateV2 {
 
   bool get permitsFcmRegistration => permitsProtectedListeners;
 
+  bool _acceptsNextAttempt(AuthIncarnationSessionAttemptV2 nextAttempt) =>
+      sessionAttemptHighWaterV2 < AuthIncarnationV2.maxSafeInteger &&
+      nextAttempt.sessionAttemptEpochV2 == sessionAttemptHighWaterV2 + 1;
+
   AuthIncarnationSessionGateV2 transition(AuthIncarnationSessionEventV2 event) {
     if (event.kind == AuthIncarnationSessionEventKindV2.signedOut) {
-      return const AuthIncarnationSessionGateV2.signedOut();
+      return AuthIncarnationSessionGateV2._(
+        AuthIncarnationSessionStateV2.signedOut,
+        null,
+        sessionAttemptHighWaterV2,
+      );
     }
     if (event.kind == AuthIncarnationSessionEventKindV2.accountSwitchStarted) {
+      final nextAttempt = event.attempt;
+      if (nextAttempt == null || !_acceptsNextAttempt(nextAttempt)) {
+        return this;
+      }
       return AuthIncarnationSessionGateV2._(
         AuthIncarnationSessionStateV2.establishing,
-        event.attempt,
+        nextAttempt,
+        nextAttempt.sessionAttemptEpochV2,
       );
     }
     if (event.kind == AuthIncarnationSessionEventKindV2.authObserved) {
-      return state == AuthIncarnationSessionStateV2.signedOut
+      final nextAttempt = event.attempt;
+      return state == AuthIncarnationSessionStateV2.signedOut &&
+              nextAttempt != null &&
+              _acceptsNextAttempt(nextAttempt)
           ? AuthIncarnationSessionGateV2._(
               AuthIncarnationSessionStateV2.establishing,
-              event.attempt,
+              nextAttempt,
+              nextAttempt.sessionAttemptEpochV2,
             )
           : this;
     }
@@ -223,11 +281,16 @@ final class AuthIncarnationSessionGateV2 {
         return AuthIncarnationSessionGateV2._(
           AuthIncarnationSessionStateV2.blocked,
           currentAttempt,
+          sessionAttemptHighWaterV2,
         );
+      }
+      if (!_acceptsNextAttempt(refreshedAttempt)) {
+        return this;
       }
       return AuthIncarnationSessionGateV2._(
         AuthIncarnationSessionStateV2.refreshRequired,
         refreshedAttempt,
+        refreshedAttempt.sessionAttemptEpochV2,
       );
     }
 
@@ -251,6 +314,10 @@ final class AuthIncarnationSessionGateV2 {
       AuthIncarnationSessionEventKindV2.accountSwitchStarted ||
       AuthIncarnationSessionEventKindV2.signedOut => state,
     };
-    return AuthIncarnationSessionGateV2._(next, currentAttempt);
+    return AuthIncarnationSessionGateV2._(
+      next,
+      currentAttempt,
+      sessionAttemptHighWaterV2,
+    );
   }
 }

@@ -44,6 +44,7 @@ void main() {
   test('Chrome accepts only the all-exact V2 tuple', () {
     final allowed = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-evaluation',
+      sessionAttemptEpochV2: 1,
       expectedScope: scope(),
       tokenProof: token(),
       lifecycle: lifecycle(),
@@ -56,6 +57,7 @@ void main() {
       ..['accountGenerationV2'] = List.filled(64, 'f').join();
     final denied = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-evaluation',
+      sessionAttemptEpochV2: 1,
       expectedScope: scope(),
       tokenProof: stale,
       lifecycle: lifecycle(),
@@ -93,6 +95,7 @@ void main() {
     final equalBoundary = token()..['authTimeSec'] = 1700000000;
     final decision = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-evaluation',
+      sessionAttemptEpochV2: 1,
       expectedScope: scope(),
       tokenProof: equalBoundary,
       lifecycle: lifecycle(),
@@ -103,7 +106,8 @@ void main() {
   });
 
   test('Chrome session gate opens only after proofReady', () {
-    final attempt = AuthIncarnationSessionAttemptV2(
+    var gate = const AuthIncarnationSessionGateV2.signedOut();
+    final attempt = gate.issueAttempt(
       attemptId: 'web-attempt',
       scope: AuthIncarnationScopeV2.fromMap(scope()),
       accountGenerationV2: generation,
@@ -111,13 +115,13 @@ void main() {
     );
     final decision = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-attempt',
+      sessionAttemptEpochV2: attempt.sessionAttemptEpochV2,
       expectedScope: scope(),
       tokenProof: token(),
       lifecycle: lifecycle(),
       membership: membership(),
       requiredCapability: 'stats.enter',
     );
-    var gate = const AuthIncarnationSessionGateV2.signedOut();
     gate = gate.transition(AuthIncarnationSessionEventV2.authObserved(attempt));
     expect(gate.permitsProtectedListeners, isFalse);
     gate = gate.transition(
@@ -127,15 +131,14 @@ void main() {
       ),
     );
     expect(gate.permitsProtectedListeners, isTrue);
+    final nextAttempt = gate.issueAttempt(
+      attemptId: 'next-web-attempt',
+      scope: AuthIncarnationScopeV2.fromMap(scope()),
+      accountGenerationV2: generation,
+      accountLifecycleEpochV2: 7,
+    );
     gate = gate.transition(
-      AuthIncarnationSessionEventV2.accountSwitchStarted(
-        AuthIncarnationSessionAttemptV2(
-          attemptId: 'next-web-attempt',
-          scope: AuthIncarnationScopeV2.fromMap(scope()),
-          accountGenerationV2: generation,
-          accountLifecycleEpochV2: 7,
-        ),
-      ),
+      AuthIncarnationSessionEventV2.accountSwitchStarted(nextAttempt),
     );
     expect(gate.permitsProtectedListeners, isFalse);
   });
