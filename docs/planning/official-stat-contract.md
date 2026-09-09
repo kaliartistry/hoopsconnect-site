@@ -228,7 +228,7 @@ Privacy is field-specific. Permission for name never implies photo, bio, birthda
 8. SHA-256 is lowercase hexadecimal over the exact UTF-8 canonical bytes. Hashes detect reproducibility/alteration; they are not signatures or proof that input facts are true.
 9. The encoding version is pinned alongside any persisted content identity. A change requires a new encoding version and golden fixtures.
 
-Dart and TypeScript execute the same Unicode, timestamp, nested-key, jersey, and SHA-256 fixtures.
+Dart and TypeScript execute the same Unicode, timestamp, nested-key, jersey, and SHA-256 fixtures. The Unicode cases include the last algorithmic Hangul syllable U+D7A3 in precomposed and decomposed form, the first scalar after that range U+D7A4, the distinct Jamo sequence U+1113 U+1161, and a combining-order sentinel whose result changed in Unicode 17. Dart uses the repository-pinned Unicode 17 `unorm_dart` 0.3.2 source with its exact Hangul upper-bound correction and retained MIT license; `third_party/unorm_dart/source_manifest.json` plus hard-coded review anchors in `scripts/verify_unicode_normalization_source.js` verify every source file and the exact one-line patch. Node and Dart route Packet 01 and Packet 06 text through one normalization boundary per runtime, and Node fails closed if its runtime does not report Unicode 17 or fails the version-sensitive sentinel.
 
 Packet 06 remains responsible for ingress resource limits. It must cap every identifier/string input explicitly, retain the 25-operation/128-KiB batch limits, and apply operation-specific payload key allowlists plus size/count bounds before persistence. Packet 01 records those requirements but does not prematurely implement an ingress handler.
 

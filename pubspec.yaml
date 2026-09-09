@@ -65,11 +65,15 @@ dependencies:
   google_sign_in: ^6.2.0
   sign_in_with_apple: ^6.1.0
   crypto: ^3.0.0
-  unorm_dart: ^0.3.2
+  # Repository-pinned Unicode 17 NFC implementation. See the vendored patch
+  # provenance before changing this path or normalization behavior.
+  unorm_dart:
+    path: third_party/unorm_dart
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  archive: ^4.0.9
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

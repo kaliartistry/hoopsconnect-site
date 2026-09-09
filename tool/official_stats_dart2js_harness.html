@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <link rel="icon" href="data:,">
+    <title>HoopsConnect optimized Dart2JS conformance</title>
+  </head>
+  <body>
+    <main id="status">Running optimized Dart2JS conformance...</main>
+    <script>
+      const originalLog = console.log.bind(console);
+      console.log = (...values) => {
+        originalLog(...values);
+        const message = values.join(" ");
+        if (message.startsWith("HOOPSCONNECT_DART2JS_OK")) {
+          document.querySelector("#status").textContent = message;
+          document.body.dataset.conformance = "passed";
+        }
+      };
+      window.addEventListener("error", (event) => {
+        document.querySelector("#status").textContent = `FAILED: ${event.message}`;
+        document.body.dataset.conformance = "failed";
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        document.querySelector("#status").textContent = `FAILED: ${event.reason}`;
+        document.body.dataset.conformance = "failed";
+      });
+    </script>
+    <script src="official_stats_dart2js_conformance.js"></script>
+  </body>
+</html>

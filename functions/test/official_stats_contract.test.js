@@ -36,6 +36,26 @@ test("TypeScript canonical encoding matches shared Dart golden cases", () => {
     assert.equal(contract.canonicalEncode(testCase.input), testCase.canonical, testCase.name);
     assert.equal(contract.canonicalSha256(testCase.input), testCase.sha256, testCase.name);
   }
+  const byName = Object.fromEntries(fixture.canonicalCases.map((entry) => [entry.name, entry]));
+  assert.equal(
+    byName["hangul-last-valid-precomposed"].sha256,
+    byName["hangul-last-valid-decomposed"].sha256,
+  );
+  assert.notEqual(
+    byName["hangul-first-after-range"].sha256,
+    byName["jamo-after-leading-range"].sha256,
+  );
+  assert.equal(
+    contract.officialStatUnicodeNormalizationImplementation,
+    "unicode-17.0-ecmascript-string-normalize-nfc-v1",
+  );
+  assert.equal(contract.officialStatUnicodeRuntimeVersion, "17.0");
+  assert.equal(process.versions.unicode, "17.0");
+  assert.doesNotThrow(() => contract.assertOfficialStatUnicodeRuntime());
+  assert.equal(
+    byName["unicode-17-combining-order-sentinel"].canonical,
+    "{\"text\":\"ạ᫏\"}",
+  );
 });
 
 test("timestamps are UTC with millisecond precision", () => {

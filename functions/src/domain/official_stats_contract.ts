@@ -654,9 +654,34 @@ export const commandErrorIdempotency = {
 export const maxCanonicalInteger = Number.MAX_SAFE_INTEGER;
 const asciiKey = /^[\x21-\x7e]+$/;
 
+export const officialStatUnicodeNormalizationImplementation =
+  "unicode-17.0-ecmascript-string-normalize-nfc-v1" as const;
+export const officialStatUnicodeRuntimeVersion = "17.0" as const;
+
+/** Fail closed when the Node/ICU normalization tables are not contract-v2. */
+export function assertOfficialStatUnicodeRuntime(): void {
+  if (process.versions.unicode !== officialStatUnicodeRuntimeVersion) {
+    throw new TypeError(
+      `Official-stat Unicode ${officialStatUnicodeRuntimeVersion} is required; ` +
+      `runtime provides ${process.versions.unicode ?? "unknown"}`,
+    );
+  }
+  // U+1ACF changed canonical ordering in Unicode 17. This sentinel prevents a
+  // mislabeled or partially upgraded runtime from silently changing hashes.
+  if ("a\u{1ACF}\u0323".normalize("NFC") !== "\u1EA1\u{1ACF}") {
+    throw new TypeError("Official-stat Unicode 17 NFC sentinel failed");
+  }
+}
+
+/** Single NFC boundary shared by Packet 01 canonical encoding and Packet 06. */
+export function normalizeOfficialStatText(value: string): string {
+  assertOfficialStatUnicodeRuntime();
+  return value.normalize("NFC");
+}
+
 function encodeCanonical(value: unknown): string {
   if (value === null || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "string") return JSON.stringify(value.normalize("NFC"));
+  if (typeof value === "string") return JSON.stringify(normalizeOfficialStatText(value));
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) {
       throw new TypeError("Canonical numbers must be safe integers");

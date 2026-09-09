@@ -77,6 +77,36 @@
       "sha256": "20961f6a555aba6dde3df6a4c2cc36f516f8e3d0e21c2eb3a00b902d948c31e6"
     },
     {
+      "name": "unicode-17-combining-order-sentinel",
+      "input": {"text": "a\u1ACF\u0323"},
+      "canonical": "{\"text\":\"ạ\u1ACF\"}",
+      "sha256": "db4cd44367fe4b2a54e20efa6b4ef3dc0df5becaabdbb199f2c964abcc29e310"
+    },
+    {
+      "name": "hangul-last-valid-precomposed",
+      "input": {"text": "\uD7A3"},
+      "canonical": "{\"text\":\"\uD7A3\"}",
+      "sha256": "4a219e8e135cb81a28812e478553e214f65631514be33f3ba3cc774b912c4feb"
+    },
+    {
+      "name": "hangul-last-valid-decomposed",
+      "input": {"text": "\u1112\u1175\u11C2"},
+      "canonical": "{\"text\":\"\uD7A3\"}",
+      "sha256": "4a219e8e135cb81a28812e478553e214f65631514be33f3ba3cc774b912c4feb"
+    },
+    {
+      "name": "hangul-first-after-range",
+      "input": {"text": "\uD7A4"},
+      "canonical": "{\"text\":\"\uD7A4\"}",
+      "sha256": "c8e54b190098560dec440e828e00176fc1b2f555a31dd56014b6b8787278faaf"
+    },
+    {
+      "name": "jamo-after-leading-range",
+      "input": {"text": "\u1113\u1161"},
+      "canonical": "{\"text\":\"\u1113\u1161\"}",
+      "sha256": "137ed6918681f9a175efc9f3c58155a10c8e040e8bf7cbf8c02d6e0d64474c93"
+    },
+    {
       "name": "nested-order",
       "input": {"scope": {"seasonId": "season_2026", "associationId": "jba", "competitionId": "nbl"}, "jerseys": ["0", "00"]},
       "canonical": "{\"jerseys\":[\"0\",\"00\"],\"scope\":{\"associationId\":\"jba\",\"competitionId\":\"nbl\",\"seasonId\":\"season_2026\"}}",

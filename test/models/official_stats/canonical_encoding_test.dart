@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/official_stats/canonical_encoding.dart';
+import 'package:hoops_connect/models/official_stats/unicode_normalization.dart';
 
 class _UnsupportedRecord {
   final int value = 1;
@@ -31,6 +32,26 @@ void main() {
         reason: testCase['name'] as String,
       );
     }
+    final byName = {
+      for (final raw in fixture['canonicalCases'] as List<dynamic>)
+        (raw as Map<String, dynamic>)['name']: raw,
+    };
+    expect(
+      (byName['hangul-last-valid-precomposed'] as Map)['sha256'],
+      (byName['hangul-last-valid-decomposed'] as Map)['sha256'],
+    );
+    expect(
+      (byName['hangul-first-after-range'] as Map)['sha256'],
+      isNot((byName['jamo-after-leading-range'] as Map)['sha256']),
+    );
+    expect(
+      (byName['unicode-17-combining-order-sentinel'] as Map)['canonical'],
+      '{"text":"ạ᫏"}',
+    );
+    expect(
+      OfficialStatUnicodeNormalization.implementationVersion,
+      'unicode-17.0-unorm-dart-0.3.2-hangul-boundary-patch1',
+    );
   });
 
   test('timestamps normalize to UTC milliseconds', () {
