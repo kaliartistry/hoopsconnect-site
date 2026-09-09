@@ -70,6 +70,14 @@ jobs:
       - name: Verify pinned Unicode normalization source
         run: npm --prefix scripts run verify:unicode-normalization
 
+      - name: Run Packet 07 real-browser journal regressions
+        run: |
+          flutter test --platform chrome \
+            test/services/local_game_journal/journal_astra_regression_test.dart \
+            test/services/local_game_journal/journal_contract_test.dart \
+            test/services/local_game_journal/journal_migrations_test.dart \
+            test/services/local_game_journal/indexed_db_journal_store_web_test.dart
+
       - name: Build Functions
         working-directory: functions
         run: npm run build

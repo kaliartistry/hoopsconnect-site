@@ -69,6 +69,11 @@ dependencies:
   # provenance before changing this path or normalization behavior.
   unorm_dart:
     path: third_party/unorm_dart
+  sqflite: ^2.4.2
+  sqflite_common_ffi: ^2.3.7
+  idb_shim: ^2.6.7
+  path: ^1.9.1
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
