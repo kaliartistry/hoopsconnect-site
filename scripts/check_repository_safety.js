@@ -57,10 +57,40 @@ for (const relativePath of [
   'scripts/backfill_pending_game_stats.js',
   'scripts/audit_storage_migration.js',
   'scripts/audit_production_readiness_data.js',
+  'scripts/stat_migration_inventory.js',
 ]) {
   const content = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
   if (!content.includes('guardFirestoreTarget')) {
     failures.push('Firebase data script is missing target guard: ' + relativePath);
+  }
+}
+
+const readOnlyInventoryCli = fs.readFileSync(
+  path.join(repoRoot, 'scripts/stat_migration_inventory.js'),
+  'utf8',
+);
+const readOnlyInventoryAdapter = fs.readFileSync(
+  path.join(repoRoot, 'scripts/lib/stat_migration_readonly_firebase.js'),
+  'utf8',
+);
+if (!readOnlyInventoryCli.includes("guardFirestoreTarget({argv, mode: 'read'})")) {
+  failures.push('Stat migration Firebase mode is not explicitly guarded read-only.');
+}
+if (!readOnlyInventoryAdapter.includes("method: 'GET'")
+    || !readOnlyInventoryAdapter.includes("orderBy: '__name__'")) {
+  failures.push('Stat migration Firebase adapter is not bounded to ordered GET reads.');
+}
+for (const pattern of [
+  /\.set\s*\(/,
+  /\.update\s*\(/,
+  /\.create\s*\(/,
+  /\.delete\s*\(/,
+  /batch\s*\(/,
+  /runTransaction\s*\(/,
+  /commit\s*\(/,
+]) {
+  if (pattern.test(readOnlyInventoryAdapter)) {
+    failures.push('Stat migration Firebase adapter exposes a write-capable API.');
   }
 }
 

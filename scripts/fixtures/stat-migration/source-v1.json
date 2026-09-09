@@ -1,0 +1,230 @@
+{
+  "manifestSchemaVersion": "stat-migration-source-v1",
+  "canonicalEncodingVersion": "official-stat-canonical-json-v1",
+  "mapperVersion": "stat-migration-mapper-v1",
+  "classificationRulesVersion": "stat-migration-classification-v1",
+  "source": {
+    "projectOrExportId": "synthetic-hoopsconnect-fixture",
+    "exportIdentifier": "packet-03-fixture-v1",
+    "associationId": "jba"
+  },
+  "syntheticRules": [
+    {
+      "generatorId": "backfill_pending_game_stats",
+      "ruleVersion": "legacy-generator-rule-v1"
+    }
+  ],
+  "records": [
+    {
+      "sourcePath": "associations/jba/seasons/season-2026",
+      "sourceKey": "season-2026",
+      "sourceCollection": "seasons",
+      "entityType": "season",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026"},
+      "data": {"approved": true, "label": "Synthetic 2026 Season"},
+      "references": [],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/divisions/division-1",
+      "sourceKey": "division-1",
+      "sourceCollection": "divisions",
+      "entityType": "division",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1"},
+      "data": {"label": "Synthetic Division"},
+      "references": [],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": ["1111111111111111111111111111111111111111111111111111111111111111"]},
+      "classificationEvidence": {
+        "independentEvidence": [
+          {"evidenceType": "signed_fixture_sheet", "referenceHash": "1111111111111111111111111111111111111111111111111111111111111111"}
+        ]
+      }
+    },
+    {
+      "sourcePath": "associations/jba/teams/team-a",
+      "sourceKey": "team-a",
+      "sourceCollection": "teams",
+      "entityType": "legacyTeam",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1"},
+      "data": {"approved": true, "displayName": "Synthetic Lions"},
+      "references": [],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/teams/team-b",
+      "sourceKey": "team-b",
+      "sourceCollection": "teams",
+      "entityType": "legacyTeam",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1"},
+      "data": {"approved": true, "displayName": "Synthetic Waves"},
+      "references": [],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/teams/team-a",
+      "sourceKey": "roster/000000",
+      "sourceCollection": "teams.roster",
+      "entityType": "legacyRosterEntry",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1"},
+      "data": {"displayName": "Same Synthetic Player", "jersey": "0"},
+      "references": [
+        {"relation": "team", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {},
+      "temporalEvidence": {
+        "effectiveFrom": {"state": "unknown", "value": null, "reasonCode": "not_recorded"},
+        "effectiveTo": {"state": "unknown", "value": null, "reasonCode": "not_recorded"}
+      }
+    },
+    {
+      "sourcePath": "associations/jba/teams/team-a",
+      "sourceKey": "roster/000001",
+      "sourceCollection": "teams.roster",
+      "entityType": "legacyRosterEntry",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1"},
+      "data": {"displayName": "Same Synthetic Player", "jersey": "00"},
+      "references": [
+        {"relation": "team", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {},
+      "temporalEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/events/game-1",
+      "sourceKey": "game-1",
+      "sourceCollection": "events",
+      "entityType": "legacyGame",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1", "phaseId": "regular", "gameId": "game_1"},
+      "data": {"type": "game", "statsStatus": "approved"},
+      "references": [
+        {"relation": "awayTeam", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-b", "targetSourceKey": "team-b"},
+        {"relation": "homeTeam", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/gameStats/game-1",
+      "sourceKey": "game-1",
+      "sourceCollection": "gameStats",
+      "entityType": "legacyGameStats",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1", "phaseId": "regular", "gameId": "game_1"},
+      "data": {"approved": true, "awayScore": 62, "homeScore": 67},
+      "references": [
+        {"relation": "game", "required": true, "targetEntityType": "legacyGame", "targetSourcePath": "associations/jba/events/game-1", "targetSourceKey": "game-1"}
+      ],
+      "provenance": {
+        "sourceKind": "fixture",
+        "evidenceHashes": ["2222222222222222222222222222222222222222222222222222222222222222"],
+        "generator": {
+          "generatorId": "backfill_pending_game_stats",
+          "ruleVersion": "legacy-generator-rule-v1",
+          "evidenceHash": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      "classificationEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/gameStats/game-1",
+      "sourceKey": "playerLines/line-0",
+      "sourceCollection": "gameStats.playerLines",
+      "entityType": "legacyGamePlayerLine",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1", "phaseId": "regular", "gameId": "game_1"},
+      "data": {"displayName": "Evidence, Not Identity", "jersey": "0", "points": 12},
+      "references": [
+        {"relation": "game", "required": true, "targetEntityType": "legacyGame", "targetSourcePath": "associations/jba/events/game-1", "targetSourceKey": "game-1"},
+        {"relation": "team", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": ["3333333333333333333333333333333333333333333333333333333333333333"]},
+      "classificationEvidence": {
+        "independentEvidence": [
+          {"evidenceType": "official_sheet_scan", "referenceHash": "3333333333333333333333333333333333333333333333333333333333333333"}
+        ]
+      }
+    },
+    {
+      "sourcePath": "associations/jba/playerSeasonStats/orphan-1",
+      "sourceKey": "orphan-1",
+      "sourceCollection": "playerSeasonStats",
+      "entityType": "playerSeasonAggregate",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026"},
+      "data": {"gamesPlayed": 2, "points": 20},
+      "references": [
+        {"relation": "player", "required": true, "targetEntityType": "legacyPlayer", "targetSourcePath": "associations/jba/players/missing-player", "targetSourceKey": "missing-player"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {}
+    },
+    {
+      "sourcePath": "associations/jba/players/candidate-a",
+      "sourceKey": "candidate-a",
+      "sourceCollection": "players",
+      "entityType": "legacyPlayer",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba"},
+      "data": {"displayName": "Duplicate Candidate"},
+      "references": [],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {
+        "duplicateCandidate": {"groupId": "candidate_group_1", "evidenceHash": "4444444444444444444444444444444444444444444444444444444444444444"}
+      }
+    },
+    {
+      "sourcePath": "associations/jba/players/private-a",
+      "sourceKey": "private-a",
+      "sourceCollection": "players",
+      "entityType": "legacyPlayer",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba"},
+      "data": {"contact_email": "fixture@example.invalid", "displayName": "Private Fixture"},
+      "references": [],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {"privacyRestrictedFields": ["contact_email"]}
+    },
+    {
+      "sourcePath": "associations/jba/events/game-contradictory",
+      "sourceKey": "game-contradictory",
+      "sourceCollection": "events",
+      "entityType": "legacyGame",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": "season_2026", "divisionId": "division_1", "phaseId": "regular", "gameId": "game_contradictory"},
+      "data": {"type": "game"},
+      "references": [
+        {"relation": "awayTeam", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"},
+        {"relation": "homeTeam", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {"contradictions": ["paired_record_conflict"]}
+    },
+    {
+      "sourcePath": "associations/jba/events/game-missing-scope",
+      "sourceKey": "game-missing-scope",
+      "sourceCollection": "events",
+      "entityType": "legacyGame",
+      "sourceSchemaVersion": null,
+      "scope": {"associationId": "jba", "competitionId": "nbl", "seasonId": null, "divisionId": "division_1", "phaseId": "regular", "gameId": "game_missing_scope"},
+      "data": {"type": "game"},
+      "references": [
+        {"relation": "awayTeam", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-b", "targetSourceKey": "team-b"},
+        {"relation": "homeTeam", "required": true, "targetEntityType": "legacyTeam", "targetSourcePath": "associations/jba/teams/team-a", "targetSourceKey": "team-a"}
+      ],
+      "provenance": {"sourceKind": "fixture", "evidenceHashes": []},
+      "classificationEvidence": {}
+    }
+  ]
+}
