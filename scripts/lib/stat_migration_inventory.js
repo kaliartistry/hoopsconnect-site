@@ -539,7 +539,7 @@ function validateTemporalInterval(temporalEvidence) {
   const from = temporalEvidence.effectiveFrom;
   const to = temporalEvidence.effectiveTo;
   if (from.state === 'known' && to.state === 'known'
-      && Date.parse(from.value) > Date.parse(to.value)) {
+      && Date.parse(from.value) >= Date.parse(to.value)) {
     throw new MigrationInventoryError(
       errorCodes.contradictorySource,
       'Known effectiveFrom must not be after effectiveTo.',
@@ -859,13 +859,17 @@ function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = nu
         ...record.containerSourceIdentities,
         ...record.referenceEdges.filter((edge) => edge.required).map((edge) => edge.targetSourceIdentity),
       ];
+      const dependencyIsIneligible = (identity) => {
+        const dependency = inventoryByIdentity.get(identity);
+        return dependency && (dependency.blocked || dependency.classifications.includes('synthetic'));
+      };
       const blockedRelations = record.referenceEdges.filter((edge) => (
-        edge.required && inventoryByIdentity.get(edge.targetSourceIdentity)?.blocked
+        edge.required && dependencyIsIneligible(edge.targetSourceIdentity)
       )).map((edge) => edge.relation);
-      if (record.containerSourceIdentities.some((identity) => inventoryByIdentity.get(identity)?.blocked)) {
+      if (record.containerSourceIdentities.some(dependencyIsIneligible)) {
         blockedRelations.push('containerScope');
       }
-      if (!record.blocked && requiredIdentities.some((identity) => inventoryByIdentity.get(identity)?.blocked)) {
+      if (!record.blocked && requiredIdentities.some(dependencyIsIneligible)) {
         record.blocked = true;
         if (!record.classifications.includes('orphaned')) {
           record.classifications = classifications.filter((value) => (

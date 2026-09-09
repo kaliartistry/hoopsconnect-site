@@ -458,6 +458,21 @@ test('required references enforce target type and blocked dependency eligibility
   assert.equal(dependent.blocked, true);
   assert.ok(dependent.classifications.includes('orphaned'));
   assert.ok(!blockedReport.payload.proposedCreates.some((item) => item.sourceLabel === dependent.sourceLabel));
+
+  const syntheticParent = loadFixture();
+  syntheticParent.records.find((record) => record.sourceKey === 'team-a').provenance.generator = {
+    evidenceHash: 'b'.repeat(64),
+    generatorId: 'backfill_pending_game_stats',
+    ruleVersion: 'legacy-generator-rule-v1',
+  };
+  const syntheticReport = dryRun(syntheticParent).report;
+  const syntheticDependent = syntheticReport.payload.records.find((record) => (
+    record.entityType === 'legacyRosterEntry' && record.referenceMappings.length > 0
+  ));
+  assert.equal(syntheticDependent.blocked, true);
+  assert.ok(!syntheticReport.payload.proposedCreates.some((item) => (
+    item.sourceLabel === syntheticDependent.sourceLabel
+  )));
 });
 
 test('canonical destination paths use mapped container IDs and are unique', () => {
@@ -547,6 +562,15 @@ test('known temporal intervals must be canonical and ordered', () => {
   };
   assert.throws(
     () => inventory.buildInventory(reversed),
+    (error) => error.code === inventory.errorCodes.contradictorySource,
+  );
+  const equal = loadFixture();
+  equal.records.find((record) => record.entityType === 'legacyRosterEntry').temporalEvidence = {
+    effectiveFrom: {state: 'known', value: '2026-01-01T00:00:00.000Z'},
+    effectiveTo: {state: 'known', value: '2026-01-01T00:00:00.000Z'},
+  };
+  assert.throws(
+    () => inventory.buildInventory(equal),
     (error) => error.code === inventory.errorCodes.contradictorySource,
   );
 });
