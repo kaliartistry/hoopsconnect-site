@@ -19,11 +19,14 @@
     "test:auth-incarnation-v2": "npm run build && npm run test:auth-incarnation-v2:no-build",
     "test:auth-incarnation-v2:no-build": "node --test test/auth_incarnation_v2.test.js test/auth_incarnation_v2_dormancy.test.js",
     "test:auth-incarnation-v2:rules": "node --test test/auth_incarnation_v2.rules.test.js",
+    "test:account-lifecycle-ad02-v2": "npm run build && npm run test:account-lifecycle-ad02-v2:no-build",
+    "test:account-lifecycle-ad02-v2:no-build": "node --test test/account_lifecycle_ad02_v2.test.js test/notification_delivery_ad02_v2.test.js test/account_lifecycle_ad02_v2_dormancy.test.js",
+    "test:account-lifecycle-ad02-v2:rules": "node --test test/account_lifecycle_ad02_v2.rules.test.js",
     "test:stat-calculators": "npm run build && node --test test/normalized_box_score_calculator.test.js",
     "test:rules": "node --test test/firestore.rules.test.js",
     "test:storage": "node --test test/storage.rules.test.js",
     "test:security": "npm run build && npm run test:security:no-build",
-    "test:security:no-build": "npm run test:contracts:no-build && npm run test:functions:no-build && npm run test:notifications && npm run test:callable && npm run test:rules && npm run test:storage && npm run test:auth-incarnation-v2:rules"
+    "test:security:no-build": "npm run test:contracts:no-build && npm run test:functions:no-build && npm run test:notifications && npm run test:callable && npm run test:rules && npm run test:storage && npm run test:auth-incarnation-v2:rules && npm run test:account-lifecycle-ad02-v2:no-build && npm run test:account-lifecycle-ad02-v2:rules"
   },
   "engines": {
     "node": "22"

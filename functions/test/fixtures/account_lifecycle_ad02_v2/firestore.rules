@@ -1,0 +1,377 @@
+rules_version = '2';
+
+// ACCOUNT_LIFECYCLE_AD02_V2_TEST_ONLY_PROJECT=demo-hoopsconnect
+// Candidate-only emulator policy. firebase.json does not reference this file.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function validId(value) {
+      return value is string
+        && value.size() > 0
+        && value.size() <= 128
+        && value.matches('^[^\\x00-\\x1f\\x7f]{1,128}$');
+    }
+
+    function validPathId(value) {
+      return value is string
+        && value.matches('^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
+    }
+
+    function validCounter(value) {
+      return value is number
+        && value >= 0
+        && value <= 9007199254740991
+        && value % 1 == 0;
+    }
+
+    function providerTenantV2() {
+      return request.auth.token.firebase.get('tenant', null);
+    }
+
+    function lifecyclePathV2(uid) {
+      return request.auth.token.authTenantIdV2 == null
+        ? /databases/$(database)/documents/accountLifecycleV2Root/$(uid)
+        : /databases/$(database)/documents/accountLifecycleV2Tenants/$(request.auth.token.authTenantIdV2)/users/$(uid);
+    }
+
+    function membershipPathV2(uid) {
+      return request.auth.token.authTenantIdV2 == null
+        ? /databases/$(database)/documents/membershipsV2Root/$(uid)
+        : /databases/$(database)/documents/membershipsV2Tenants/$(request.auth.token.authTenantIdV2)/users/$(uid);
+    }
+
+    function validCapabilities(value) {
+      return value is list
+        && value.size() <= 64
+        && value.size() == value.toSet().size()
+        && value.hasOnly([
+          'association.read', 'association.manage', 'members.read',
+          'members.manage', 'invites.manage', 'schedule.manage',
+          'teams.manage', 'teams.represent', 'posts.create', 'posts.manage',
+          'posts.internal.read', 'posts.acknowledge', 'stats.enter',
+          'stats.approve', 'stats.export', 'press.read', 'players.manage',
+          'players.private.read', 'rosters.assert', 'rosters.manage',
+          'games.schedule', 'stats.submit', 'stats.review', 'stats.correct',
+          'stats.certify', 'results.publish', 'results.retract',
+          'official.override'
+        ]);
+    }
+
+    // AD02_TOKEN_V2_BEGIN: signed proof checks perform no document reads.
+    function validTokenV2() {
+      return request.auth != null
+        && request.auth.token.keys().hasAll([
+          'authIncarnationSchemaVersionV2',
+          'authProjectIdV2',
+          'authTenantIdV2',
+          'authUidV2',
+          'accountGenerationV2',
+          'accountLifecycleEpochV2',
+          'auth_time'
+        ])
+        && request.auth.token.authIncarnationSchemaVersionV2 == 2
+        && request.auth.token.authProjectIdV2 == 'demo-hoopsconnect'
+        && request.auth.token.aud == request.auth.token.authProjectIdV2
+        && (request.auth.token.authTenantIdV2 == null
+          || validPathId(request.auth.token.authTenantIdV2))
+        && providerTenantV2() == request.auth.token.authTenantIdV2
+        && request.auth.token.authUidV2 == request.auth.uid
+        && validPathId(request.auth.token.authUidV2)
+        && request.auth.token.accountGenerationV2 is string
+        && request.auth.token.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && validCounter(request.auth.token.accountLifecycleEpochV2)
+        && validCounter(request.auth.token.auth_time);
+    }
+    // AD02_TOKEN_V2_END
+
+    function validScope(data, uid) {
+      return data.authProjectIdV2 == 'demo-hoopsconnect'
+        && data.authProjectIdV2 == request.auth.token.authProjectIdV2
+        && data.authTenantIdV2 == request.auth.token.authTenantIdV2
+        && data.authUidV2 == uid
+        && data.authUidV2 == request.auth.token.authUidV2;
+    }
+
+    function lifecycleShape(data) {
+      return data.keys().hasOnly([
+          'authIncarnationSchemaVersionV2', 'authProjectIdV2',
+          'authTenantIdV2', 'authUidV2', 'accountGenerationV2',
+          'accountLifecycleEpochV2', 'lifecycleStateV2', 'reauthAfterSecV2'
+        ])
+        && data.authIncarnationSchemaVersionV2 == 2
+        && data.accountGenerationV2 is string
+        && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && validCounter(data.accountLifecycleEpochV2)
+        && validCounter(data.reauthAfterSecV2);
+    }
+
+    function membershipShape(data) {
+      return data.keys().hasOnly([
+          'authIncarnationSchemaVersionV2', 'authProjectIdV2',
+          'authTenantIdV2', 'authUidV2', 'accountGenerationV2',
+          'accountLifecycleEpochV2', 'membershipStatusV2', 'associationId',
+          'capabilities'
+        ])
+        && data.authIncarnationSchemaVersionV2 == 2
+        && data.accountGenerationV2 is string
+        && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && validCounter(data.accountLifecycleEpochV2)
+        && validId(data.associationId)
+        && validCapabilities(data.capabilities);
+    }
+
+    // AD02_ACTIVE_V2_BEGIN: exactly two Firestore document reads.
+    function activeAccountV2(uid, associationId, capability) {
+      let lifecycle = get(lifecyclePathV2(uid)).data;
+      let membership = get(membershipPathV2(uid)).data;
+      return validTokenV2()
+        && lifecycleShape(lifecycle)
+        && membershipShape(membership)
+        && validScope(lifecycle, uid)
+        && validScope(membership, uid)
+        && lifecycle.lifecycleStateV2 == 'active'
+        && membership.membershipStatusV2 == 'active'
+        && membership.associationId == associationId
+        && request.auth.token.accountGenerationV2 == lifecycle.accountGenerationV2
+        && request.auth.token.accountGenerationV2 == membership.accountGenerationV2
+        && request.auth.token.accountLifecycleEpochV2 == lifecycle.accountLifecycleEpochV2
+        && request.auth.token.accountLifecycleEpochV2 == membership.accountLifecycleEpochV2
+        && request.auth.token.auth_time > lifecycle.reauthAfterSecV2
+        && membership.capabilities.hasAny([capability]);
+    }
+    // AD02_ACTIVE_V2_END
+
+    function profileShape(data) {
+      return data.keys().hasOnly([
+          'accountProfileSchemaVersionV2', 'authProjectIdV2',
+          'authTenantIdV2', 'authUidV2', 'accountGenerationV2',
+          'accountLifecycleEpochV2', 'associationId', 'displayName', 'teamId',
+          'divisionId', 'notificationPrefs'
+        ])
+        && data.accountProfileSchemaVersionV2 == 2
+        && data.accountGenerationV2 is string
+        && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && validCounter(data.accountLifecycleEpochV2)
+        && validId(data.associationId)
+        && data.displayName is string
+        && data.displayName.size() > 0
+        && data.displayName.size() <= 160
+        && (data.teamId == null || validId(data.teamId))
+        && (data.divisionId == null || validId(data.divisionId))
+        && data.notificationPrefs is map
+        && data.notificationPrefs.keys().hasOnly([
+          'ackReminders', 'statReminders', 'newPosts'
+        ])
+        && (!('ackReminders' in data.notificationPrefs)
+          || data.notificationPrefs.ackReminders is bool)
+        && (!('statReminders' in data.notificationPrefs)
+          || data.notificationPrefs.statReminders is bool)
+        && (!('newPosts' in data.notificationPrefs)
+          || data.notificationPrefs.newPosts is bool);
+    }
+
+    function profileBoundToToken(data, uid) {
+      return profileShape(data)
+        && validScope(data, uid)
+        && data.accountGenerationV2 == request.auth.token.accountGenerationV2
+        && data.accountLifecycleEpochV2 == request.auth.token.accountLifecycleEpochV2
+        && activeAccountV2(uid, data.associationId, 'association.read');
+    }
+
+    function authorityStampShape(data) {
+      return data is map
+        && data.keys().hasOnly([
+          'authIncarnationSchemaVersionV2', 'authProjectIdV2',
+          'authTenantIdV2', 'authUidV2', 'accountGenerationV2',
+          'accountLifecycleEpochV2'
+        ])
+        && data.authIncarnationSchemaVersionV2 == 2
+        && data.accountGenerationV2 is string
+        && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && validCounter(data.accountLifecycleEpochV2);
+    }
+
+    function authorityStampMatchesToken(data) {
+      return authorityStampShape(data)
+        && validScope(data, request.auth.uid)
+        && data.accountGenerationV2 == request.auth.token.accountGenerationV2
+        && data.accountLifecycleEpochV2 == request.auth.token.accountLifecycleEpochV2;
+    }
+
+    function protectedShape(data) {
+      return data.keys().hasOnly([
+          'owner', 'associationId', 'requiredCapability', 'value'
+        ])
+        && authorityStampShape(data.owner)
+        && validId(data.associationId)
+        && validId(data.requiredCapability);
+    }
+
+    function actorStampMatchesToken(data) {
+      return authorityStampMatchesToken(data);
+    }
+
+    match /accountLifecycleV2Root/{uid} {
+      allow read, write: if false;
+    }
+    match /accountLifecycleV2Tenants/{tenantId}/users/{uid} {
+      allow read, write: if false;
+    }
+    match /membershipsV2Root/{uid} {
+      allow read, write: if false;
+    }
+    match /membershipsV2Tenants/{tenantId}/users/{uid} {
+      allow read, write: if false;
+    }
+
+    match /accountProfilesV2Root/{uid} {
+      allow get: if request.auth.token.authTenantIdV2 == null
+        && request.auth.uid == uid
+        && profileBoundToToken(resource.data, uid);
+      allow list, create, delete: if false;
+      allow update: if request.auth.token.authTenantIdV2 == null
+        && request.auth.uid == uid
+        && profileBoundToToken(resource.data, uid)
+        && profileBoundToToken(request.resource.data, uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'notificationPrefs'
+        ]);
+    }
+
+    match /accountProfilesV2Tenants/{tenantId}/users/{uid} {
+      allow get: if request.auth.token.authTenantIdV2 == tenantId
+        && request.auth.uid == uid
+        && profileBoundToToken(resource.data, uid);
+      allow list, create, delete: if false;
+      allow update: if request.auth.token.authTenantIdV2 == tenantId
+        && request.auth.uid == uid
+        && profileBoundToToken(resource.data, uid)
+        && profileBoundToToken(request.resource.data, uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'notificationPrefs'
+        ]);
+    }
+
+    function fcmRegistrationShape(data, uid, installationId) {
+      return data.keys().hasOnly([
+          'fcmRegistrationSchemaVersionV2', 'authProjectIdV2',
+          'authTenantIdV2', 'authUidV2', 'accountGenerationV2',
+          'accountLifecycleEpochV2', 'associationId', 'installationId',
+          'fcmToken', 'updatedAt'
+        ])
+        && data.fcmRegistrationSchemaVersionV2 == 2
+        && validScope(data, uid)
+        && data.accountGenerationV2 == request.auth.token.accountGenerationV2
+        && data.accountLifecycleEpochV2 == request.auth.token.accountLifecycleEpochV2
+        && validId(data.associationId)
+        && data.installationId == installationId
+        && validId(data.installationId)
+        && data.fcmToken is string
+        && data.fcmToken.size() > 0
+        && data.fcmToken.size() <= 4096
+        && data.fcmToken.matches('^[A-Za-z0-9_:-]+$')
+        && data.updatedAt is timestamp
+        && activeAccountV2(uid, data.associationId, 'association.read');
+    }
+
+    match /accountFcmRegistrationsV2Root/{uid}/installations/{installationId} {
+      allow get, list: if false;
+      allow create, update: if request.auth.token.authTenantIdV2 == null
+        && request.auth.uid == uid
+        && fcmRegistrationShape(request.resource.data, uid, installationId)
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if request.auth.token.authTenantIdV2 == null
+        && request.auth.uid == uid
+        && fcmRegistrationShape(resource.data, uid, installationId);
+    }
+
+    match /accountFcmRegistrationsV2Tenants/{tenantId}/users/{uid}/installations/{installationId} {
+      allow get, list: if false;
+      allow create, update: if request.auth.token.authTenantIdV2 == tenantId
+        && request.auth.uid == uid
+        && fcmRegistrationShape(request.resource.data, uid, installationId)
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if request.auth.token.authTenantIdV2 == tenantId
+        && request.auth.uid == uid
+        && fcmRegistrationShape(resource.data, uid, installationId);
+    }
+
+    match /protectedRecordsV2/{recordId} {
+      allow read: if protectedShape(resource.data)
+        && authorityStampMatchesToken(resource.data.owner)
+        && activeAccountV2(
+          request.auth.uid,
+          resource.data.associationId,
+          resource.data.requiredCapability
+        );
+      allow create: if protectedShape(request.resource.data)
+        && authorityStampMatchesToken(request.resource.data.owner)
+        && activeAccountV2(
+          request.auth.uid,
+          request.resource.data.associationId,
+          request.resource.data.requiredCapability
+        );
+      allow update: if protectedShape(resource.data)
+        && protectedShape(request.resource.data)
+        && authorityStampMatchesToken(resource.data.owner)
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.associationId == resource.data.associationId
+        && request.resource.data.requiredCapability == resource.data.requiredCapability
+        && activeAccountV2(
+          request.auth.uid,
+          resource.data.associationId,
+          resource.data.requiredCapability
+        );
+      allow delete: if protectedShape(resource.data)
+        && authorityStampMatchesToken(resource.data.owner)
+        && activeAccountV2(
+          request.auth.uid,
+          resource.data.associationId,
+          resource.data.requiredCapability
+        );
+    }
+
+    // A delayed writer may use this immutable source only when it preserves
+    // the exact approving incarnation. Derived output remains server-only.
+    match /candidateLegacyApprovalsV2/{approvalId} {
+      allow create: if request.resource.data.keys().hasOnly([
+          'associationId', 'actor', 'approvedValue'
+        ])
+        && validId(request.resource.data.associationId)
+        && actorStampMatchesToken(request.resource.data.actor)
+        && activeAccountV2(
+          request.auth.uid,
+          request.resource.data.associationId,
+          'stats.approve'
+        );
+      allow read, update, delete: if false;
+    }
+
+    match /candidateDerivedOutputsV2/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Suppression, deletion, and notification ordering records are private.
+    match /accountGenerationSuppressionsV2Root/{uid} {
+      allow read, write: if false;
+    }
+    match /accountGenerationSuppressionsV2Tenants/{tenantId}/users/{uid} {
+      allow read, write: if false;
+    }
+    match /notificationDeliveryEffectsV2/{id} {
+      allow read, write: if false;
+    }
+    match /notificationDeliveryAttemptsV2/{id} {
+      allow read, write: if false;
+    }
+    match /notificationDispatchBarriersV2/{id} {
+      allow read, write: if false;
+    }
+    match /accountDeletionV2/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
