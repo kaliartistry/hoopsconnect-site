@@ -78,6 +78,11 @@ service cloud.firestore {
       return isSameAssociation(assocId) && hasCapability('stats.approve');
     }
 
+    function legacyOfficialStatWritesEnabled(assocId) {
+      let path = /databases/$(database)/documents/associations/$(assocId)/domainControl/current;
+      return !exists(path) || get(path).data.authorityMode in ['disabled', 'shadow'];
+    }
+
     // ── Private identity and authorization data ────────────────────
     match /users/{userId} {
       allow get: if isAuthenticated() && (
@@ -193,14 +198,64 @@ service cloud.firestore {
 
       match /gameStats/{gameId} {
         allow read: if canReadAssociation(assocId);
-        allow create: if canEnterStats(assocId) && validateGameStatsCreate(assocId);
-        allow update: if canEnterStats(assocId) && validateGameStatsUpdate(assocId);
-        allow delete: if canApproveStats(assocId);
+        allow create: if legacyOfficialStatWritesEnabled(assocId)
+          && canEnterStats(assocId) && validateGameStatsCreate(assocId);
+        allow update: if legacyOfficialStatWritesEnabled(assocId)
+          && canEnterStats(assocId) && validateGameStatsUpdate(assocId);
+        allow delete: if legacyOfficialStatWritesEnabled(assocId)
+          && canApproveStats(assocId);
 
         match /events/{eventId} {
           allow read: if canReadAssociation(assocId);
-          allow create, update: if canEnterStats(assocId);
+          allow create, update: if legacyOfficialStatWritesEnabled(assocId)
+            && canEnterStats(assocId);
           allow delete: if false;
+        }
+      }
+
+
+      // Authorization v2 sources are server-private. Packet 02 intentionally
+      // exposes no direct client read or write; a later fixed-purpose callable
+      // will return a minimized bootstrap DTO after one server transaction.
+      match /access/{userId} {
+        allow read, write: if false;
+      }
+
+      match /domainControl/{controlId} {
+        allow read, write: if false;
+      }
+
+      match /competitions/{competitionId} {
+        allow read, write: if false;
+
+        match /seasons/{seasonId} {
+          allow read, write: if false;
+
+          match /access/{userId} {
+            allow read, write: if false;
+          }
+
+          match /control/{controlId} {
+            allow read, write: if false;
+          }
+
+          match /games/{gameId} {
+            allow read, write: if false;
+
+            match /assignments/{userId} {
+              allow read, write: if false;
+            }
+
+            match /{document=**} {
+              allow read, write: if false;
+            }
+          }
+
+          // All remaining v2 canonical, evidence, receipt, aggregate and
+          // publication-source records stay server-only in Packet 02.
+          match /{document=**} {
+            allow read, write: if false;
+          }
         }
       }
 

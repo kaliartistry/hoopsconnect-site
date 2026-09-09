@@ -1,0 +1,107 @@
+{
+  "fixtureVersion": 1,
+  "readSchemaVersion": 2,
+  "requestByteLimit": 4096,
+  "responseByteLimit": 16384,
+  "requestBase": {
+    "readSchemaVersion": 2,
+    "locator": {
+      "associationId": "jba",
+      "competitionId": "nbl",
+      "seasonId": "s2026",
+      "gameId": "game-1"
+    }
+  },
+  "requestKeys": ["readSchemaVersion", "locator"],
+  "locatorKeys": ["associationId", "competitionId", "seasonId", "gameId"],
+  "forbiddenRequestKeys": [
+    "uid",
+    "actorAccountId",
+    "capability",
+    "selector",
+    "path",
+    "calculatorVersion",
+    "evaluationTime",
+    "expectedGameControlVersion",
+    "expectedAssignmentVersion",
+    "writerEpoch"
+  ],
+  "dtoBase": {
+    "readSchemaVersion": 2,
+    "kind": "assignedGameBootstrap",
+    "actorAccountId": "operator",
+    "scope": {
+      "associationId": "jba",
+      "competitionId": "nbl",
+      "seasonId": "s2026",
+      "divisionId": "premier",
+      "phaseId": "regular",
+      "gameId": "game-1"
+    },
+    "homeTeamEntryId": "team-a",
+    "awayTeamEntryId": "team-b",
+    "gameControlVersion": 11,
+    "assignment": {
+      "assignmentVersion": 4,
+      "writerEpoch": 6,
+      "duties": ["submit", "enter"]
+    },
+    "controlVersions": {"association": 2, "season": 7},
+    "compatibility": {
+      "authorizationSchemaVersion": 2,
+      "domainSchemaVersion": 2,
+      "commandSchemaVersion": 2,
+      "acceptedCalculatorVersions": ["calc-a", "calc-z"]
+    },
+    "evaluatedAt": "2026-06-01T12:00:00.000Z"
+  },
+  "dtoKeys": [
+    "readSchemaVersion",
+    "kind",
+    "actorAccountId",
+    "scope",
+    "homeTeamEntryId",
+    "awayTeamEntryId",
+    "gameControlVersion",
+    "assignment",
+    "controlVersions",
+    "compatibility",
+    "evaluatedAt"
+  ],
+  "assignmentKeys": ["assignmentVersion", "writerEpoch", "duties"],
+  "controlVersionKeys": ["association", "season"],
+  "compatibilityKeys": [
+    "authorizationSchemaVersion",
+    "domainSchemaVersion",
+    "commandSchemaVersion",
+    "acceptedCalculatorVersions"
+  ],
+  "calculatorIntersectionVectors": [
+    {"association": [], "season": [], "expected": []},
+    {"association": ["calc-v1"], "season": [], "expected": []},
+    {"association": ["calc-v1"], "season": ["calc-v2"], "expected": []},
+    {"association": ["calc-z", "calc-a", "calc-b"], "season": ["calc-a", "calc-z"], "expected": ["calc-a", "calc-z"]},
+    {"association": ["calc-d", "calc-c", "calc-b", "calc-a"], "season": ["calc-c", "calc-a", "calc-d", "calc-b"], "expected": ["calc-a", "calc-b", "calc-c", "calc-d"]}
+  ],
+  "accessSourceVectors": [
+    {"name": "division from season with both present", "associationState": "active", "seasonState": "active", "winner": "division", "expectedAllowed": true},
+    {"name": "season fallback after invalid division", "associationState": "active", "seasonState": "active", "winner": "season", "expectedAllowed": true},
+    {"name": "association fallback after expired narrower grants", "associationState": "active", "seasonState": "active", "winner": "association", "expectedAllowed": true},
+    {"name": "association winner with absent season access", "associationState": "active", "seasonState": "absent", "winner": "association", "expectedAllowed": true},
+    {"name": "season winner with absent association access", "associationState": "absent", "seasonState": "active", "winner": "division", "expectedAllowed": true},
+    {"name": "association winner ignores stale season envelope", "associationState": "active", "seasonState": "stale", "winner": "association", "expectedAllowed": true},
+    {"name": "season winner ignores revoked association envelope", "associationState": "revoked", "seasonState": "active", "winner": "division", "expectedAllowed": true},
+    {"name": "present malformed unused envelope poisons request", "associationState": "malformed", "seasonState": "active", "winner": "division", "expectedAllowed": false}
+  ],
+  "transportGuarantees": {
+    "fixedCapability": "stats.enter",
+    "fixedDuty": "enter",
+    "directFirestoreReadsAllowed": false,
+    "clientChoosesCalculator": false,
+    "clientSuppliesExpectedVersions": false,
+    "clientSuppliesUid": false,
+    "returnsRawAuthorityDocuments": false,
+    "returnsAuthorizedToWrite": false,
+    "deployedFunctionExported": false
+  }
+}
