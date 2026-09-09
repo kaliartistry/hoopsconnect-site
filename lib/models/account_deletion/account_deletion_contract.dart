@@ -717,29 +717,77 @@ class AdapterResultContract {
       'evidenceRef',
       'holdBoundaryAt',
     });
+    final adapterId = AccountDeletionContract._requireString(
+      'adapterId',
+      map['adapterId'],
+    );
+    AccountDeletionContract.requireOpaqueId('adapterId', adapterId);
+    final policyDecisionId = AccountDeletionContract._requireString(
+      'policyDecisionId',
+      map['policyDecisionId'],
+    );
+    if (!AccountDeletionContract.namespaceId.hasMatch(policyDecisionId)) {
+      throw FormatException(
+        'policyDecisionId must be a versioned policy reference',
+      );
+    }
+    final policyVersion = AccountDeletionContract._requireString(
+      'policyVersion',
+      map['policyVersion'],
+    );
+    AccountDeletionContract.requireOpaqueId('policyVersion', policyVersion);
+    final evidenceCode = AccountDeletionContract._requireNullableString(
+      'evidenceCode',
+      map['evidenceCode'],
+    );
+    if (evidenceCode != null) {
+      AccountDeletionContract.requireOpaqueId('evidenceCode', evidenceCode);
+    }
+    final evidenceRef = AccountDeletionContract._requireString(
+      'evidenceRef',
+      map['evidenceRef'],
+    );
+    AccountDeletionContract.requireOpaqueId('evidenceRef', evidenceRef);
     return AdapterResultContract(
       schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
         'schemaVersion',
         map['schemaVersion'],
         nonNegative: true,
       ),
-      adapterId: map['adapterId'] as String,
-      applicability: AdapterApplicability.values.byName(
-        map['applicability'] as String,
+      adapterId: adapterId,
+      applicability: AccountDeletionContract._requireEnumName(
+        'applicability',
+        map['applicability'],
+        AdapterApplicability.values,
       ),
-      state: AdapterResultState.values.byName(map['state'] as String),
-      disposition: DispositionAction.values.byName(
-        map['disposition'] as String,
+      state: AccountDeletionContract._requireEnumName(
+        'state',
+        map['state'],
+        AdapterResultState.values,
       ),
-      policyDecisionState: PolicyDecisionState.values.byName(
-        map['policyDecisionState'] as String,
+      disposition: AccountDeletionContract._requireEnumName(
+        'disposition',
+        map['disposition'],
+        DispositionAction.values,
       ),
-      policyDecisionId: map['policyDecisionId'] as String,
-      policyVersion: map['policyVersion'] as String,
-      holdState: HoldState.values.byName(map['holdState'] as String),
-      evidenceCode: map['evidenceCode'] as String?,
-      evidenceRef: map['evidenceRef'] as String,
-      holdBoundaryAt: map['holdBoundaryAt'] as DateTime?,
+      policyDecisionState: AccountDeletionContract._requireEnumName(
+        'policyDecisionState',
+        map['policyDecisionState'],
+        PolicyDecisionState.values,
+      ),
+      policyDecisionId: policyDecisionId,
+      policyVersion: policyVersion,
+      holdState: AccountDeletionContract._requireEnumName(
+        'holdState',
+        map['holdState'],
+        HoldState.values,
+      ),
+      evidenceCode: evidenceCode,
+      evidenceRef: evidenceRef,
+      holdBoundaryAt: AccountDeletionContract._requireNullableDateTime(
+        'holdBoundaryAt',
+        map['holdBoundaryAt'],
+      ),
     );
   }
 
@@ -786,16 +834,32 @@ class ProviderCheckpointContract {
       'evidenceCode',
       'checkedAt',
     });
+    final evidenceCode = AccountDeletionContract._requireString(
+      'evidenceCode',
+      map['evidenceCode'],
+    );
+    AccountDeletionContract.requireOpaqueId('evidenceCode', evidenceCode);
     return ProviderCheckpointContract(
       schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
         'schemaVersion',
         map['schemaVersion'],
         nonNegative: true,
       ),
-      provider: ProviderName.values.byName(map['provider'] as String),
-      state: ProviderCheckpointState.values.byName(map['state'] as String),
-      evidenceCode: map['evidenceCode'] as String,
-      checkedAt: map['checkedAt'] as DateTime,
+      provider: AccountDeletionContract._requireEnumName(
+        'provider',
+        map['provider'],
+        ProviderName.values,
+      ),
+      state: AccountDeletionContract._requireEnumName(
+        'state',
+        map['state'],
+        ProviderCheckpointState.values,
+      ),
+      evidenceCode: evidenceCode,
+      checkedAt: AccountDeletionContract._requireDateTime(
+        'checkedAt',
+        map['checkedAt'],
+      ),
     );
   }
 
@@ -829,11 +893,17 @@ class DeletionCompletionInput {
     required this.custodyRecorded,
     required this.providerDispositionRecorded,
     required this.restoreSuppressionDurable,
-    required this.requiredAdapterIds,
-    required this.adapterResults,
-    required this.providerCheckpoints,
+    required List<String> requiredAdapterIds,
+    required List<AdapterResultContract> adapterResults,
+    required List<ProviderCheckpointContract> providerCheckpoints,
     required this.unknownRequiredState,
-  }) {
+  }) : requiredAdapterIds = List<String>.unmodifiable(requiredAdapterIds),
+       adapterResults = List<AdapterResultContract>.unmodifiable(
+         adapterResults,
+       ),
+       providerCheckpoints = List<ProviderCheckpointContract>.unmodifiable(
+         providerCheckpoints,
+       ) {
     if (schemaVersion != AccountDeletionVersions.schema) {
       throw FormatException('Unsupported schemaVersion');
     }
@@ -849,42 +919,86 @@ class DeletionCompletionInput {
       'providerCheckpoints',
       'unknownRequiredState',
     });
-    final checkpoints = Map<String, Object?>.from(map['checkpoints'] as Map);
+    final checkpoints = AccountDeletionContract._requireStringMap(
+      'checkpoints',
+      map['checkpoints'],
+    );
     AccountDeletionContract.requireExactKeys(
       checkpoints,
       AccountDeletionContract.completionCheckpointNames.toSet(),
     );
-    final adapterMaps = map['adapterResults'] as List<dynamic>;
-    final providerMaps = map['providerCheckpoints'] as List<dynamic>;
+    final requiredAdapterValues = AccountDeletionContract._requireList(
+      'requiredAdapterIds',
+      map['requiredAdapterIds'],
+    );
+    final requiredAdapterIds = <String>[
+      for (var index = 0; index < requiredAdapterValues.length; index += 1)
+        AccountDeletionContract._requireString(
+          'requiredAdapterIds[$index]',
+          requiredAdapterValues[index],
+        ),
+    ];
+    final adapterValues = AccountDeletionContract._requireList(
+      'adapterResults',
+      map['adapterResults'],
+    );
+    final providerValues = AccountDeletionContract._requireList(
+      'providerCheckpoints',
+      map['providerCheckpoints'],
+    );
     return DeletionCompletionInput(
       schemaVersion: AccountDeletionContract.decodeWireSafeInteger(
         'schemaVersion',
         map['schemaVersion'],
         nonNegative: true,
       ),
-      authAbsent: map['authAbsent'] as bool,
-      dataDispositionVerified: checkpoints['dataDispositionVerified'] as bool,
-      publicPrivacyVerified: checkpoints['publicPrivacyVerified'] as bool,
-      custodyRecorded: checkpoints['custodyRecorded'] as bool,
-      providerDispositionRecorded:
-          checkpoints['providerDispositionRecorded'] as bool,
-      restoreSuppressionDurable:
-          checkpoints['restoreSuppressionDurable'] as bool,
-      requiredAdapterIds: (map['requiredAdapterIds'] as List<dynamic>)
-          .cast<String>(),
+      authAbsent: AccountDeletionContract._requireBoolean(
+        'authAbsent',
+        map['authAbsent'],
+      ),
+      dataDispositionVerified: AccountDeletionContract._requireBoolean(
+        'dataDispositionVerified',
+        checkpoints['dataDispositionVerified'],
+      ),
+      publicPrivacyVerified: AccountDeletionContract._requireBoolean(
+        'publicPrivacyVerified',
+        checkpoints['publicPrivacyVerified'],
+      ),
+      custodyRecorded: AccountDeletionContract._requireBoolean(
+        'custodyRecorded',
+        checkpoints['custodyRecorded'],
+      ),
+      providerDispositionRecorded: AccountDeletionContract._requireBoolean(
+        'providerDispositionRecorded',
+        checkpoints['providerDispositionRecorded'],
+      ),
+      restoreSuppressionDurable: AccountDeletionContract._requireBoolean(
+        'restoreSuppressionDurable',
+        checkpoints['restoreSuppressionDurable'],
+      ),
+      requiredAdapterIds: requiredAdapterIds,
       adapterResults: [
-        for (final raw in adapterMaps)
+        for (var index = 0; index < adapterValues.length; index += 1)
           AdapterResultContract.fromContractMap(
-            Map<String, Object?>.from(raw as Map),
+            AccountDeletionContract._requireStringMap(
+              'adapterResults[$index]',
+              adapterValues[index],
+            ),
           ),
       ],
       providerCheckpoints: [
-        for (final raw in providerMaps)
+        for (var index = 0; index < providerValues.length; index += 1)
           ProviderCheckpointContract.fromContractMap(
-            Map<String, Object?>.from(raw as Map),
+            AccountDeletionContract._requireStringMap(
+              'providerCheckpoints[$index]',
+              providerValues[index],
+            ),
           ),
       ],
-      unknownRequiredState: map['unknownRequiredState'] as bool,
+      unknownRequiredState: AccountDeletionContract._requireBoolean(
+        'unknownRequiredState',
+        map['unknownRequiredState'],
+      ),
     );
   }
 }
@@ -1039,6 +1153,68 @@ abstract final class AccountDeletionContract {
       );
     }
     return asDouble == 0 ? 0 : asDouble.toInt();
+  }
+
+  static String _requireString(String field, Object? value) {
+    if (value is! String) {
+      throw FormatException('$field must be a string');
+    }
+    return value;
+  }
+
+  static String? _requireNullableString(String field, Object? value) =>
+      value == null ? null : _requireString(field, value);
+
+  static bool _requireBoolean(String field, Object? value) {
+    if (value is! bool) {
+      throw FormatException('$field must be a boolean');
+    }
+    return value;
+  }
+
+  static DateTime _requireDateTime(String field, Object? value) {
+    if (value is! DateTime ||
+        value.millisecondsSinceEpoch.abs() >
+            OfficialStatCanonicalEncoding.maxSafeInteger) {
+      throw FormatException('$field must be a finite DateTime');
+    }
+    return value;
+  }
+
+  static DateTime? _requireNullableDateTime(String field, Object? value) =>
+      value == null ? null : _requireDateTime(field, value);
+
+  static T _requireEnumName<T extends Enum>(
+    String field,
+    Object? value,
+    List<T> values,
+  ) {
+    final name = _requireString(field, value);
+    for (final candidate in values) {
+      if (candidate.name == name) return candidate;
+    }
+    throw FormatException('$field has an unsupported value');
+  }
+
+  static List<Object?> _requireList(String field, Object? value) {
+    if (value is! List) {
+      throw FormatException('$field must be a list');
+    }
+    return List<Object?>.from(value);
+  }
+
+  static Map<String, Object?> _requireStringMap(String field, Object? value) {
+    if (value is! Map) {
+      throw FormatException('$field must be a map');
+    }
+    final result = <String, Object?>{};
+    for (final entry in value.entries) {
+      if (entry.key is! String) {
+        throw FormatException('$field keys must be strings');
+      }
+      result[entry.key as String] = entry.value;
+    }
+    return result;
   }
 
   static void requireOpaqueId(String field, String value) {

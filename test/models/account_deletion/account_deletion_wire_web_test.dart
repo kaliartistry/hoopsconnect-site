@@ -24,6 +24,56 @@ Map<String, Object?> requestMapFromSchemaLiteral(String literal) =>
       '''),
     );
 
+Map<String, Object?> validAdapterMap(String adapterId) => {
+  'schemaVersion': 1,
+  'adapterId': adapterId,
+  'applicability': 'applicable',
+  'state': 'complete',
+  'disposition': adapterId == 'v2_certified_evidence'
+      ? 'restrictedRetention'
+      : 'erase',
+  'policyDecisionState': 'approved',
+  'policyDecisionId': 'retention.$adapterId',
+  'policyVersion': 'policy_v1',
+  'holdState': adapterId == 'v2_certified_evidence' ? 'activeApproved' : 'none',
+  'evidenceCode': 'verified',
+  'evidenceRef': 'evidence_1',
+  'holdBoundaryAt': adapterId == 'v2_certified_evidence'
+      ? DateTime.utc(2027)
+      : null,
+};
+
+Map<String, Object?> validCompletionMap() => {
+  'schemaVersion': 1,
+  'authAbsent': true,
+  'checkpoints': {
+    for (final name in AccountDeletionContract.completionCheckpointNames)
+      name: true,
+  },
+  'requiredAdapterIds': <Object?>[...AccountDeletionContract.adapterIds],
+  'adapterResults': <Object?>[
+    for (final adapterId in AccountDeletionContract.adapterIds)
+      validAdapterMap(adapterId),
+  ],
+  'providerCheckpoints': <Object?>[
+    <String, Object?>{
+      'schemaVersion': 1,
+      'provider': 'firebaseAuth',
+      'state': 'complete',
+      'evidenceCode': 'absent_verified',
+      'checkedAt': DateTime.utc(2026),
+    },
+    <String, Object?>{
+      'schemaVersion': 1,
+      'provider': 'appleCredential',
+      'state': 'notApplicable',
+      'evidenceCode': 'fixture',
+      'checkedAt': DateTime.utc(2026),
+    },
+  ],
+  'unknownRequiredState': false,
+};
+
 void main() {
   test('Chrome JSON parsing applies the mathematical safe-integer decoder', () {
     for (final testCase in accountDeletionWireIntegerCases) {
@@ -211,4 +261,82 @@ void main() {
       );
     },
   );
+
+  test('Chrome rejects malformed nested values without lazy TypeErrors', () {
+    final wrongRequiredId = validCompletionMap();
+    final requiredIds = wrongRequiredId['requiredAdapterIds']! as List<Object?>;
+    requiredIds[0] = 1;
+    for (final malformed in <Map<String, Object?>>[
+      wrongRequiredId,
+      {...validCompletionMap(), 'requiredAdapterIds': null},
+      {
+        ...validCompletionMap(),
+        'adapterResults': <Object?>[null],
+      },
+      {
+        ...validCompletionMap(),
+        'providerCheckpoints': <Object?>[1],
+      },
+      {...validCompletionMap(), 'checkpoints': <Object?>[]},
+      {...validCompletionMap(), 'schemaVersion': 9007199254740992},
+    ]) {
+      expect(
+        () => DeletionCompletionInput.fromContractMap(malformed),
+        throwsFormatException,
+      );
+    }
+
+    final adapter = validAdapterMap('user_profile');
+    for (final malformed in <Map<String, Object?>>[
+      {...adapter, 'policyVersion': 'bad/version'},
+      {...adapter, 'evidenceCode': ''},
+      {...adapter, 'evidenceRef': ''},
+      {...adapter, 'applicability': null},
+      {...adapter, 'holdBoundaryAt': 'invalid-date'},
+    ]) {
+      expect(
+        () => AdapterResultContract.fromContractMap(malformed),
+        throwsFormatException,
+      );
+    }
+    final provider =
+        (validCompletionMap()['providerCheckpoints']! as List<Object?>).first
+            as Map<String, Object?>;
+    for (final malformed in <Map<String, Object?>>[
+      {...provider, 'evidenceCode': ''},
+      {...provider, 'state': null},
+      {...provider, 'checkedAt': 'invalid-date'},
+    ]) {
+      expect(
+        () => ProviderCheckpointContract.fromContractMap(malformed),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('Chrome parsing snapshots nested collections', () {
+    final source = validCompletionMap();
+    final sourceRequiredIds = source['requiredAdapterIds']! as List<Object?>;
+    final sourceAdapters = source['adapterResults']! as List<Object?>;
+    final sourceProviders = source['providerCheckpoints']! as List<Object?>;
+    final parsed = DeletionCompletionInput.fromContractMap(source);
+    expect(AccountDeletionContract.isDeletionComplete(parsed), isTrue);
+
+    sourceRequiredIds[0] = 'changed_after_parse';
+    (sourceAdapters.first as Map<String, Object?>)['evidenceRef'] = '';
+    (sourceProviders.first as Map<String, Object?>)['evidenceCode'] = '';
+    sourceAdapters.clear();
+    sourceProviders.clear();
+
+    expect(AccountDeletionContract.isDeletionComplete(parsed), isTrue);
+    expect(
+      parsed.requiredAdapterIds.first,
+      AccountDeletionContract.adapterIds.first,
+    );
+    expect(parsed.adapterResults.first.evidenceRef, 'evidence_1');
+    expect(parsed.providerCheckpoints.first.evidenceCode, 'absent_verified');
+    expect(() => parsed.requiredAdapterIds.add('late'), throwsUnsupportedError);
+    expect(() => parsed.adapterResults.clear(), throwsUnsupportedError);
+    expect(() => parsed.providerCheckpoints.clear(), throwsUnsupportedError);
+  });
 }

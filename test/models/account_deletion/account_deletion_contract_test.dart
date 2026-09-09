@@ -1035,7 +1035,7 @@ void main() {
           ...adapterMaps.first,
           'holdBoundaryAt': 'invalid-date',
         }),
-        throwsA(isA<TypeError>()),
+        throwsFormatException,
       );
       final providerMaps = List<Map<String, Object?>>.from(
         completionMap()['providerCheckpoints']! as List,
@@ -1059,8 +1059,113 @@ void main() {
           ...providerMaps.first,
           'checkedAt': 'invalid-date',
         }),
-        throwsA(isA<TypeError>()),
+        throwsFormatException,
       );
+    });
+
+    test('nested parsing is eager and owns its collection snapshots', () {
+      final base = completeInput(
+        (fixture['completionCases'] as List<dynamic>).first
+            as Map<String, dynamic>,
+      );
+      Map<String, Object?> completionMap() => {
+        'schemaVersion': 1,
+        'authAbsent': base.authAbsent,
+        'checkpoints': {
+          'dataDispositionVerified': base.dataDispositionVerified,
+          'publicPrivacyVerified': base.publicPrivacyVerified,
+          'custodyRecorded': base.custodyRecorded,
+          'providerDispositionRecorded': base.providerDispositionRecorded,
+          'restoreSuppressionDurable': base.restoreSuppressionDurable,
+        },
+        'requiredAdapterIds': <Object?>[...base.requiredAdapterIds],
+        'adapterResults': <Object?>[
+          for (final result in base.adapterResults)
+            Map<String, Object?>.from(result.toContractMap()),
+        ],
+        'providerCheckpoints': <Object?>[
+          for (final checkpoint in base.providerCheckpoints)
+            Map<String, Object?>.from(checkpoint.toContractMap()),
+        ],
+        'unknownRequiredState': base.unknownRequiredState,
+      };
+
+      final wrongRequiredId = completionMap();
+      final requiredIds =
+          wrongRequiredId['requiredAdapterIds']! as List<Object?>;
+      requiredIds[0] = 1;
+      for (final malformed in <Map<String, Object?>>[
+        wrongRequiredId,
+        {...completionMap(), 'requiredAdapterIds': null},
+        {
+          ...completionMap(),
+          'adapterResults': <Object?>[null],
+        },
+        {
+          ...completionMap(),
+          'providerCheckpoints': <Object?>[1],
+        },
+        {...completionMap(), 'checkpoints': <Object?>[]},
+        {...completionMap(), 'schemaVersion': 9007199254740992},
+      ]) {
+        expect(
+          () => DeletionCompletionInput.fromContractMap(malformed),
+          throwsFormatException,
+        );
+      }
+
+      final adapter = Map<String, Object?>.from(
+        (completionMap()['adapterResults']! as List<Object?>).first as Map,
+      );
+      for (final malformed in <Map<String, Object?>>[
+        {...adapter, 'policyVersion': 'bad/version'},
+        {...adapter, 'evidenceCode': ''},
+        {...adapter, 'evidenceRef': ''},
+        {...adapter, 'applicability': null},
+        {...adapter, 'holdBoundaryAt': 'invalid-date'},
+      ]) {
+        expect(
+          () => AdapterResultContract.fromContractMap(malformed),
+          throwsFormatException,
+        );
+      }
+      final provider = Map<String, Object?>.from(
+        (completionMap()['providerCheckpoints']! as List<Object?>).first as Map,
+      );
+      for (final malformed in <Map<String, Object?>>[
+        {...provider, 'evidenceCode': ''},
+        {...provider, 'state': null},
+        {...provider, 'checkedAt': 'invalid-date'},
+      ]) {
+        expect(
+          () => ProviderCheckpointContract.fromContractMap(malformed),
+          throwsFormatException,
+        );
+      }
+
+      final source = completionMap();
+      final sourceRequiredIds = source['requiredAdapterIds']! as List<Object?>;
+      final sourceAdapters = source['adapterResults']! as List<Object?>;
+      final sourceProviders = source['providerCheckpoints']! as List<Object?>;
+      final parsed = DeletionCompletionInput.fromContractMap(source);
+      expect(AccountDeletionContract.isDeletionComplete(parsed), isTrue);
+
+      sourceRequiredIds[0] = 'changed_after_parse';
+      (sourceAdapters.first as Map<String, Object?>)['evidenceRef'] = '';
+      (sourceProviders.first as Map<String, Object?>)['evidenceCode'] = '';
+      sourceAdapters.clear();
+      sourceProviders.clear();
+
+      expect(AccountDeletionContract.isDeletionComplete(parsed), isTrue);
+      expect(parsed.requiredAdapterIds.first, base.requiredAdapterIds.first);
+      expect(parsed.adapterResults.first.evidenceRef, 'evidence_fixture');
+      expect(parsed.providerCheckpoints.first.evidenceCode, 'absent_verified');
+      expect(
+        () => parsed.requiredAdapterIds.add('late'),
+        throwsUnsupportedError,
+      );
+      expect(() => parsed.adapterResults.clear(), throwsUnsupportedError);
+      expect(() => parsed.providerCheckpoints.clear(), throwsUnsupportedError);
     });
 
     test('all matrix rows map to unique closed policy decisions', () {
