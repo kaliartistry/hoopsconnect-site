@@ -233,12 +233,16 @@ final class AccountLifecycleCandidateClientAdapterV2 {
   /// Closes every grant before detachment starts. Auth change may proceed when
   /// either the owner binding is removed or the installation token is rotated.
   /// If both controls fail, the previous gate is restored and Auth is untouched.
+  /// The concrete [signOutExactCurrent] adapter must compare the provider's
+  /// current project/tenant/UID/G/E with its argument immediately before, and
+  /// as one serialized provider-auth operation with, the provider sign-out.
   Future<CandidateDetachResultV2> detachAndSignOut({
     required Future<void> Function() removeOwnerBinding,
     required Future<void> Function() rotateInstallationToken,
-    required Future<void> Function() signOut,
+    required Future<void> Function(AuthIncarnationSessionAttemptV2 attempt)
+    signOutExactCurrent,
     required Future<void> Function() restoreRegistration,
-    Future<bool> Function(AuthIncarnationSessionAttemptV2 attempt)?
+    required Future<bool> Function(AuthIncarnationSessionAttemptV2 attempt)
     verifyAuthStillCurrent,
   }) {
     if (_authChangeLatch) {
@@ -247,6 +251,12 @@ final class AccountLifecycleCandidateClientAdapterV2 {
       );
     }
     final previousGate = _gate;
+    final previousAttempt = previousGate.attempt;
+    if (previousAttempt == null) {
+      return Future<CandidateDetachResultV2>.error(
+        StateError('No authenticated account is available to detach.'),
+      );
+    }
     final previousOwner = _fcmOwner;
     _authChangeLatch = true;
     _retireProtectedConsumers();
@@ -287,8 +297,20 @@ final class AccountLifecycleCandidateClientAdapterV2 {
         Error.throwWithStackTrace(rotateError!, rotateStack!);
       }
 
+      var authStillCurrent = false;
       try {
-        await signOut();
+        authStillCurrent = await verifyAuthStillCurrent(previousAttempt);
+      } catch (_) {
+        // An unverifiable provider state must not authorize sign-out.
+      }
+      if (!authStillCurrent) {
+        _fcmOwner = null;
+        _authChangeLatch = true;
+        throw StateError('Provider Auth changed before account sign-out.');
+      }
+
+      try {
+        await signOutExactCurrent(previousAttempt);
         _gate = _gate.transition(
           const AuthIncarnationSessionEventV2.signedOut(),
         );
@@ -297,10 +319,7 @@ final class AccountLifecycleCandidateClientAdapterV2 {
         return detach;
       } catch (error, stack) {
         var registrationRestored = false;
-        final previousAttempt = previousGate.attempt;
-        if (identical(_gate, previousGate) &&
-            previousAttempt != null &&
-            verifyAuthStillCurrent != null) {
+        if (identical(_gate, previousGate)) {
           try {
             if (await verifyAuthStillCurrent(previousAttempt)) {
               await restoreRegistration();

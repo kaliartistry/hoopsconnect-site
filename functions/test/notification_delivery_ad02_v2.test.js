@@ -167,6 +167,13 @@ test('delivery tokens come only from current exact V2 installation registrations
   assert.deepEqual(selected.fcmTokens, ['current-token']);
   current.binding.accountGenerationV2 = 'b'.repeat(64);
   assert.equal(selected.binding.accountGenerationV2, 'a'.repeat(64));
+  assert.throws(() => notificationRecipientFromActiveMemberV2(
+    member,
+    Array.from({length: 9}, (_, index) => ({
+      ...current,
+      installationId: `slot${index}`,
+    })),
+  ), /Unbounded/);
 });
 
 test('effect and attempt identity bind project/tenant/UID/G/E and provider precedes submitted', async () => {

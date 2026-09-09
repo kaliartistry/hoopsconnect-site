@@ -375,8 +375,9 @@ void main() {
           removeOwnerBinding: () async => throw StateError('remove failed'),
           rotateInstallationToken: () async =>
               throw StateError('rotate failed'),
-          signOut: () async => signOutCalls += 1,
+          signOutExactCurrent: (_) async => signOutCalls += 1,
           restoreRegistration: () async {},
+          verifyAuthStillCurrent: (_) async => true,
         ),
         throwsStateError,
       );
@@ -394,8 +395,9 @@ void main() {
       final result = await adapter.detachAndSignOut(
         removeOwnerBinding: () async => throw StateError('remove failed'),
         rotateInstallationToken: () async {},
-        signOut: () async {},
+        signOutExactCurrent: (_) async {},
         restoreRegistration: () async {},
+        verifyAuthStillCurrent: (_) async => true,
       );
       expect(result.ownerBindingRemoved, isFalse);
       expect(result.installationTokenRotated, isTrue);
@@ -428,7 +430,7 @@ void main() {
           removeOwnerBinding: () async {},
           rotateInstallationToken: () async =>
               throw StateError('rotate failed'),
-          signOut: () async => throw StateError('sign-out failed'),
+          signOutExactCurrent: (_) async => throw StateError('sign-out failed'),
           restoreRegistration: () async => restored += 1,
           verifyAuthStillCurrent: (_) async => true,
         ),
@@ -458,8 +460,9 @@ void main() {
           removeOwnerBinding: () async {},
           rotateInstallationToken: () async =>
               throw StateError('rotate failed'),
-          signOut: () async => throw StateError('sign-out failed'),
+          signOutExactCurrent: (_) async => throw StateError('sign-out failed'),
           restoreRegistration: () async => throw StateError('restore failed'),
+          verifyAuthStillCurrent: (_) async => true,
         ),
         throwsStateError,
       );
@@ -485,7 +488,7 @@ void main() {
           await releaseDetach.future;
         },
         rotateInstallationToken: () async => throw StateError('rotate failed'),
-        signOut: () async => throw StateError('sign-out failed'),
+        signOutExactCurrent: (_) async => throw StateError('sign-out failed'),
         restoreRegistration: () async {},
         verifyAuthStillCurrent: (_) async => true,
       );
@@ -525,8 +528,9 @@ void main() {
           await releaseDetach.future;
         },
         rotateInstallationToken: () async => throw StateError('rotate failed'),
-        signOut: () async => throw StateError('sign-out failed'),
+        signOutExactCurrent: (_) async => throw StateError('sign-out failed'),
         restoreRegistration: () async => restoreCalls += 1,
+        verifyAuthStillCurrent: (_) async => true,
       );
       await detachStarted.future;
       adapter.markDeleting(attempt);
@@ -549,8 +553,9 @@ void main() {
         await releaseFirst.future;
       },
       rotateInstallationToken: () async => throw StateError('rotate failed'),
-      signOut: () async => throw StateError('sign-out failed'),
+      signOutExactCurrent: (_) async => throw StateError('sign-out failed'),
       restoreRegistration: () async => throw StateError('restore failed'),
+      verifyAuthStillCurrent: (_) async => true,
     );
     await firstStarted.future;
 
@@ -562,11 +567,15 @@ void main() {
       rotateInstallationToken: () async {
         secondControlCalls += 1;
       },
-      signOut: () async {
+      signOutExactCurrent: (_) async {
         secondControlCalls += 1;
       },
       restoreRegistration: () async {
         secondControlCalls += 1;
+      },
+      verifyAuthStillCurrent: (_) async {
+        secondControlCalls += 1;
+        return true;
       },
     );
     final secondExpectation = expectLater(second, throwsStateError);
@@ -657,8 +666,9 @@ void main() {
     final detach = adapter.detachAndSignOut(
       removeOwnerBinding: () async {},
       rotateInstallationToken: () async {},
-      signOut: () async {},
+      signOutExactCurrent: (_) async {},
       restoreRegistration: () async {},
+      verifyAuthStillCurrent: (_) async => true,
     );
 
     await expectLater(
@@ -678,6 +688,51 @@ void main() {
     expect(adapter.gate.state, AuthIncarnationSessionStateV2.signedOut);
   });
 
+  test(
+    'queued provider change is rejected before attempt-scoped sign-out',
+    () async {
+      final adapter = AccountLifecycleCandidateClientAdapterV2();
+      final attempt = _makeReady(adapter);
+      final writeStarted = Completer<void>();
+      final releaseWrite = Completer<void>();
+      final registration = adapter.registerFcmToken(
+        attempt: attempt,
+        token: 'token-a',
+        writeRegistration: () async {
+          writeStarted.complete();
+          await releaseWrite.future;
+        },
+        removeStaleRegistration: () async {},
+      );
+      await writeStarted.future;
+
+      var providerStillMatches = true;
+      var signOutCalls = 0;
+      final detach = adapter.detachAndSignOut(
+        removeOwnerBinding: () async {},
+        rotateInstallationToken: () async {},
+        signOutExactCurrent: (captured) async {
+          expect(captured.sameAttempt(attempt), isTrue);
+          signOutCalls += 1;
+        },
+        restoreRegistration: () async {},
+        verifyAuthStillCurrent: (captured) async {
+          expect(captured.sameAttempt(attempt), isTrue);
+          return providerStillMatches;
+        },
+      );
+      providerStillMatches = false;
+      releaseWrite.complete();
+
+      expect(await registration, isFalse);
+      await expectLater(detach, throwsStateError);
+      expect(signOutCalls, 0);
+      expect(adapter.gate.state, AuthIncarnationSessionStateV2.signedOut);
+      expect(adapter.fcmOwner, isNull);
+      expect(adapter.permitsCapabilities, isFalse);
+    },
+  );
+
   test('throwing sign-out cannot reopen a provider-changed session', () async {
     final adapter = AccountLifecycleCandidateClientAdapterV2();
     _makeReady(adapter);
@@ -688,7 +743,7 @@ void main() {
         removeOwnerBinding: () async {},
         rotateInstallationToken: () async =>
             throw StateError('rotation unavailable'),
-        signOut: () async {
+        signOutExactCurrent: (_) async {
           providerStillMatches = false;
           throw StateError('sign-out observer failed');
         },

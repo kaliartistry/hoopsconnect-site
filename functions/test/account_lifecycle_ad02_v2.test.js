@@ -381,8 +381,35 @@ test('active-member directory strips authority, delivery, contact, and role data
       authProjectIdV2: fixture.projectId,
       authTenantIdV2: null,
       associationId: 'jba',
-    }), /Mixed-scope/);
+    }), /mixed-scope/i);
   }
+
+  const second = {
+    ...active,
+    scope: {...active.scope, authUidV2: 'second-user'},
+    profile: {...active.profile, authUidV2: 'second-user'},
+  };
+  const third = {
+    ...active,
+    scope: {...active.scope, authUidV2: 'third-user'},
+    profile: {...active.profile, authUidV2: 'third-user'},
+  };
+  const bounded = ad02.buildActiveMemberDirectoryV2({
+    members: [active, second],
+    authProjectIdV2: fixture.projectId,
+    authTenantIdV2: null,
+    associationId: 'jba',
+    maximumEntries: 1,
+  });
+  assert.equal(bounded.users.length, 1);
+  assert.equal(bounded.truncated, true);
+  assert.throws(() => ad02.buildActiveMemberDirectoryV2({
+    members: [active, second, third],
+    authProjectIdV2: fixture.projectId,
+    authTenantIdV2: null,
+    associationId: 'jba',
+    maximumEntries: 1,
+  }), /Unbounded/);
 });
 
 test('directory and recipient authority reject lifecycle changes during selection', () => {

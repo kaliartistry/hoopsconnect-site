@@ -227,6 +227,9 @@ export function notificationRecipientFromActiveMemberV2(
   member: PersistedActiveMemberV2,
   registrations: readonly NotificationFcmRegistrationV2[],
 ): AuthorizedNotificationRecipientV2 {
+  if (!Array.isArray(registrations) || registrations.length > MAX_TOKENS_PER_RECIPIENT_V2) {
+    throw new TypeError("Unbounded AD02 V2 FCM registration source.");
+  }
   const binding: NotificationRecipientBindingV2 = Object.freeze({
     ...member.scope,
     accountGenerationV2: member.accountGenerationV2,

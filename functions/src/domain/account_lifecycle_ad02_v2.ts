@@ -463,6 +463,8 @@ export function buildActiveMemberDirectoryV2(input: {
     throw new RangeError("Invalid AD02 V2 directory limit.");
   }
   if (
+    !Array.isArray(input.members) ||
+    input.members.length > maximumEntries + 1 ||
     !identifierPattern.test(input.authProjectIdV2) ||
     !(input.authTenantIdV2 === null || identifierPattern.test(input.authTenantIdV2)) ||
     !identifierPattern.test(input.associationId) ||
@@ -471,7 +473,7 @@ export function buildActiveMemberDirectoryV2(input: {
       member.scope.authTenantIdV2 !== input.authTenantIdV2 ||
       member.associationId !== input.associationId)
   ) {
-    throw new TypeError("Mixed-scope AD02 V2 directory members.");
+    throw new TypeError("Unbounded or mixed-scope AD02 V2 directory members.");
   }
   const ordered = [...input.members].sort((left, right) =>
     left.scope.authUidV2.localeCompare(right.scope.authUidV2));
