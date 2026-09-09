@@ -1,5 +1,6 @@
 'use strict';
 
+const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const test = require('node:test');
@@ -10,6 +11,7 @@ const {
 } = require('@firebase/rules-unit-testing');
 const {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -21,16 +23,107 @@ const {
   where,
 } = require('firebase/firestore');
 
+const authorityFixture = JSON.parse(fs.readFileSync(
+  path.resolve(__dirname, '../../contracts/official_stats/v2/authority_fixtures.json'),
+  'utf8',
+));
+const bootstrapFixture = JSON.parse(fs.readFileSync(
+  path.resolve(__dirname, '../../contracts/official_stats/v2/assigned_game_bootstrap_fixtures.json'),
+  'utf8',
+));
+
 let testEnv;
 
 function authed(uid, email) {
   return testEnv.authenticatedContext(uid, {email}).firestore();
 }
 
+async function assertDeniedWithoutBudgetExhaustion(operation) {
+  try {
+    await operation;
+    assert.fail('expected permission denial');
+  } catch (error) {
+    assert.equal(error.code, 'permission-denied');
+    assert.doesNotMatch(error.message, /maximum of 1000 expressions/i);
+  }
+}
+
 async function seed(setup) {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     await setup(context.firestore());
   });
+}
+
+const v2SeasonPath = 'associations/jba/competitions/nbl/seasons/s2026';
+const v2GamePath = `${v2SeasonPath}/games/game-1`;
+
+function rulesGrant(capability = 'stats.enter', scopeKind = 'division', changes = {}) {
+  const grant = {
+    grantId: `grant-${capability.replaceAll('.', '-')}`,
+    capability,
+    scopeKind,
+    associationId: 'jba',
+    status: 'active',
+    membershipVersion: 7,
+    effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+    effectiveTo: null,
+  };
+  if (scopeKind !== 'association') Object.assign(grant, {competitionId: 'nbl', seasonId: 's2026'});
+  if (scopeKind === 'division' || scopeKind === 'teamEntry') grant.divisionId = 'premier';
+  if (scopeKind === 'teamEntry') grant.teamEntryId = 'team-a';
+  return Object.assign(grant, changes);
+}
+
+function rulesGrantKey(grant) {
+  if (grant.scopeKind === 'association' || grant.scopeKind === 'season') return `${grant.capability}|${grant.scopeKind}`;
+  if (grant.scopeKind === 'division') return `${grant.capability}|division|${grant.divisionId}`;
+  return `${grant.capability}|teamEntry|${grant.divisionId}|${grant.teamEntryId}`;
+}
+
+async function seedV2Authority(db, changes = {}) {
+  const statsGrant = rulesGrant();
+  const membership = {...authorityFixture.membershipBase, capabilities: ['stats.enter'], ...(changes.membership || {})};
+  const associationControl = {...authorityFixture.associationControlBase, ...(changes.associationControl || {})};
+  const seasonControl = {...authorityFixture.seasonControlBase, ...(changes.seasonControl || {})};
+  const associationAccess = {...authorityFixture.associationEnvelopeBase, grants: {}, ...(changes.associationAccess || {})};
+  const seasonAccess = {
+    ...authorityFixture.seasonEnvelopeBase,
+    grants: {[rulesGrantKey(statsGrant)]: statsGrant},
+    ...(changes.seasonAccess || {}),
+  };
+  const game = {...authorityFixture.gameBase, ...(changes.game || {})};
+  const assignment = {...authorityFixture.assignmentBase, ...(changes.assignment || {})};
+  await setDoc(doc(db, 'memberships/operator'), membership);
+  if (changes.omitAssociationControl !== true) await setDoc(doc(db, 'associations/jba/domainControl/current'), associationControl);
+  if (changes.omitSeasonControl !== true) await setDoc(doc(db, `${v2SeasonPath}/control/current`), seasonControl);
+  if (changes.omitAssociationAccess !== true) await setDoc(doc(db, 'associations/jba/access/operator'), associationAccess);
+  if (changes.omitSeasonAccess !== true) await setDoc(doc(db, `${v2SeasonPath}/access/operator`), seasonAccess);
+  if (changes.omitGame !== true) await setDoc(doc(db, v2GamePath), game);
+  if (changes.omitAssignment !== true) await setDoc(doc(db, `${v2GamePath}/assignments/operator`), assignment);
+}
+
+async function writeAssociationAccessWithRestDoubleMembershipVersion() {
+  const host = process.env.FIRESTORE_EMULATOR_HOST;
+  const endpoint = `http://${host}/v1/projects/demo-hoopsconnect/databases/(default)/documents/associations/jba/access/operator`;
+  const response = await fetch(endpoint, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer owner',
+    },
+    body: JSON.stringify({fields: {
+      dataSchemaVersion: {integerValue: '2'},
+      authorizationSchemaVersion: {integerValue: '2'},
+      uid: {stringValue: 'operator'},
+      associationId: {stringValue: 'jba'},
+      scopeKind: {stringValue: 'association'},
+      status: {stringValue: 'active'},
+      membershipVersion: {doubleValue: 7},
+      accessVersion: {integerValue: '3'},
+      grants: {mapValue: {fields: {}}},
+    }}),
+  });
+  assert.equal(response.ok, true, await response.text());
 }
 
 test.before(async () => {
@@ -310,6 +403,77 @@ test('legacy role-only users and suspended authors cannot mutate protected data'
       title: 'Changed while suspended',
     }),
   );
+});
+
+test('all raw v2 authority, control, game, assignment, and descendant reads and writes stay denied', async () => {
+  assert.equal(bootstrapFixture.transportGuarantees.directFirestoreReadsAllowed, false);
+  assert.equal(bootstrapFixture.transportGuarantees.deployedFunctionExported, false);
+  await seed(async (db) => {
+    await seedV2Authority(db);
+    await setDoc(doc(db, `${v2GamePath}/reviews/r1`), {private: true});
+    await setDoc(doc(db, `${v2SeasonPath}/rosterMemberships/r1`), {private: true});
+  });
+  const operator = authed('operator', 'stats@example.com');
+  for (const documentPath of [
+    'associations/jba/access/operator',
+    'associations/jba/domainControl/current',
+    `${v2SeasonPath}/access/operator`,
+    `${v2SeasonPath}/control/current`,
+    v2GamePath,
+    `${v2GamePath}/assignments/operator`,
+    `${v2GamePath}/reviews/r1`,
+    `${v2SeasonPath}/rosterMemberships/r1`,
+  ]) {
+    await assertDeniedWithoutBudgetExhaustion(getDoc(doc(operator, documentPath)));
+    await assertDeniedWithoutBudgetExhaustion(setDoc(doc(operator, documentPath), {forged: true}));
+    await assertDeniedWithoutBudgetExhaustion(deleteDoc(doc(operator, documentPath)));
+  }
+  for (const collectionPath of [
+    'associations/jba/access',
+    `${v2SeasonPath}/access`,
+    `${v2SeasonPath}/games`,
+    `${v2GamePath}/assignments`,
+    `${v2GamePath}/reviews`,
+    `${v2SeasonPath}/rosterMemberships`,
+  ]) await assertDeniedWithoutBudgetExhaustion(getDocs(collection(operator, collectionPath)));
+});
+
+test('explicit v2 cutover rejects legacy stat writes while disabled and shadow remain compatible', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'memberships/legacy-stats'), {
+      associationId: 'jba', role: 'statistician', status: 'active',
+      authorizationSchemaVersion: 1, capabilities: ['stats.enter'],
+    });
+  });
+  const stats = authed('legacy-stats', 'legacy@example.com');
+  for (const mode of ['disabled', 'shadow']) {
+    await seed(async (db) => setDoc(doc(db, 'associations/jba/domainControl/current'), {authorityMode: mode}));
+    await assertSucceeds(setDoc(doc(stats, `associations/jba/gameStats/${mode}`), {
+      status: 'inProgress', homeScore: 0, awayScore: 0,
+    }));
+  }
+  await seed(async (db) => setDoc(doc(db, 'associations/jba/domainControl/current'), {authorityMode: 'v2'}));
+  await assertFails(setDoc(doc(stats, 'associations/jba/gameStats/cutover-bypass'), {
+    status: 'inProgress', homeScore: 0, awayScore: 0,
+  }));
+  await assertFails(setDoc(doc(stats, 'associations/jba/gameStats/cutover-bypass/events/e1'), {type: 'shot'}));
+  for (const authorityMode of ['enabled', null]) {
+    await seed(async (db) => setDoc(doc(db, 'associations/jba/domainControl/current'), {authorityMode}));
+    await assertFails(setDoc(doc(stats, `associations/jba/gameStats/unknown-${String(authorityMode)}`), {
+      status: 'inProgress', homeScore: 0, awayScore: 0,
+    }));
+  }
+});
+
+test('REST doubleValue authority counters do not create a client-readable bypass', async () => {
+  await seed(async (db) => seedV2Authority(db, {
+    membership: {capabilities: ['association.read']},
+    associationAccess: {grants: {}},
+  }));
+  await writeAssociationAccessWithRestDoubleMembershipVersion();
+  const operator = authed('operator', 'operator@example.com');
+  await assertFails(getDoc(doc(operator, 'associations/jba/access/operator')));
+  await assertFails(updateDoc(doc(operator, 'associations/jba/access/operator'), {membershipVersion: 7}));
 });
 
 test('invite lifecycle cannot be modified by a client', async () => {
