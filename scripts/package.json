@@ -4,7 +4,7 @@
   "description": "",
   "main": "seed_firestore.js",
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js && python3 -m unittest discover -s test -p '*_test.py'",
     "test:stat-migration": "node --test test/stat_migration_inventory.test.js",
     "verify:unicode-normalization": "node verify_unicode_normalization_source.js",
     "preflight": "node check_repository_safety.js",

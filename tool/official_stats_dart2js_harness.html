@@ -21,6 +21,10 @@
         document.querySelector("#status").textContent = `FAILED: ${event.message}`;
         document.body.dataset.conformance = "failed";
       });
+      window.addEventListener("unhandledrejection", (event) => {
+        document.querySelector("#status").textContent = `FAILED: ${event.reason}`;
+        document.body.dataset.conformance = "failed";
+      });
     </script>
     <script src="official_stats_dart2js_conformance.js"></script>
   </body>

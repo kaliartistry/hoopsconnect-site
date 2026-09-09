@@ -290,6 +290,7 @@ add("complete_zero_disciplinary_incidents", clone(base), accepted(
 {
   const input = clone(base);
   input.scope.gameId = "game_departures_and_discipline";
+  input.rules.teamTimeCapacityMultiplier = known(5);
   const additions = [
     ["fouled_out", "fouledOut", known(1), known(100000)],
     ["ejected", "ejected", unknown("not_recorded"), unknown("not_recorded")],
@@ -731,9 +732,11 @@ const fourQuarterBase = () => {
     incident({incidentId: "ot2_foul", periodNumber: 6}),
   ];
   add("fiba_reference_groups_q4_and_repeated_overtime", input, accepted(
+    {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.4.inPenalty.value", value: true},
     {path: "normalizedBoxScore.teams.0.discipline.teamFoulsByPeriod.5", value: 1},
     {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.5.groupTeamFoulsThroughPeriod", value: 5},
     {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.5.inPenalty.value", value: true},
+    {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.6.inPenalty.value", value: true},
     {path: "normalizedBoxScore.teams.0.discipline.penaltyGroups.3.teamFouls", value: 6},
   ));
 }
@@ -744,10 +747,12 @@ const fourQuarterBase = () => {
   input.rules.rulesProfileId = "generic-explicit-v2";
   input.rules.playingTimeRoundingProfile = "nearest-half-up-v1";
   input.rules.teamTimeCapacityMultiplier = known(1);
-  input.rules.penaltyAccumulationGroups = resetGroups(6, known(2));
+  input.rules.penaltyAccumulationGroups = resetGroups(6, known(5));
   add("alternative_league_resets_each_overtime", input, accepted(
+    {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.4.inPenalty.value", value: true},
     {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.5.groupTeamFoulsThroughPeriod", value: 1},
     {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.5.inPenalty.value", value: false},
+    {path: "normalizedBoxScore.teams.0.discipline.penaltyStateByPeriod.6.inPenalty.value", value: false},
   ));
 }
 

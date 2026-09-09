@@ -18,7 +18,7 @@ const _reviewedFixtureHashes = <String, String>{
   'partial_period_keeps_nominal_and_elapsed_separate':
       'ea717faf4c9993e71c8ed6fe8cb7249aac230769603c303aac75f07ebc61a1a2',
   'fiba_reference_groups_q4_and_repeated_overtime':
-      'ac47d96e30ebceb0df169d48c7545bbdbb92805e2b69bae9a144e04d40d56756',
+      '405f2024121b6a3962b55acfab84aa8eb9b67557afb379c0c9f4948c16de51d8',
   'reject_safe_integer_arithmetic_overflow':
       '54d9b13316c81b5733c8a949c9beda857070386e4aa9a0de848eddaea471b110',
 };
@@ -63,6 +63,37 @@ Map<String, dynamic> _caseByName(Map<String, dynamic> fixture, String name) =>
 Map<String, dynamic> _base(Map<String, dynamic> fixture) => _clone(
   _caseByName(fixture, 'complete_zero_disciplinary_incidents')['input'],
 );
+
+Map<String, dynamic> _exactTime(int value) => {
+  'playedTimeMs': {'state': 'known', 'value': value},
+  'roundingMode': 'notApplicable',
+  'timePrecisionMs': {'state': 'known', 'value': 1},
+  'timeSource': 'liveClock',
+};
+
+void _moveExceptionalCreditToPeriodTwo(Map<String, dynamic> input) {
+  final rules = input['rules'] as Map<String, dynamic>;
+  rules['regulationPeriodCount'] = 2;
+  rules['penaltyAccumulationGroups'] = [
+    for (final number in [1, 2])
+      {
+        'groupId': 'period_$number',
+        'penaltyStartsAtFoul': {'state': 'known', 'value': 5},
+        'periodNumbers': [number],
+      },
+  ];
+  final periods = input['periods'] as List<dynamic>;
+  final scoringPeriod = _clone(periods.first)..['number'] = 2;
+  final first = periods.first as Map<String, dynamic>;
+  first['homeScore'] = 0;
+  (first['playerCounterPoints'] as Map<String, dynamic>)['home'] = 0;
+  (first['exceptionalScoringPoints'] as Map<String, dynamic>)['home'] = 0;
+  periods.add(scoringPeriod);
+  final adjustment =
+      (input['playedScoreAdjustments'] as List<dynamic>).first
+          as Map<String, dynamic>;
+  adjustment['periodNumber'] = {'state': 'known', 'value': 2};
+}
 
 Map<Object?, Object?> _map(Object? value) => value! as Map<Object?, Object?>;
 List<Object?> _items(Object? value) => value! as List<Object?>;
@@ -166,6 +197,13 @@ void registerNormalizedBoxScoreFixtureTests(FixtureLoader loadFixture) {
       final hostile = _SecondPassExpandsMap(_base(fixture));
       expect(calculateNormalizedBoxScore(hostile)['status'], 'accepted');
       expect(hostile.enumerationCount, 1);
+
+      final cyclic = <String, Object?>{};
+      cyclic['cycle'] = cyclic;
+      expect(_firstError(calculateNormalizedBoxScore(cyclic)), {
+        'code': 'invalidCanonicalValue',
+        'path': r'$.cycle',
+      });
     },
   );
 
@@ -339,6 +377,316 @@ void registerNormalizedBoxScoreFixtureTests(FixtureLoader loadFixture) {
   });
 
   test(
+    'time feasibility uses nominal, aggregate, and departure upper bounds',
+    () async {
+      final fixture = _decodeFixture(await loadFixture());
+      final aggregate = _base(fixture);
+      final rules = aggregate['rules'] as Map<String, dynamic>;
+      (rules['teamTimeCapacityMultiplier'] as Map<String, dynamic>)['value'] =
+          5;
+      final teams = aggregate['teams'] as List<dynamic>;
+      final home = teams[0] as Map<String, dynamic>;
+      final away = teams[1] as Map<String, dynamic>;
+      final homePlayers = home['players'] as List<dynamic>;
+      (homePlayers.first as Map<String, dynamic>)['time'] = _exactTime(600000);
+      final prototype = (away['players'] as List<dynamic>).first;
+      homePlayers.addAll([
+        for (var index = 0; index < 5; index += 1)
+          {
+            ..._clone(prototype),
+            'participantId': 'participant_capacity_$index',
+            'playerId': 'player_capacity_$index',
+            'rosterMembershipId': 'membership_capacity_$index',
+            'rosterMembershipVersionId': 'membership_version_capacity_$index',
+            'teamEntryId': 'team_home',
+            'time': _exactTime(600000),
+          },
+      ]);
+      expect(
+        _firstError(calculateNormalizedBoxScore(aggregate))['code'],
+        'timeOutsideGameDuration',
+      );
+
+      final nominal = _clone(
+        _caseByName(
+          fixture,
+          'partial_period_keeps_nominal_and_elapsed_separate',
+        )['input'],
+      );
+      final period =
+          (nominal['periods'] as List<dynamic>).first as Map<String, dynamic>;
+      period['elapsedDurationMs'] = {
+        'state': 'unknown',
+        'value': null,
+        'reasonCode': 'not_recorded',
+      };
+      final nominalHome =
+          (nominal['teams'] as List<dynamic>).first as Map<String, dynamic>;
+      ((nominalHome['players'] as List<dynamic>).first
+          as Map<String, dynamic>)['time'] = _exactTime(
+        900000,
+      );
+      expect(
+        _firstError(calculateNormalizedBoxScore(nominal))['code'],
+        'timeOutsideGameDuration',
+      );
+
+      final departure = _clone(
+        _caseByName(fixture, 'legitimate_double_overtime_50_minutes')['input'],
+      );
+      final departureHome =
+          (departure['teams'] as List<dynamic>).first as Map<String, dynamic>;
+      final line =
+          (departureHome['players'] as List<dynamic>).first
+              as Map<String, dynamic>;
+      line['time'] = _exactTime(3000000);
+      line['departure'] = {
+        'clockRemainingMs': {
+          'state': 'unknown',
+          'value': null,
+          'reasonCode': 'not_recorded',
+        },
+        'evidenceRefs': {
+          'state': 'known',
+          'value': ['ejection_period_1'],
+        },
+        'kind': 'ejected',
+        'periodNumber': {'state': 'known', 'value': 1},
+      };
+      expect(
+        _firstError(calculateNormalizedBoxScore(departure))['code'],
+        'departureTimeConflict',
+      );
+    },
+  );
+
+  test('complete labels cannot fabricate play in an empty game', () async {
+    final fixture = _decodeFixture(await loadFixture());
+    final input = _clone(
+      _caseByName(fixture, 'pregame_default_administrative_only')['input'],
+    );
+    input['statisticsDisposition'] = 'complete';
+    (input['administrativeResult']
+            as Map<String, dynamic>)['playerStatisticsTreatment'] =
+        'includePlayedStatistics';
+    final home =
+        (input['teams'] as List<dynamic>).first as Map<String, dynamic>;
+    final line =
+        (home['players'] as List<dynamic>).first as Map<String, dynamic>;
+    line['participationStatus'] = 'active';
+    line['enteredPlay'] = true;
+    line['participationReasonCode'] = {
+      'state': 'notApplicable',
+      'value': null,
+      'reasonCode': 'entered_play',
+    };
+    line['starter'] = {'state': 'known', 'value': true};
+    final noTime = _caseByName(
+      fixture,
+      'stats_only_capture_never_invents_time',
+    )['input'];
+    final noTimeHome =
+        (noTime['teams'] as List<dynamic>).first as Map<String, dynamic>;
+    line['time'] = _clone(
+      (noTimeHome['players'] as List<dynamic>).first,
+    )['time'];
+    expect(
+      _firstError(calculateNormalizedBoxScore(input))['code'],
+      'invalidNoPlayStatistics',
+    );
+  });
+
+  test('a zero-elapsed period row cannot conceal no-play counters', () async {
+    final fixture = _decodeFixture(await loadFixture());
+    final input = _clone(
+      _caseByName(
+        fixture,
+        'partial_period_keeps_nominal_and_elapsed_separate',
+      )['input'],
+    );
+    final period =
+        (input['periods'] as List<dynamic>).first as Map<String, dynamic>;
+    period['elapsedDurationMs'] = {'state': 'known', 'value': 0};
+    period['homeScore'] = 0;
+    period['awayScore'] = 0;
+    period['playerCounterPoints'] = {'away': 0, 'home': 0};
+    period['exceptionalScoringPoints'] = {'away': 0, 'home': 0};
+    input['playedScore'] = {'away': 0, 'home': 0};
+    final officialScore = input['officialScore'] as Map<String, dynamic>;
+    (officialScore['score'] as Map<String, dynamic>)['value'] = {
+      'away': 0,
+      'home': 0,
+    };
+    for (final teamValue in input['teams'] as List<dynamic>) {
+      final team = teamValue as Map<String, dynamic>;
+      final reported = team['reportedTotals'] as Map<String, dynamic>;
+      for (final field in playerCountFields) {
+        (reported[field] as Map<String, dynamic>)['value'] = 0;
+      }
+      for (final playerValue in team['players'] as List<dynamic>) {
+        final player = playerValue as Map<String, dynamic>;
+        final counts = player['counts'] as Map<String, dynamic>;
+        for (final field in playerCountFields) {
+          (counts[field] as Map<String, dynamic>)['value'] = 0;
+        }
+        player['time'] = _exactTime(0);
+      }
+    }
+    final home =
+        (input['teams'] as List<dynamic>).first as Map<String, dynamic>;
+    final homePlayer =
+        (home['players'] as List<dynamic>).first as Map<String, dynamic>;
+    ((homePlayer['counts'] as Map<String, dynamic>)['turnovers']
+            as Map<String, dynamic>)['value'] =
+        1;
+    ((home['reportedTotals'] as Map<String, dynamic>)['turnovers']
+            as Map<String, dynamic>)['value'] =
+        1;
+    expect(_firstError(calculateNormalizedBoxScore(input)), {
+      'code': 'invalidNoPlayStatistics',
+      'path': r'$.teams',
+    });
+  });
+
+  test(
+    'exceptional credits require period eligibility for both scoring kinds',
+    () async {
+      final fixture = _decodeFixture(await loadFixture());
+      for (final name in [
+        'own_basket_is_credited_and_included_once',
+        'defensive_goaltending_credits_shooter_and_counters',
+      ]) {
+        final later = _clone(_caseByName(fixture, name)['input']);
+        _moveExceptionalCreditToPeriodTwo(later);
+        final home =
+            (later['teams'] as List<dynamic>).first as Map<String, dynamic>;
+        final player =
+            (home['players'] as List<dynamic>).first as Map<String, dynamic>;
+        player['time'] = _exactTime(1000);
+        player['departure'] = {
+          'clockRemainingMs': {'state': 'known', 'value': 599000},
+          'evidenceRefs': {
+            'state': 'known',
+            'value': ['ejection_period_1'],
+          },
+          'kind': 'ejected',
+          'periodNumber': {'state': 'known', 'value': 1},
+        };
+        expect(
+          _firstError(calculateNormalizedBoxScore(later))['code'],
+          'invalidScoreAdjustment',
+          reason: name,
+        );
+
+        final samePeriod = _clone(_caseByName(fixture, name)['input']);
+        final sameHome =
+            (samePeriod['teams'] as List<dynamic>).first
+                as Map<String, dynamic>;
+        final samePlayer =
+            (sameHome['players'] as List<dynamic>).first
+                as Map<String, dynamic>;
+        samePlayer['time'] = _exactTime(600000);
+        samePlayer['departure'] = {
+          'clockRemainingMs': {'state': 'known', 'value': 0},
+          'evidenceRefs': {
+            'state': 'known',
+            'value': ['departure_period_1_end'],
+          },
+          'kind': 'ejected',
+          'periodNumber': {'state': 'known', 'value': 1},
+        };
+        expect(
+          calculateNormalizedBoxScore(samePeriod)['status'],
+          'accepted',
+          reason: name,
+        );
+      }
+
+      final disqualified = _clone(
+        _caseByName(
+          fixture,
+          'own_basket_is_credited_and_included_once',
+        )['input'],
+      );
+      _moveExceptionalCreditToPeriodTwo(disqualified);
+      disqualified['disciplineIncidents'] = [
+        {
+          'chargedParticipantId': {
+            'state': 'known',
+            'value': 'participant_home_1',
+          },
+          'chargedPartyKind': 'player',
+          'clockRemainingMs': {'state': 'known', 'value': 0},
+          'context': 'onCourt',
+          'countsTowardPlayerDisqualification': true,
+          'countsTowardTeamFoul': true,
+          'evidenceRefs': {
+            'state': 'known',
+            'value': ['disqualification_period_1'],
+          },
+          'incidentId': 'disqualification_period_1',
+          'incidentType': 'disqualifying',
+          'periodNumber': {'state': 'known', 'value': 1},
+          'relatedParticipantId': {
+            'state': 'unknown',
+            'value': null,
+            'reasonCode': 'not_recorded',
+          },
+          'scoresheetCode': 'D',
+          'teamEntryId': 'team_home',
+        },
+      ];
+      expect(
+        _firstError(calculateNormalizedBoxScore(disqualified))['code'],
+        'invalidScoreAdjustment',
+      );
+    },
+  );
+
+  test('score-adjustment shape precedes unrelated discipline errors', () async {
+    final fixture = _decodeFixture(await loadFixture());
+    final input = _clone(
+      _caseByName(fixture, 'own_basket_is_credited_and_included_once')['input'],
+    );
+    final adjustment =
+        (input['playedScoreAdjustments'] as List<dynamic>).first
+            as Map<String, dynamic>;
+    adjustment['points'] = 3;
+    input['disciplineIncidents'] = [
+      {
+        'chargedParticipantId': {
+          'state': 'notApplicable',
+          'value': null,
+          'reasonCode': 'not_player_charge',
+        },
+        'chargedPartyKind': 'coach',
+        'clockRemainingMs': {'state': 'known', 'value': 300000},
+        'context': 'onCourt',
+        'countsTowardPlayerDisqualification': false,
+        'countsTowardTeamFoul': false,
+        'evidenceRefs': {
+          'state': 'known',
+          'value': ['invalid_coach_on_court'],
+        },
+        'incidentId': 'invalid_coach_on_court',
+        'incidentType': 'technical',
+        'periodNumber': {'state': 'known', 'value': 1},
+        'relatedParticipantId': {
+          'state': 'notApplicable',
+          'value': null,
+          'reasonCode': 'no_related_participant',
+        },
+        'scoresheetCode': 'C',
+        'teamEntryId': 'team_home',
+      },
+    ];
+    expect(_firstError(calculateNormalizedBoxScore(input)), {
+      'code': 'invalidScoreAdjustment',
+      'path': r'$.playedScoreAdjustments[0].points',
+    });
+  });
+
+  test(
     'penalty groups reset in regulation and continue through repeated OT',
     () async {
       final fixture = _decodeFixture(await loadFixture());
@@ -372,6 +720,33 @@ void registerNormalizedBoxScoreFixtureTests(FixtureLoader loadFixture) {
       expect(_map(groups[0])['teamFouls'], 4);
       expect(_map(groups[1])['teamFouls'], 1);
 
+      for (final foulCount in [3, 4, 5]) {
+        final transition = _clone(
+          _caseByName(
+            fixture,
+            'fiba_reference_groups_q4_and_repeated_overtime',
+          )['input'],
+        );
+        final incidents = transition['disciplineIncidents'] as List<dynamic>;
+        final transitionTemplate = _clone(incidents.first);
+        transition['disciplineIncidents'] = [
+          for (var index = 0; index < foulCount; index += 1)
+            {
+              ..._clone(transitionTemplate),
+              'incidentId': 'q4_transition_${foulCount}_$index',
+              'periodNumber': {'state': 'known', 'value': 4},
+            },
+        ];
+        final transitionOutcome = calculateNormalizedBoxScore(transition);
+        final transitionHome = _map(
+          _items(_map(transitionOutcome['normalizedBoxScore'])['teams'])[0],
+        );
+        final transitionState = _map(
+          _map(_map(transitionHome['discipline'])['penaltyStateByPeriod'])['4'],
+        );
+        expect(_map(transitionState['inPenalty'])['value'], foulCount >= 4);
+      }
+
       final overtime = calculateNormalizedBoxScore(
         _caseByName(
           fixture,
@@ -385,6 +760,34 @@ void registerNormalizedBoxScoreFixtureTests(FixtureLoader loadFixture) {
         _map(overtimeHome['discipline'])['penaltyGroups'],
       );
       expect(_map(overtimeGroups[3])['teamFouls'], 6);
+      final overtimeStates = _map(
+        _map(overtimeHome['discipline'])['penaltyStateByPeriod'],
+      );
+      expect(_map(_map(overtimeStates['4'])['inPenalty'])['value'], true);
+      expect(_map(_map(overtimeStates['5'])['inPenalty'])['value'], true);
+
+      final alternative = _clone(
+        _caseByName(
+          fixture,
+          'alternative_league_resets_each_overtime',
+        )['input'],
+      );
+      final alternativeRules = alternative['rules'] as Map<String, dynamic>;
+      for (final groupValue
+          in alternativeRules['penaltyAccumulationGroups'] as List<dynamic>) {
+        final group = groupValue as Map<String, dynamic>;
+        (group['penaltyStartsAtFoul'] as Map<String, dynamic>)['value'] = 5;
+      }
+      final alternativeOutcome = calculateNormalizedBoxScore(alternative);
+      final alternativeHome = _map(
+        _items(_map(alternativeOutcome['normalizedBoxScore'])['teams'])[0],
+      );
+      final alternativeStates = _map(
+        _map(alternativeHome['discipline'])['penaltyStateByPeriod'],
+      );
+      expect(_map(_map(alternativeStates['4'])['inPenalty'])['value'], true);
+      expect(_map(_map(alternativeStates['5'])['inPenalty'])['value'], false);
+      expect(_map(_map(alternativeStates['6'])['inPenalty'])['value'], false);
     },
   );
 

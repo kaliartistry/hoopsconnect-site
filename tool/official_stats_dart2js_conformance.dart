@@ -1,4 +1,7 @@
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
+
 import 'dart:convert';
+import 'dart:html' as html;
 
 import 'package:hoops_connect/models/official_stats/calculators/normalized_box_score.dart';
 import 'package:hoops_connect/models/official_stats/canonical_encoding.dart';
@@ -8,6 +11,11 @@ import '../test/models/official_stats/box_score_calculator_fixture.g.dart';
 Never _fail(String message) => throw StateError(message);
 
 void main() {
+  final executionChallenge = Uri.base.queryParameters['execution_challenge'];
+  if (executionChallenge == null ||
+      !RegExp(r'^[0-9a-f]{64}$').hasMatch(executionChallenge)) {
+    _fail('missing or malformed Dart execution challenge');
+  }
   final fixture =
       jsonDecode(loadBoxScoreCalculatorBrowserFixture())
           as Map<String, dynamic>;
@@ -62,6 +70,10 @@ void main() {
   } on UnsupportedError {
     // Required immutable boundary.
   }
+
+  final body = html.document.body;
+  if (body == null) _fail('browser document body is unavailable');
+  body.dataset['dartExecutionChallenge'] = executionChallenge;
 
   // The harness captures this stable marker from the real browser console.
   // ignore: avoid_print
