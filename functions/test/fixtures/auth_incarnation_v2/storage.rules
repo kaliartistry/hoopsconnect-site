@@ -1,0 +1,117 @@
+rules_version = '2';
+
+// Candidate-only policy fixture. This file is not referenced by firebase.json.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function validId(value) {
+      return value is string && value.size() > 0 && value.size() <= 128;
+    }
+
+    function validCapabilities(value) {
+      return value is list
+        && value.size() <= 64
+        && value.size() == value.toSet().size()
+        && value.hasOnly([
+          'association.read', 'association.manage', 'members.read',
+          'members.manage', 'invites.manage', 'schedule.manage',
+          'teams.manage', 'teams.represent', 'posts.create', 'posts.manage',
+          'posts.internal.read', 'posts.acknowledge', 'stats.enter',
+          'stats.approve', 'stats.export', 'press.read', 'players.manage',
+          'players.private.read', 'rosters.assert', 'rosters.manage',
+          'games.schedule', 'stats.submit', 'stats.review', 'stats.correct',
+          'stats.certify', 'results.publish', 'results.retract',
+          'official.override'
+        ]);
+    }
+
+    // TOKEN_V2_BEGIN: signed proof checks perform no document reads.
+    function validTokenV2() {
+      return request.auth != null
+        && request.auth.token.keys().hasAll([
+          'authIncarnationSchemaVersionV2',
+          'authProjectIdV2',
+          'authTenantIdV2',
+          'authUidV2',
+          'accountGenerationV2',
+          'accountLifecycleEpochV2',
+          'auth_time'
+        ])
+        && request.auth.token.authIncarnationSchemaVersionV2 == 2
+        && request.auth.token.authProjectIdV2 == 'demo-hoopsconnect'
+        && (request.auth.token.authTenantIdV2 == null
+          || validId(request.auth.token.authTenantIdV2))
+        && request.auth.token.authUidV2 == request.auth.uid
+        && request.auth.token.accountGenerationV2 is string
+        && request.auth.token.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && request.auth.token.accountLifecycleEpochV2 is int
+        && request.auth.token.accountLifecycleEpochV2 >= 0
+        && request.auth.token.accountLifecycleEpochV2 <= 9007199254740991
+        && request.auth.token.auth_time is int
+        && request.auth.token.auth_time >= 0;
+    }
+    // TOKEN_V2_END
+
+    function projectionShape(data) {
+      return data.keys().hasOnly([
+          'authIncarnationSchemaVersionV2',
+          'authProjectIdV2',
+          'authTenantIdV2',
+          'authUidV2',
+          'accountGenerationV2',
+          'accountLifecycleEpochV2',
+          'lifecycleStateV2',
+          'membershipStatusV2',
+          'reauthAfterSecV2',
+          'associationId',
+          'capabilities'
+        ])
+        && data.authIncarnationSchemaVersionV2 == 2
+        && data.accountGenerationV2 is string
+        && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
+        && data.accountLifecycleEpochV2 is int
+        && data.accountLifecycleEpochV2 >= 0
+        && data.accountLifecycleEpochV2 <= 9007199254740991
+        && data.reauthAfterSecV2 is int
+        && data.reauthAfterSecV2 >= 0
+        && data.reauthAfterSecV2 <= 9007199254740991
+        && validId(data.associationId)
+        && validCapabilities(data.capabilities);
+    }
+
+    // ACTIVE_V2_BEGIN: one Firestore projection read plus the Storage resource.
+    function activeStorageV2(uid, associationId, capability) {
+      let projection = firestore.get(
+        /databases/(default)/documents/storageAuthorizationsV2/$(uid)
+      ).data;
+      return validTokenV2()
+        && projectionShape(projection)
+        && projection.authProjectIdV2 == 'demo-hoopsconnect'
+        && projection.authProjectIdV2 == request.auth.token.authProjectIdV2
+        && projection.authTenantIdV2 == request.auth.token.authTenantIdV2
+        && projection.authUidV2 == uid
+        && projection.authUidV2 == request.auth.token.authUidV2
+        && projection.lifecycleStateV2 == 'active'
+        && projection.membershipStatusV2 == 'active'
+        && projection.associationId == associationId
+        && request.auth.token.accountGenerationV2 == projection.accountGenerationV2
+        && request.auth.token.accountLifecycleEpochV2 == projection.accountLifecycleEpochV2
+        && request.auth.token.auth_time > projection.reauthAfterSecV2
+        && projection.capabilities.hasAny([capability]);
+    }
+    // ACTIVE_V2_END
+
+    match /protectedV2/{associationId}/{allPaths=**} {
+      allow read: if resource != null
+        && activeStorageV2(request.auth.uid, associationId, 'association.read');
+      allow create, update: if request.resource != null
+        && request.resource.size < 10 * 1024 * 1024
+        && activeStorageV2(request.auth.uid, associationId, 'association.read');
+      allow delete: if resource != null
+        && activeStorageV2(request.auth.uid, associationId, 'association.read');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
