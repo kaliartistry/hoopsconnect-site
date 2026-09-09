@@ -427,6 +427,7 @@ class StorageAuthorizationProjectionV2 {
 }
 
 final class ValidatedActiveAuthorityV2 {
+  final String sessionAttemptIdV2;
   final AuthIncarnationScopeV2 scope;
   final String accountGenerationV2;
   final int accountLifecycleEpochV2;
@@ -435,6 +436,7 @@ final class ValidatedActiveAuthorityV2 {
   final List<String> capabilities;
 
   ValidatedActiveAuthorityV2._({
+    required this.sessionAttemptIdV2,
     required this.scope,
     required this.accountGenerationV2,
     required this.accountLifecycleEpochV2,
@@ -444,7 +446,7 @@ final class ValidatedActiveAuthorityV2 {
   }) : capabilities = UnmodifiableListView(capabilities);
 }
 
-class AuthIncarnationAuthorizationDecisionV2 {
+final class AuthIncarnationAuthorizationDecisionV2 {
   final bool authorized;
   final AuthIncarnationDenialCodeV2? code;
   final ValidatedActiveAuthorityV2? binding;
@@ -465,12 +467,24 @@ class AuthIncarnationAuthorizationDecisionV2 {
 }
 
 AuthIncarnationAuthorizationDecisionV2 evaluateAccountAuthorizationV2({
+  required String sessionAttemptIdV2,
   required Object? expectedScope,
   required Object? tokenProof,
   required Object? lifecycle,
   required Object? membership,
   required String requiredCapability,
 }) {
+  late String parsedSessionAttemptIdV2;
+  try {
+    parsedSessionAttemptIdV2 = _identifier(
+      sessionAttemptIdV2,
+      'session attempt ID',
+    );
+  } catch (_) {
+    return const AuthIncarnationAuthorizationDecisionV2.denied(
+      AuthIncarnationDenialCodeV2.invalidTokenProof,
+    );
+  }
   AuthIncarnationScopeV2 scope;
   try {
     scope = AuthIncarnationScopeV2.fromMap(
@@ -559,6 +573,7 @@ AuthIncarnationAuthorizationDecisionV2 evaluateAccountAuthorizationV2({
   }
   return AuthIncarnationAuthorizationDecisionV2._allowed(
     ValidatedActiveAuthorityV2._(
+      sessionAttemptIdV2: parsedSessionAttemptIdV2,
       scope: scope,
       accountGenerationV2: token.accountGenerationV2,
       accountLifecycleEpochV2: token.accountLifecycleEpochV2,
@@ -570,11 +585,23 @@ AuthIncarnationAuthorizationDecisionV2 evaluateAccountAuthorizationV2({
 }
 
 AuthIncarnationAuthorizationDecisionV2 evaluateStorageAuthorizationV2({
+  required String sessionAttemptIdV2,
   required Object? expectedScope,
   required Object? tokenProof,
   required Object? projection,
   required String requiredCapability,
 }) {
+  late String parsedSessionAttemptIdV2;
+  try {
+    parsedSessionAttemptIdV2 = _identifier(
+      sessionAttemptIdV2,
+      'session attempt ID',
+    );
+  } catch (_) {
+    return const AuthIncarnationAuthorizationDecisionV2.denied(
+      AuthIncarnationDenialCodeV2.invalidTokenProof,
+    );
+  }
   AuthIncarnationScopeV2 scope;
   try {
     scope = AuthIncarnationScopeV2.fromMap(
@@ -648,6 +675,7 @@ AuthIncarnationAuthorizationDecisionV2 evaluateStorageAuthorizationV2({
   }
   return AuthIncarnationAuthorizationDecisionV2._allowed(
     ValidatedActiveAuthorityV2._(
+      sessionAttemptIdV2: parsedSessionAttemptIdV2,
       scope: scope,
       accountGenerationV2: token.accountGenerationV2,
       accountLifecycleEpochV2: token.accountLifecycleEpochV2,

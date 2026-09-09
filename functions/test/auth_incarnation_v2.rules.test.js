@@ -232,7 +232,9 @@ test('malformed token, freshness, and control-character identifiers fail closed'
     )));
   }
 
-  for (const associationId of ['jba\u0000', 'jba\u001f', 'jba\u007f']) {
+  for (const associationId of [
+    'jba\u0000', 'jba\u001f', 'jba\u007f', 'jba\n\n', 'jba\n\u007f\n',
+  ]) {
     await seedAuthority({membership: {associationId}});
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'protectedRecordsV2/record-1'), {

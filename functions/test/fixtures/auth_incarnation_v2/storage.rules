@@ -9,7 +9,7 @@ service firebase.storage {
       return value is string
         && value.size() > 0
         && value.size() <= 128
-        && !value.matches('.*[\\x00-\\x1f\\x7f].*');
+        && value.matches('^[^\\x00-\\x1f\\x7f]{1,128}$');
     }
 
     function validCounter(value) {

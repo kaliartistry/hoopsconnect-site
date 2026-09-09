@@ -65,9 +65,12 @@ fence-before-Auth-mutation remains mandatory.
 
 The pure client reducer permits protected listeners, capabilities, and FCM
 registration only in `ready`. Each establishment is keyed by an attempt ID plus
-exact project, nullable tenant, UID, `G`, and `E`. Readiness requires an
-evaluator-produced binding for that same attempt. Old asynchronous completions,
-including same-UID/new-generation races, cannot affect the current attempt.
+exact project, nullable tenant, UID, `G`, and `E`. The evaluator-produced
+binding carries that exact attempt ID, so an event cannot pair a new attempt
+with an old binding even when every other identity field is unchanged. Refresh
+creates a new attempt ID before new proof can restore readiness. Old
+asynchronous completions, including same-UID/new-generation and same-identity
+retry races, cannot affect the current attempt.
 Refresh, proof-loss, deletion, sign-out, and account-switch sequences remain
 non-granting until a matching validated proof transition. Nothing instantiates
 this reducer in the production provider tree in this packet.

@@ -21,6 +21,7 @@ function clone(value) {
 
 function applyVector(vector, includeProjection = false) {
   const material = {
+    sessionAttemptIdV2: fixture.sessionAttemptIdV2,
     expectedScope: clone(fixture.scope),
     tokenProof: clone(fixture.tokenProof),
     lifecycle: clone(fixture.lifecycle),
@@ -37,11 +38,13 @@ function applyVector(vector, includeProjection = false) {
     }
   }
   return includeProjection ? {
+    sessionAttemptIdV2: material.sessionAttemptIdV2,
     expectedScope: material.expectedScope,
     tokenProof: material.tokenProof,
     projection: material.projection,
     requiredCapability: material.requiredCapability,
   } : {
+    sessionAttemptIdV2: material.sessionAttemptIdV2,
     expectedScope: material.expectedScope,
     tokenProof: material.tokenProof,
     lifecycle: material.lifecycle,
@@ -144,6 +147,22 @@ test('validated binding is the only input accepted by the projection builder', (
   assert.equal(Object.isFrozen(projection), true);
 });
 
+test('validated bindings are scoped to one exact session attempt', () => {
+  const input = applyVector(fixture.accountAuthorizationVectors[0]);
+  input.sessionAttemptIdV2 = 'attempt-exact-a';
+  const decision = contract.evaluateAccountAuthorizationV2(input);
+  assert.equal(decision.authorized, true);
+  assert.equal(decision.binding.sessionAttemptIdV2, 'attempt-exact-a');
+
+  for (const sessionAttemptIdV2 of ['', 'bad\u0000attempt', 'x'.repeat(129)]) {
+    const denied = contract.evaluateAccountAuthorizationV2({
+      ...applyVector(fixture.accountAuthorizationVectors[0]),
+      sessionAttemptIdV2,
+    });
+    assert.deepEqual(denied, {authorized: false, code: 'invalid_token_proof'});
+  }
+});
+
 test('Dart external libraries cannot forge bindings or construct allowed decisions', {
   timeout: 120000,
 }, () => {
@@ -158,9 +177,15 @@ import 'package:hoops_connect/models/auth_incarnation/auth_incarnation_v2.dart';
 final class Forged implements ValidatedActiveAuthorityV2 {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+final class ForgedDecision extends AuthIncarnationAuthorizationDecisionV2 {
+  ForgedDecision() : super.denied(AuthIncarnationDenialCodeV2.invalidTokenProof);
+  @override
+  bool get authorized => true;
+}
 void main() {
   StorageAuthorizationProjectionV2.fromValidated(Forged());
   AuthIncarnationAuthorizationDecisionV2.allowed(null as dynamic);
+  ForgedDecision();
 }
 `);
     const result = spawnSync('dart', ['analyze', sourcePath], {
@@ -172,6 +197,7 @@ void main() {
     assert.equal(result.error, undefined, output);
     assert.notEqual(result.status, 0, 'forged external library unexpectedly analyzed');
     assert.match(output, /ValidatedActiveAuthorityV2/);
+    assert.match(output, /AuthIncarnationAuthorizationDecisionV2/);
     assert.match(output, /allowed/);
   } finally {
     fs.rmSync(temporary, {recursive: true, force: true});

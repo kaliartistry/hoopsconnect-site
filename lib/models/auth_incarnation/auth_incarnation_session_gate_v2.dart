@@ -72,12 +72,15 @@ final class AuthIncarnationSessionAttemptV2 {
   }
 
   bool sameAttempt(AuthIncarnationSessionAttemptV2 other) =>
-      attemptId == other.attemptId &&
+      attemptId == other.attemptId && sameSessionIdentity(other);
+
+  bool sameSessionIdentity(AuthIncarnationSessionAttemptV2 other) =>
       scope.sameAs(other.scope) &&
       accountGenerationV2 == other.accountGenerationV2 &&
       accountLifecycleEpochV2 == other.accountLifecycleEpochV2;
 
   bool matchesBinding(ValidatedActiveAuthorityV2 binding) =>
+      attemptId == binding.sessionAttemptIdV2 &&
       scope.sameAs(binding.scope) &&
       accountGenerationV2 == binding.accountGenerationV2 &&
       accountLifecycleEpochV2 == binding.accountLifecycleEpochV2;
@@ -87,15 +90,26 @@ final class AuthIncarnationSessionEventV2 {
   final AuthIncarnationSessionEventKindV2 kind;
   final AuthIncarnationSessionAttemptV2? attempt;
   final ValidatedActiveAuthorityV2? binding;
+  final AuthIncarnationSessionAttemptV2? nextAttempt;
 
-  const AuthIncarnationSessionEventV2._(this.kind, this.attempt, this.binding);
+  const AuthIncarnationSessionEventV2._(
+    this.kind,
+    this.attempt,
+    this.binding,
+    this.nextAttempt,
+  );
 
   const AuthIncarnationSessionEventV2.signedOut()
-    : this._(AuthIncarnationSessionEventKindV2.signedOut, null, null);
+    : this._(AuthIncarnationSessionEventKindV2.signedOut, null, null, null);
 
   AuthIncarnationSessionEventV2.authObserved(
     AuthIncarnationSessionAttemptV2 attempt,
-  ) : this._(AuthIncarnationSessionEventKindV2.authObserved, attempt, null);
+  ) : this._(
+        AuthIncarnationSessionEventKindV2.authObserved,
+        attempt,
+        null,
+        null,
+      );
 
   AuthIncarnationSessionEventV2.accountSwitchStarted(
     AuthIncarnationSessionAttemptV2 attempt,
@@ -103,20 +117,32 @@ final class AuthIncarnationSessionEventV2 {
         AuthIncarnationSessionEventKindV2.accountSwitchStarted,
         attempt,
         null,
+        null,
       );
 
   AuthIncarnationSessionEventV2.proofReady({
     required AuthIncarnationSessionAttemptV2 attempt,
     required ValidatedActiveAuthorityV2 binding,
-  }) : this._(AuthIncarnationSessionEventKindV2.proofReady, attempt, binding);
+  }) : this._(
+         AuthIncarnationSessionEventKindV2.proofReady,
+         attempt,
+         binding,
+         null,
+       );
 
-  AuthIncarnationSessionEventV2.refreshRequired(
-    AuthIncarnationSessionAttemptV2 attempt,
-  ) : this._(AuthIncarnationSessionEventKindV2.refreshRequired, attempt, null);
+  AuthIncarnationSessionEventV2.refreshRequired({
+    required AuthIncarnationSessionAttemptV2 currentAttempt,
+    required AuthIncarnationSessionAttemptV2 refreshedAttempt,
+  }) : this._(
+         AuthIncarnationSessionEventKindV2.refreshRequired,
+         currentAttempt,
+         null,
+         refreshedAttempt,
+       );
 
   AuthIncarnationSessionEventV2.proofLost(
     AuthIncarnationSessionAttemptV2 attempt,
-  ) : this._(AuthIncarnationSessionEventKindV2.proofLost, attempt, null);
+  ) : this._(AuthIncarnationSessionEventKindV2.proofLost, attempt, null, null);
 
   AuthIncarnationSessionEventV2.lifecycleDeleting(
     AuthIncarnationSessionAttemptV2 attempt,
@@ -124,11 +150,17 @@ final class AuthIncarnationSessionEventV2 {
         AuthIncarnationSessionEventKindV2.lifecycleDeleting,
         attempt,
         null,
+        null,
       );
 
   AuthIncarnationSessionEventV2.lifecycleDeleted(
     AuthIncarnationSessionAttemptV2 attempt,
-  ) : this._(AuthIncarnationSessionEventKindV2.lifecycleDeleted, attempt, null);
+  ) : this._(
+        AuthIncarnationSessionEventKindV2.lifecycleDeleted,
+        attempt,
+        null,
+        null,
+      );
 }
 
 final class AuthIncarnationSessionGateV2 {
@@ -178,6 +210,26 @@ final class AuthIncarnationSessionGateV2 {
         state == AuthIncarnationSessionStateV2.deleted) {
       return this;
     }
+    if (event.kind == AuthIncarnationSessionEventKindV2.refreshRequired) {
+      final refreshedAttempt = event.nextAttempt;
+      final mayRefresh =
+          state == AuthIncarnationSessionStateV2.establishing ||
+          state == AuthIncarnationSessionStateV2.refreshRequired ||
+          state == AuthIncarnationSessionStateV2.ready;
+      if (!mayRefresh ||
+          refreshedAttempt == null ||
+          currentAttempt.sameAttempt(refreshedAttempt) ||
+          !currentAttempt.sameSessionIdentity(refreshedAttempt)) {
+        return AuthIncarnationSessionGateV2._(
+          AuthIncarnationSessionStateV2.blocked,
+          currentAttempt,
+        );
+      }
+      return AuthIncarnationSessionGateV2._(
+        AuthIncarnationSessionStateV2.refreshRequired,
+        refreshedAttempt,
+      );
+    }
 
     final next = switch (event.kind) {
       AuthIncarnationSessionEventKindV2.proofReady =>
@@ -188,12 +240,7 @@ final class AuthIncarnationSessionGateV2 {
                 currentAttempt.matchesBinding(event.binding!)
             ? AuthIncarnationSessionStateV2.ready
             : AuthIncarnationSessionStateV2.blocked,
-      AuthIncarnationSessionEventKindV2.refreshRequired =>
-        state == AuthIncarnationSessionStateV2.establishing ||
-                state == AuthIncarnationSessionStateV2.refreshRequired ||
-                state == AuthIncarnationSessionStateV2.ready
-            ? AuthIncarnationSessionStateV2.refreshRequired
-            : state,
+      AuthIncarnationSessionEventKindV2.refreshRequired => state,
       AuthIncarnationSessionEventKindV2.proofLost =>
         AuthIncarnationSessionStateV2.blocked,
       AuthIncarnationSessionEventKindV2.lifecycleDeleting =>

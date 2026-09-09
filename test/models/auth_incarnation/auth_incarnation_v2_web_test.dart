@@ -43,6 +43,7 @@ Map<String, Object?> membership() => {
 void main() {
   test('Chrome accepts only the all-exact V2 tuple', () {
     final allowed = evaluateAccountAuthorizationV2(
+      sessionAttemptIdV2: 'web-evaluation',
       expectedScope: scope(),
       tokenProof: token(),
       lifecycle: lifecycle(),
@@ -54,6 +55,7 @@ void main() {
     final stale = token()
       ..['accountGenerationV2'] = List.filled(64, 'f').join();
     final denied = evaluateAccountAuthorizationV2(
+      sessionAttemptIdV2: 'web-evaluation',
       expectedScope: scope(),
       tokenProof: stale,
       lifecycle: lifecycle(),
@@ -90,6 +92,7 @@ void main() {
 
     final equalBoundary = token()..['authTimeSec'] = 1700000000;
     final decision = evaluateAccountAuthorizationV2(
+      sessionAttemptIdV2: 'web-evaluation',
       expectedScope: scope(),
       tokenProof: equalBoundary,
       lifecycle: lifecycle(),
@@ -107,6 +110,7 @@ void main() {
       accountLifecycleEpochV2: 7,
     );
     final decision = evaluateAccountAuthorizationV2(
+      sessionAttemptIdV2: 'web-attempt',
       expectedScope: scope(),
       tokenProof: token(),
       lifecycle: lifecycle(),

@@ -26,6 +26,7 @@ AuthIncarnationSessionAttemptV2 _attempt({
 );
 
 ValidatedActiveAuthorityV2 _binding({
+  required String attemptId,
   String uid = 'operator',
   String generation = _generationA,
   int epoch = 7,
@@ -36,6 +37,7 @@ ValidatedActiveAuthorityV2 _binding({
     'authUidV2': uid,
   };
   final decision = evaluateAccountAuthorizationV2(
+    sessionAttemptIdV2: attemptId,
     expectedScope: scope,
     tokenProof: {
       'authIncarnationSchemaVersionV2': 2,
@@ -83,7 +85,7 @@ void main() {
     gate = gate.transition(
       AuthIncarnationSessionEventV2.proofReady(
         attempt: attempt,
-        binding: _binding(),
+        binding: _binding(attemptId: 'attempt-a'),
       ),
     );
     expect(gate.state, AuthIncarnationSessionStateV2.ready);
@@ -101,7 +103,7 @@ void main() {
     gate = gate.transition(
       AuthIncarnationSessionEventV2.proofReady(
         attempt: attemptA,
-        binding: _binding(uid: 'account-a'),
+        binding: _binding(attemptId: 'attempt-a', uid: 'account-a'),
       ),
     );
     expect(gate.state, AuthIncarnationSessionStateV2.establishing);
@@ -119,7 +121,7 @@ void main() {
     gate = gate.transition(
       AuthIncarnationSessionEventV2.proofReady(
         attempt: oldAttempt,
-        binding: _binding(),
+        binding: _binding(attemptId: 'old'),
       ),
     );
     expect(gate.state, AuthIncarnationSessionStateV2.establishing);
@@ -127,10 +129,29 @@ void main() {
     gate = gate.transition(
       AuthIncarnationSessionEventV2.proofReady(
         attempt: newAttempt,
-        binding: _binding(generation: _generationB, epoch: 8),
+        binding: _binding(attemptId: 'new', generation: _generationB, epoch: 8),
       ),
     );
     expect(gate.state, AuthIncarnationSessionStateV2.ready);
+  });
+
+  test('same exact identity cannot replay a binding across attempt IDs', () {
+    final attemptA = _attempt(id: 'same-identity-a');
+    final attemptB = _attempt(id: 'same-identity-b');
+    final oldBinding = _binding(attemptId: 'same-identity-a');
+    final gate = const AuthIncarnationSessionGateV2.signedOut()
+        .transition(AuthIncarnationSessionEventV2.authObserved(attemptA))
+        .transition(
+          AuthIncarnationSessionEventV2.accountSwitchStarted(attemptB),
+        )
+        .transition(
+          AuthIncarnationSessionEventV2.proofReady(
+            attempt: attemptB,
+            binding: oldBinding,
+          ),
+        );
+    expect(gate.state, AuthIncarnationSessionStateV2.blocked);
+    _expectClosed(gate);
   });
 
   test('matching attempt cannot use a binding for another identity', () {
@@ -140,7 +161,7 @@ void main() {
         .transition(
           AuthIncarnationSessionEventV2.proofReady(
             attempt: attempt,
-            binding: _binding(uid: 'other-user'),
+            binding: _binding(attemptId: 'attempt-a', uid: 'other-user'),
           ),
         );
     expect(gate.state, AuthIncarnationSessionStateV2.blocked);
@@ -148,25 +169,59 @@ void main() {
   });
 
   test('repeated refresh remains closed until matching proof', () {
-    final attempt = _attempt(id: 'refresh');
+    final attempt = _attempt(id: 'refresh-0');
+    final refresh1 = _attempt(id: 'refresh-1');
+    final refresh2 = _attempt(id: 'refresh-2');
     var gate = const AuthIncarnationSessionGateV2.signedOut()
         .transition(AuthIncarnationSessionEventV2.authObserved(attempt))
-        .transition(AuthIncarnationSessionEventV2.refreshRequired(attempt))
-        .transition(AuthIncarnationSessionEventV2.refreshRequired(attempt));
+        .transition(
+          AuthIncarnationSessionEventV2.refreshRequired(
+            currentAttempt: attempt,
+            refreshedAttempt: refresh1,
+          ),
+        )
+        .transition(
+          AuthIncarnationSessionEventV2.refreshRequired(
+            currentAttempt: refresh1,
+            refreshedAttempt: refresh2,
+          ),
+        );
     expect(gate.state, AuthIncarnationSessionStateV2.refreshRequired);
     _expectClosed(gate);
     gate = gate.transition(
       AuthIncarnationSessionEventV2.proofReady(
-        attempt: attempt,
-        binding: _binding(),
+        attempt: refresh2,
+        binding: _binding(attemptId: 'refresh-2'),
       ),
     );
     expect(gate.state, AuthIncarnationSessionStateV2.ready);
   });
 
+  test('pre-refresh proof cannot reopen a refreshed attempt', () {
+    final attempt = _attempt(id: 'pre-refresh');
+    final refreshed = _attempt(id: 'post-refresh');
+    final oldBinding = _binding(attemptId: 'pre-refresh');
+    final gate = const AuthIncarnationSessionGateV2.signedOut()
+        .transition(AuthIncarnationSessionEventV2.authObserved(attempt))
+        .transition(
+          AuthIncarnationSessionEventV2.refreshRequired(
+            currentAttempt: attempt,
+            refreshedAttempt: refreshed,
+          ),
+        )
+        .transition(
+          AuthIncarnationSessionEventV2.proofReady(
+            attempt: refreshed,
+            binding: oldBinding,
+          ),
+        );
+    expect(gate.state, AuthIncarnationSessionStateV2.blocked);
+    _expectClosed(gate);
+  });
+
   test('sign-out, deleting, deleted, and out-of-order proof stay closed', () {
     final attempt = _attempt(id: 'terminal');
-    final binding = _binding();
+    final binding = _binding(attemptId: 'terminal');
     final signedOut = const AuthIncarnationSessionGateV2.signedOut().transition(
       AuthIncarnationSessionEventV2.proofReady(
         attempt: attempt,
