@@ -467,6 +467,24 @@ test('required references enforce target type and blocked dependency eligibility
       && issue.contradictionCodes.includes('required_relation_team_not_singular')
   )));
 
+  const optionalAmbiguous = loadFixture();
+  const optionalRoster = optionalAmbiguous.records.find((record) => record.entityType === 'legacyRosterEntry');
+  const optionalTeamB = optionalAmbiguous.records.find((record) => record.sourceKey === 'team-b');
+  optionalRoster.references.push({
+    ...clone(optionalRoster.references[0]),
+    required: false,
+    targetSourceKey: optionalTeamB.sourceKey,
+    targetSourcePath: optionalTeamB.sourcePath,
+  });
+  const optionalRecord = dryRun(optionalAmbiguous).report.payload.records.find((record) => (
+    record.sourceIdentityHash === inventory.canonicalSha256(`${optionalRoster.sourcePath}#${optionalRoster.sourceKey}`)
+  ));
+  assert.equal(optionalRecord.blocked, true);
+  assert.ok(optionalRecord.issues.some((issue) => (
+    issue.code === inventory.errorCodes.contradictorySource
+      && issue.contradictionCodes.includes('required_relation_team_not_singular')
+  )));
+
   const blockedParent = loadFixture();
   blockedParent.records.find((record) => record.sourceKey === 'team-a')
     .classificationEvidence.privacyRestrictedFields = ['contact'];

@@ -619,7 +619,7 @@ function hasSyntheticEvidence(record, syntheticRules) {
 function relationshipContradictions(record, recordsByIdentity) {
   const contradictions = [...record.classificationEvidence.contradictions];
   for (const relation of Object.keys(requiredRelationTargets[record.entityType] || {})) {
-    const matches = record.references.filter((reference) => reference.required && reference.relation === relation);
+    const matches = record.references.filter((reference) => reference.relation === relation);
     if (matches.length > 1) contradictions.push(`required_relation_${relation}_not_singular`);
   }
   for (const reference of record.references.filter((candidate) => candidate.required)) {
@@ -1027,7 +1027,7 @@ function buildDryRunReport(inventoryEnvelope) {
         record.sourceIdentity,
       );
     }
-    const referenceMappings = record.referenceEdges.flatMap((edge) => {
+    const referenceMappings = record.referenceEdges.filter((edge) => edge.required).flatMap((edge) => {
       const target = inventoryByIdentity.get(edge.targetSourceIdentity);
       if (!target) return [];
       const preferredTargetType = edge.relation.toLowerCase().includes('team')
