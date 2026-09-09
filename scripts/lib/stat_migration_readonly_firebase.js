@@ -3,6 +3,11 @@
 const {asciiCompare, canonicalEncode, canonicalSha256, errorCodes, MigrationInventoryError,
   MAX_PAGE_SIZE, MAX_RECORDS} = require('./stat_migration_inventory');
 
+const MAX_PROVIDER_COLLECTIONS = 100;
+const MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024;
+const PROVIDER_TIMEOUT_MS = 30000;
+const stableEmbeddedKeyField = /^(?:id|[A-Za-z][A-Za-z0-9_]*(?:Id|Key))$/;
+
 function requirePlainRecord(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new MigrationInventoryError(errorCodes.malformedSource, `${label} must be an object.`);
@@ -125,6 +130,7 @@ async function readCollection({baseUrl, bearerToken, collectionPath, fetchImpl, 
       headers: bearerToken ? {Authorization: `Bearer ${bearerToken}`} : {},
       method: 'GET',
       redirect: 'error',
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
     if (!response || !response.ok) {
       throw new MigrationInventoryError(
@@ -133,6 +139,9 @@ async function readCollection({baseUrl, bearerToken, collectionPath, fetchImpl, 
       );
     }
     const body = await response.json();
+    if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
+      throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+    }
     const page = Array.isArray(body.documents) ? body.documents : [];
     if (page.length > pageSize) {
       throw new MigrationInventoryError(errorCodes.oversizedPage, 'Provider returned an oversized page.');
@@ -245,6 +254,12 @@ function recordFromDocument(document, spec, associationId) {
 function embeddedRecords(parentRecord, spec) {
   const records = [];
   for (const embeddedSpec of spec.embeddedArrays || []) {
+    if (embeddedSpec.keyField && !stableEmbeddedKeyField.test(embeddedSpec.keyField)) {
+      throw new MigrationInventoryError(
+        errorCodes.malformedSource,
+        'Embedded keyField must name an explicit stable ID or key field.',
+      );
+    }
     const values = readField(parentRecord.data, embeddedSpec.field);
     if (!Array.isArray(values)) continue;
     values.forEach((value, index) => {
@@ -304,6 +319,9 @@ async function loadReadOnlyFirebaseManifest({
   if (!Array.isArray(manifest.providerCollections) || manifest.providerCollections.length === 0) {
     throw new MigrationInventoryError(errorCodes.malformedSource, 'Firebase input requires providerCollections.');
   }
+  if (manifest.providerCollections.length > MAX_PROVIDER_COLLECTIONS) {
+    throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider collection bound exceeded.');
+  }
   const records = Array.isArray(manifest.records) ? [...manifest.records] : [];
   const providerSnapshotMarkers = [];
   for (const spec of manifest.providerCollections) {
@@ -326,6 +344,9 @@ async function loadReadOnlyFirebaseManifest({
     for (const document of result.documents) {
       const parent = recordFromDocument(document, spec, associationId);
       records.push(parent, ...embeddedRecords(parent, spec));
+      if (records.length > MAX_RECORDS) {
+        throw new MigrationInventoryError(errorCodes.oversizedReport, 'Global provider record bound exceeded.');
+      }
     }
   }
   providerSnapshotMarkers.sort((a, b) => asciiCompare(canonicalEncode(a), canonicalEncode(b)));

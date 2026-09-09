@@ -430,3 +430,148 @@ test('unsupported source schema and malformed canonical numbers have stable code
     (error) => error.code === inventory.errorCodes.malformedSource,
   );
 });
+
+test('required references enforce target type and blocked dependency eligibility', () => {
+  const wrongType = loadFixture();
+  const roster = wrongType.records.find((record) => record.entityType === 'legacyRosterEntry');
+  const season = wrongType.records.find((record) => record.entityType === 'season');
+  roster.references[0].targetSourcePath = season.sourcePath;
+  roster.references[0].targetSourceKey = season.sourceKey;
+  const wrongTypeReport = dryRun(wrongType).report;
+  const wrongTypeRecord = wrongTypeReport.payload.records.find((record) => (
+    record.sourceIdentityHash === inventory.canonicalSha256(`${roster.sourcePath}#${roster.sourceKey}`)
+  ));
+  assert.equal(wrongTypeRecord.blocked, true);
+  assert.ok(wrongTypeRecord.issues.some((issue) => (
+    issue.code === inventory.errorCodes.contradictorySource
+      && issue.contradictionCodes.includes('reference_team_target_type_mismatch')
+  )));
+  assert.ok(!wrongTypeReport.payload.proposedCreates.some((item) => item.sourceLabel === wrongTypeRecord.sourceLabel));
+
+  const blockedParent = loadFixture();
+  blockedParent.records.find((record) => record.sourceKey === 'team-a')
+    .classificationEvidence.privacyRestrictedFields = ['contact'];
+  const blockedReport = dryRun(blockedParent).report;
+  const dependent = blockedReport.payload.records.find((record) => (
+    record.entityType === 'legacyRosterEntry' && record.referenceMappings.length > 0
+  ));
+  assert.equal(dependent.blocked, true);
+  assert.ok(dependent.classifications.includes('orphaned'));
+  assert.ok(!blockedReport.payload.proposedCreates.some((item) => item.sourceLabel === dependent.sourceLabel));
+});
+
+test('canonical destination paths use mapped container IDs and are unique', () => {
+  const report = dryRun(loadFixture()).report;
+  const seasonRecord = findRecord(report, 'season');
+  const seasonMapping = seasonRecord.proposedMappings.find((mapping) => mapping.targetEntityType === 'season');
+  assert.ok(seasonMapping.proposedPath.endsWith(`/seasons/${seasonMapping.proposedId}`));
+  const gameRecord = findRecord(report, 'legacyGame', (record) => !record.blocked);
+  const gameMapping = gameRecord.proposedMappings.find((mapping) => mapping.targetEntityType === 'game');
+  assert.ok(gameMapping.proposedPath.includes(`/seasons/${seasonMapping.proposedId}/games/${gameMapping.proposedId}`));
+  const evidence = findRecord(report, 'legacyGameStats').proposedMappings[0];
+  assert.ok(evidence.proposedPath.includes(`/games/${gameMapping.proposedId}/`));
+  const paths = report.payload.proposedCreates.map((item) => item.proposedPath);
+  assert.equal(new Set(paths).size, paths.length);
+});
+
+test('all duplicate occurrence evidence is deterministic and source-bound', () => {
+  const manifest = loadFixture();
+  const original = clone(manifest.records[0]);
+  const second = clone(original);
+  const third = clone(original);
+  second.data.variant = 'middle';
+  second.scope.seasonId = 'metadata-change';
+  third.data.variant = 'last';
+  manifest.records.push(second, third);
+  const reversed = clone(manifest);
+  reversed.records.reverse();
+  const first = dryRun(manifest);
+  const other = dryRun(reversed);
+  assert.equal(inventory.canonicalEncode(first.operatorInventory), inventory.canonicalEncode(other.operatorInventory));
+  const record = first.operatorInventory.payload.records.find((candidate) => candidate.sourceOccurrences === 3);
+  assert.equal(record.occurrenceEvidenceHashes.length, 3);
+  const issue = record.issues.find((candidate) => candidate.code === inventory.errorCodes.changedSourceHash);
+  assert.equal(issue.observedSourceFieldHashes.length, 3);
+
+  const tampered = clone(first.operatorInventory);
+  tampered.payload.records[0].fieldHash = '0'.repeat(64);
+  tampered.payloadSha256 = inventory.canonicalSha256(tampered.payload);
+  assert.throws(
+    () => inventory.buildDryRunReport(tampered),
+    (error) => error.code === inventory.errorCodes.nondeterminism,
+  );
+});
+
+test('sanitized metadata is hashed and native errors never echo source content', () => {
+  const manifest = loadFixture();
+  manifest.source.exportIdentifier = 'fixture-person@example.invalid';
+  manifest.records[0].sourceCollection = 'users/fixture-person@example.invalid/stats';
+  const encoded = inventory.canonicalEncode(dryRun(manifest).report);
+  assert.ok(!encoded.includes('fixture-person@example.invalid'));
+  const native = inventory.redactError(new SyntaxError('Unexpected token in {"8765550100":NaN}'));
+  assert.ok(!native.includes('8765550100'));
+  assert.match(native, /inspect the private operator context/);
+});
+
+test('private output rejects root, nested, and destination symlinks', () => {
+  const rootRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'hc-mi-root-link-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'hc-mi-outside-'));
+  fs.mkdirSync(path.join(rootRepo, '.local'));
+  fs.symlinkSync(outside, path.join(rootRepo, '.local/stat-migration'));
+  assert.throws(
+    () => inventory.ensurePrivateOutputDirectory(path.join(rootRepo, '.local/stat-migration/run'), rootRepo),
+    (error) => error.code === inventory.errorCodes.unsafePath,
+  );
+
+  const nestedRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'hc-mi-nested-link-'));
+  const allowed = inventory.ensurePrivateOutputDirectory(path.join(nestedRepo, '.local/stat-migration'), nestedRepo);
+  fs.symlinkSync(outside, path.join(allowed, 'linked'));
+  assert.throws(
+    () => inventory.ensurePrivateOutputDirectory(path.join(allowed, 'linked/run'), nestedRepo),
+    (error) => error.code === inventory.errorCodes.unsafePath,
+  );
+  const destination = path.join(allowed, 'report.json');
+  fs.symlinkSync(path.join(outside, 'report.json'), destination);
+  assert.throws(
+    () => inventory.writePrivateCanonicalJson(destination, {ok: true}),
+    (error) => error.code === inventory.errorCodes.unsafePath,
+  );
+});
+
+test('known temporal intervals must be canonical and ordered', () => {
+  const reversed = loadFixture();
+  const roster = reversed.records.find((record) => record.entityType === 'legacyRosterEntry');
+  roster.temporalEvidence = {
+    effectiveFrom: {state: 'known', value: '2026-12-31T00:00:00.000Z'},
+    effectiveTo: {state: 'known', value: '2026-01-01T00:00:00.000Z'},
+  };
+  assert.throws(
+    () => inventory.buildInventory(reversed),
+    (error) => error.code === inventory.errorCodes.contradictorySource,
+  );
+});
+
+test('Firebase embedded identity keys must be explicit stable ID fields', async () => {
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '../fixtures/stat-migration/firebase-provider-v1.example.json'),
+    'utf8',
+  ));
+  manifest.providerCollections[0].embeddedArrays[0].keyField = 'displayName';
+  const response = {
+    ok: true,
+    status: 200,
+    json: async () => ({documents: [{
+      name: 'projects/demo/databases/(default)/documents/associations/jba/teams/team-a',
+      fields: {roster: {arrayValue: {values: []}}},
+    }]}),
+  };
+  await assert.rejects(
+    () => firebaseAdapter.loadReadOnlyFirebaseManifest({
+      baseUrl: 'http://127.0.0.1:8080/v1/projects/demo/databases/(default)/documents',
+      fetchImpl: async () => response,
+      manifest,
+      pageSize: 1,
+    }),
+    (error) => error.code === inventory.errorCodes.malformedSource,
+  );
+});

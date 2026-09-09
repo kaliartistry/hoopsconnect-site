@@ -67,8 +67,10 @@ numbers, and resemblance are never identity keys.
 ## Optional Firebase read-only mode
 
 Firebase mode is optional and is not needed for ordinary fixture/export review.
-It uses only bounded Firestore REST `GET` pages ordered by `__name__`; the
-adapter has no Firestore write API. It requires all of the following:
+It uses only bounded Firestore REST `GET` pages ordered by `__name__`; requests
+time out after 30 seconds, responses are byte-bounded, collection count and
+total decoded records are capped, and the adapter has no Firestore write API.
+It requires all of the following:
 
 - explicit `--input`, `--project`, and `--association` values;
 - the existing target guard and exact production/non-production read opt-in;
@@ -84,8 +86,11 @@ reference fields, and any embedded-array stable-key policy before a live read.
 Embedded roster entries must bind their exact parent team through the explicit
 `parentRelation` setting; required game, team, and parent relationships fail
 closed when absent.
-An array index is retained as the exact source key when a trustworthy embedded
-key is unavailable; it is not treated as a person match.
+An embedded `keyField`, when configured, must be an explicit `id`, `*Id`, or
+`*Key` field. Display names, contact fields, jersey values, and other mutable
+attributes are rejected as identity inputs. An array index is retained as the
+exact source key when a trustworthy embedded key is unavailable; it is not
+treated as a person match.
 
 Example for the local emulator only:
 
@@ -116,7 +121,9 @@ mode `0600` where supported:
 | `run-metadata.json` | Mode, generated time, artifact hashes, and explanatory note | No; incidental runtime metadata |
 
 Raw source fields are never copied into either generated report. The private
-operator inventory retains full paths/keys but only hashes record fields.
+operator inventory retains full paths/keys but only hashes record fields. The
+sanitized report also hashes source collection, export, and project/export
+labels so those free-form metadata values cannot disclose identifiers.
 Console output is limited to counts, classifications, hashes, artifact paths,
 and the explicit no-write state. The tracked fixture contains synthetic values
 only. Never move real operator output into the repository.
@@ -132,16 +139,20 @@ The exact vocabulary is `evidenced`, `unverified`, `synthetic`, `orphaned`,
 - `synthetic` requires generator provenance matching an explicit versioned
   rule in the input manifest. Absence of evidence is never synthetic and never
   evidenced.
-- Orphans, contradictions, duplicate candidates, privacy restrictions, and
-  missing scope are blocked for operator review.
+- Orphans, contradictions, duplicate candidates, privacy restrictions, blocked
+  dependencies, incompatible reference types, and missing scope are blocked for
+  operator review.
 - Synthetic records receive stable quarantine mappings but produce no proposed
   creates and can never be auto-certified.
 - Participant-line names are evidence only. No player/person link is proposed
   from a name or other fuzzy attribute.
 
 Missing historical `effectiveFrom` and `effectiveTo` facts remain explicit
-`unknown(not_recorded)`. Missing season/division/phase/game scope never means
+`unknown(not_recorded)`. Known values must be canonical UTC timestamps with a
+non-reversed interval. Missing season/division/phase/game scope never means
 global scope and produces `HC_MI_MISSING_SCOPE` with no proposed target path.
+Proposed paths use mapped season, division, and game IDs rather than legacy
+scope IDs, and duplicate destination paths fail the dry run.
 
 ## Safe reruns and reconciliation
 
@@ -160,8 +171,9 @@ command with `--previous-report`. The same source identity with a changed field
 hash is then blocked as `HC_MI_CHANGED_SOURCE_HASH`, with expected and observed
 hashes. Its deterministic proposed IDs do not silently change.
 
-The verifier recomputes payload hashes, rebuilds the report from the operator
-inventory, checks the source snapshot binding, and confirms that write and
+The verifier recomputes payload and semantic source-snapshot hashes, including
+all duplicate occurrence evidence and synthetic-rule versions; it rebuilds the
+report from the operator inventory, checks the source snapshot binding, and confirms that write and
 auto-certification counts are zero. Reports are disposable and recreatable;
 the source remains untouched.
 

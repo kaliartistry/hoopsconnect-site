@@ -294,12 +294,16 @@ const targetTypes = Object.freeze({
   leaderboardAggregate: ['legacyAggregateEvidence'],
 });
 
-const requiredRelations = Object.freeze({
-  legacyRosterEntry: ['team'],
-  legacyGame: ['awayTeam', 'homeTeam'],
-  legacyGameStats: ['game'],
-  legacyGamePlayerLine: ['game', 'team'],
+const requiredRelationTargets = Object.freeze({
+  legacyRosterEntry: Object.freeze({team: 'legacyTeam'}),
+  legacyGame: Object.freeze({awayTeam: 'legacyTeam', homeTeam: 'legacyTeam'}),
+  legacyGameStats: Object.freeze({game: 'legacyGame'}),
+  legacyGamePlayerLine: Object.freeze({game: 'legacyGame', team: 'legacyTeam'}),
 });
+
+const divisionScopedEntityTypes = new Set([
+  'legacyTeam', 'legacyRosterEntry', 'legacyGame', 'legacyGameStats', 'legacyGamePlayerLine',
+]);
 
 function validateReference(reference, associationId) {
   requirePlainRecord(reference, 'reference');
@@ -474,7 +478,7 @@ function validateManifest(manifest) {
       sourceSchemaVersion: raw.sourceSchemaVersion === null
         ? null
         : requireString(raw.sourceSchemaVersion, 'record.sourceSchemaVersion', {max: 128}),
-      temporalEvidence: normalizeTemporalEvidence(raw.temporalEvidence),
+      temporalEvidence: validateTemporalInterval(normalizeTemporalEvidence(raw.temporalEvidence)),
     };
   });
   return {records, source: normalizedSource, syntheticRules};
@@ -494,10 +498,18 @@ function normalizeImportFact(raw, defaultReason) {
   }
   requirePlainRecord(raw, 'temporal fact');
   if (raw.state === 'known') {
+    const value = requireString(raw.value, 'temporal fact value', {max: 64});
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) {
+      throw new MigrationInventoryError(
+        errorCodes.malformedSource,
+        'Known temporal facts must use canonical ISO-8601 UTC timestamps.',
+      );
+    }
     return {
       reasonCode: null,
       state: 'known',
-      value: requireString(raw.value, 'temporal fact value', {max: 64}),
+      value,
     };
   }
   if (raw.state === 'unknown') {
@@ -523,6 +535,19 @@ function normalizeImportFact(raw, defaultReason) {
   throw new MigrationInventoryError(errorCodes.malformedSource, 'Temporal fact state is invalid.');
 }
 
+function validateTemporalInterval(temporalEvidence) {
+  const from = temporalEvidence.effectiveFrom;
+  const to = temporalEvidence.effectiveTo;
+  if (from.state === 'known' && to.state === 'known'
+      && Date.parse(from.value) > Date.parse(to.value)) {
+    throw new MigrationInventoryError(
+      errorCodes.contradictorySource,
+      'Known effectiveFrom must not be after effectiveTo.',
+    );
+  }
+  return temporalEvidence;
+}
+
 function mappingId(associationId, sourceEntityType, targetEntityType, identity) {
   const digest = canonicalSha256({
     associationId,
@@ -536,27 +561,46 @@ function mappingId(associationId, sourceEntityType, targetEntityType, identity) 
   return `${prefix}_${digest.slice(0, 48)}`;
 }
 
-function proposedPath(targetType, id, scope, mappingIds = {}) {
+function proposedPath(targetType, id, scope, mappingIds = {}, canonicalScope = {}) {
   const associationRoot = `associations/${scope.associationId}`;
-  const seasonRoot = `${associationRoot}/competitions/${scope.competitionId}/seasons/${scope.seasonId}`;
-  const gameRoot = `${seasonRoot}/games/${scope.gameId}`;
+  const seasonId = canonicalScope.seasonId || (targetType === 'season' ? id : null);
+  const gameId = canonicalScope.gameId || (targetType === 'game' ? id : null);
+  const seasonRoot = seasonId
+    ? `${associationRoot}/competitions/${scope.competitionId}/seasons/${seasonId}`
+    : null;
+  const gameRoot = seasonRoot && gameId ? `${seasonRoot}/games/${gameId}` : null;
   switch (targetType) {
   case 'season': return seasonRoot;
-  case 'division': return `${seasonRoot}/divisions/${id}`;
+  case 'division': return seasonRoot ? `${seasonRoot}/divisions/${id}` : null;
   case 'teamIdentity': return `${associationRoot}/teamIdentities/${id}`;
   case 'person': return `${associationRoot}/persons/${id}`;
   case 'player': return `${associationRoot}/players/${id}`;
-  case 'teamEntry': return `${seasonRoot}/teamEntries/${id}`;
-  case 'rosterMembership': return `${seasonRoot}/rosterMemberships/${id}`;
-  case 'rosterMembershipVersion': return `${seasonRoot}/rosterMemberships/${mappingIds.rosterMembership}/versions/${id}`;
+  case 'teamEntry': return seasonRoot ? `${seasonRoot}/teamEntries/${id}` : null;
+  case 'rosterMembership': return seasonRoot ? `${seasonRoot}/rosterMemberships/${id}` : null;
+  case 'rosterMembershipVersion': return seasonRoot
+    ? `${seasonRoot}/rosterMemberships/${mappingIds.rosterMembership}/versions/${id}`
+    : null;
   case 'game': return gameRoot;
-  case 'legacyStatSourceEvidence': return `${gameRoot}/migrationStatEvidence/${id}`;
-  case 'statRevisionEvidence': return `${gameRoot}/migrationRevisionEvidence/${id}`;
-  case 'gameParticipantEvidence': return `${gameRoot}/migrationParticipantEvidence/${id}`;
-  case 'rosterSnapshotParticipant': return `${gameRoot}/migrationSnapshotParticipants/${id}`;
-  case 'legacyAggregateEvidence': return `${seasonRoot}/migrationAggregateEvidence/${id}`;
+  case 'legacyStatSourceEvidence': return gameRoot ? `${gameRoot}/migrationStatEvidence/${id}` : null;
+  case 'statRevisionEvidence': return gameRoot ? `${gameRoot}/migrationRevisionEvidence/${id}` : null;
+  case 'gameParticipantEvidence': return gameRoot ? `${gameRoot}/migrationParticipantEvidence/${id}` : null;
+  case 'rosterSnapshotParticipant': return gameRoot ? `${gameRoot}/migrationSnapshotParticipants/${id}` : null;
+  case 'legacyAggregateEvidence': return seasonRoot ? `${seasonRoot}/migrationAggregateEvidence/${id}` : null;
   default: throw new MigrationInventoryError(errorCodes.malformedSource, 'Unsupported target entity type.');
   }
+}
+
+function scopeKey(scope, fields) {
+  if (fields.some((field) => scope[field] === null)) return null;
+  return canonicalEncode(Object.fromEntries(fields.map((field) => [field, scope[field]])));
+}
+
+function seasonScopeKey(scope) {
+  return scopeKey(scope, ['associationId', 'competitionId', 'seasonId']);
+}
+
+function divisionScopeKey(scope) {
+  return scopeKey(scope, ['associationId', 'competitionId', 'seasonId', 'divisionId']);
 }
 
 function scopeMissing(record) {
@@ -574,11 +618,16 @@ function hasSyntheticEvidence(record, syntheticRules) {
 
 function relationshipContradictions(record, recordsByIdentity) {
   const contradictions = [...record.classificationEvidence.contradictions];
-  const requiredTargets = record.references
-    .filter((reference) => reference.required)
-    .map((reference) => recordsByIdentity.get(`${reference.targetSourcePath}#${reference.targetSourceKey}`))
-    .filter(Boolean);
-  for (const target of requiredTargets) {
+  for (const reference of record.references.filter((candidate) => candidate.required)) {
+    const target = recordsByIdentity.get(`${reference.targetSourcePath}#${reference.targetSourceKey}`);
+    if (!target) continue;
+    const expectedType = (requiredRelationTargets[record.entityType] || {})[reference.relation];
+    if (expectedType && target.entityType !== expectedType) {
+      contradictions.push(`reference_${reference.relation}_target_type_mismatch`);
+    }
+    if (reference.targetEntityType !== null && reference.targetEntityType !== target.entityType) {
+      contradictions.push(`reference_${reference.relation}_declared_type_mismatch`);
+    }
     for (const field of ['associationId', 'competitionId', 'seasonId', 'divisionId', 'phaseId', 'gameId']) {
       if (record.scope[field] !== null && target.scope[field] !== null
           && record.scope[field] !== target.scope[field]) {
@@ -597,6 +646,36 @@ function relationshipContradictions(record, recordsByIdentity) {
   return [...new Set(contradictions)].sort();
 }
 
+function sourceSnapshotForPayload(payload) {
+  return canonicalSha256({
+    canonicalEncodingVersion: payload.canonicalEncodingVersion,
+    classificationRulesVersion: payload.classificationRulesVersion,
+    inventorySchemaVersion: payload.inventorySchemaVersion,
+    mapperVersion: payload.mapperVersion,
+    records: payload.records.map((record) => ({
+      classificationEvidenceHash: record.provenanceEvidenceHash,
+      entityType: record.entityType,
+      fieldHash: record.fieldHash,
+      occurrenceEvidenceHashes: record.occurrenceEvidenceHashes,
+      provenance: record.provenance,
+      referenceEdges: record.referenceEdges.map((edge) => ({
+        relation: edge.relation,
+        required: edge.required,
+        targetEntityType: edge.targetEntityType,
+        targetSourceIdentity: edge.targetSourceIdentity,
+      })),
+      scope: record.scope,
+      sourceCollection: record.sourceCollection,
+      sourceIdentity: record.sourceIdentity,
+      sourceSchemaVersion: record.sourceSchemaVersion,
+      sourceOccurrences: record.sourceOccurrences,
+      temporalEvidence: record.temporalEvidence,
+    })),
+    source: payload.source,
+    syntheticRules: payload.syntheticRules,
+  });
+}
+
 function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = null} = {}) {
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
     throw new MigrationInventoryError(
@@ -608,26 +687,38 @@ function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = nu
   const sorted = [...normalized.records].sort((a, b) => {
     const identityOrder = asciiCompare(sourceIdentity(a), sourceIdentity(b));
     if (identityOrder !== 0) return identityOrder;
-    return asciiCompare(canonicalSha256(a.data), canonicalSha256(b.data));
+    return asciiCompare(canonicalEncode(a), canonicalEncode(b));
   });
   const recordsByIdentity = new Map();
   const changedHashIdentities = new Set();
   const changedHashDetails = new Map();
   const sourceOccurrences = new Map();
+  const occurrenceEvidenceHashes = new Map();
+  const fieldHashesByIdentity = new Map();
   for (const record of sorted) {
     const identity = sourceIdentity(record);
     sourceOccurrences.set(identity, (sourceOccurrences.get(identity) || 0) + 1);
-    const existing = recordsByIdentity.get(identity);
-    if (existing && canonicalSha256(existing.data) !== canonicalSha256(record.data)) {
+    if (!recordsByIdentity.has(identity)) recordsByIdentity.set(identity, record);
+    const occurrenceHashes = occurrenceEvidenceHashes.get(identity) || [];
+    occurrenceHashes.push(canonicalSha256(record));
+    occurrenceEvidenceHashes.set(identity, occurrenceHashes);
+    const fieldHashes = fieldHashesByIdentity.get(identity) || [];
+    fieldHashes.push(canonicalSha256(record.data));
+    fieldHashesByIdentity.set(identity, fieldHashes);
+  }
+  for (const [identity] of recordsByIdentity) {
+    const fieldHashes = [...new Set(fieldHashesByIdentity.get(identity))].sort();
+    if (fieldHashes.length > 1) {
       changedHashIdentities.add(identity);
-      const hashes = [canonicalSha256(existing.data), canonicalSha256(record.data)].sort();
       changedHashDetails.set(identity, {
-        expectedSourceFieldHash: hashes[0],
-        observedSourceFieldHashes: [...new Set(hashes)],
+        expectedSourceFieldHash: fieldHashes[0],
+        observedSourceFieldHashes: fieldHashes,
       });
-    } else if (!existing) {
-      recordsByIdentity.set(identity, record);
     }
+    occurrenceEvidenceHashes.set(
+      identity,
+      [...new Set(occurrenceEvidenceHashes.get(identity))].sort(),
+    );
   }
   if (previousReport) verifyEnvelope(previousReport, REPORT_SCHEMA_VERSION);
   const priorHashes = previousReport ? priorSourceHashes(previousReport) : new Map();
@@ -635,20 +726,50 @@ function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = nu
     const priorHash = priorHashes.get(canonicalSha256(identity));
     if (priorHash && priorHash !== canonicalSha256(record.data)) {
       changedHashIdentities.add(identity);
+      const observed = changedHashDetails.get(identity)?.observedSourceFieldHashes
+        || [canonicalSha256(record.data)];
       changedHashDetails.set(identity, {
         expectedSourceFieldHash: priorHash,
-        observedSourceFieldHashes: [canonicalSha256(record.data)],
+        observedSourceFieldHashes: [...new Set(observed)].sort(),
       });
     }
+  }
+
+  const seasonIdentitiesByScope = new Map();
+  const divisionIdentitiesByScope = new Map();
+  for (const record of recordsByIdentity.values()) {
+    const targetMap = record.entityType === 'season'
+      ? seasonIdentitiesByScope
+      : record.entityType === 'division' ? divisionIdentitiesByScope : null;
+    if (!targetMap) continue;
+    const key = record.entityType === 'season' ? seasonScopeKey(record.scope) : divisionScopeKey(record.scope);
+    if (!key) continue;
+    const values = targetMap.get(key) || [];
+    values.push(sourceIdentity(record));
+    targetMap.set(key, values.sort());
   }
 
   const inventoryRecords = [];
   for (const record of recordsByIdentity.values()) {
     const identity = sourceIdentity(record);
     const missingScope = scopeMissing(record);
-    const missingRelations = (requiredRelations[record.entityType] || []).filter((relation) => (
+    const missingRelations = Object.keys(requiredRelationTargets[record.entityType] || {}).filter((relation) => (
       !record.references.some((reference) => reference.required && reference.relation === relation)
     ));
+    const seasonCandidates = record.entityType === 'season' || record.scope.seasonId === null
+      ? []
+      : seasonIdentitiesByScope.get(seasonScopeKey(record.scope)) || [];
+    const divisionCandidates = !divisionScopedEntityTypes.has(record.entityType)
+      || record.scope.divisionId === null
+      ? []
+      : divisionIdentitiesByScope.get(divisionScopeKey(record.scope)) || [];
+    if (record.entityType !== 'season' && record.scope.seasonId !== null && seasonCandidates.length !== 1) {
+      missingRelations.push('seasonScope');
+    }
+    if (divisionScopedEntityTypes.has(record.entityType)
+        && record.scope.divisionId !== null && divisionCandidates.length !== 1) {
+      missingRelations.push('divisionScope');
+    }
     const orphaned = record.references.filter((reference) => (
       reference.required
         && !recordsByIdentity.has(`${reference.targetSourcePath}#${reference.targetSourceKey}`)
@@ -711,6 +832,7 @@ function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = nu
         classificationEvidence: record.classificationEvidence,
         provenance: record.provenance,
       }),
+      occurrenceEvidenceHashes: occurrenceEvidenceHashes.get(identity),
       referenceEdges: record.references.map((reference) => ({
         ...reference,
         targetSourceIdentity: `${reference.targetSourcePath}#${reference.targetSourceKey}`,
@@ -724,9 +846,40 @@ function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = nu
       sourceSchemaVersion: record.sourceSchemaVersion,
       sourceOccurrences: sourceOccurrences.get(identity),
       temporalEvidence: record.temporalEvidence,
+      containerSourceIdentities: [...seasonCandidates, ...divisionCandidates].sort(),
     });
   }
   inventoryRecords.sort((a, b) => asciiCompare(a.sourceIdentity, b.sourceIdentity));
+  const inventoryByIdentity = new Map(inventoryRecords.map((record) => [record.sourceIdentity, record]));
+  let dependencyChanged = true;
+  while (dependencyChanged) {
+    dependencyChanged = false;
+    for (const record of inventoryRecords) {
+      const requiredIdentities = [
+        ...record.containerSourceIdentities,
+        ...record.referenceEdges.filter((edge) => edge.required).map((edge) => edge.targetSourceIdentity),
+      ];
+      const blockedRelations = record.referenceEdges.filter((edge) => (
+        edge.required && inventoryByIdentity.get(edge.targetSourceIdentity)?.blocked
+      )).map((edge) => edge.relation);
+      if (record.containerSourceIdentities.some((identity) => inventoryByIdentity.get(identity)?.blocked)) {
+        blockedRelations.push('containerScope');
+      }
+      if (!record.blocked && requiredIdentities.some((identity) => inventoryByIdentity.get(identity)?.blocked)) {
+        record.blocked = true;
+        if (!record.classifications.includes('orphaned')) {
+          record.classifications = classifications.filter((value) => (
+            record.classifications.includes(value) || value === 'orphaned'
+          ));
+        }
+        record.issues.push({
+          code: errorCodes.orphanedReference,
+          relations: [...new Set(blockedRelations)].sort(),
+        });
+        dependencyChanged = true;
+      }
+    }
+  }
   const checkpoints = [];
   for (let index = 0; index < inventoryRecords.length; index += pageSize) {
     const page = inventoryRecords.slice(index, index + pageSize);
@@ -741,37 +894,19 @@ function buildInventory(manifest, {pageSize = MAX_PAGE_SIZE, previousReport = nu
       }))),
     });
   }
-  const sourceSnapshotSha256 = canonicalSha256({
-    canonicalEncodingVersion: CANONICAL_ENCODING_VERSION,
-    inventorySchemaVersion: INVENTORY_SCHEMA_VERSION,
-    records: inventoryRecords.map((record) => ({
-      classificationEvidenceHash: record.provenanceEvidenceHash,
-      entityType: record.entityType,
-      fieldHash: record.fieldHash,
-      provenance: record.provenance,
-      referenceEdges: record.referenceEdges.map((edge) => ({
-        relation: edge.relation,
-        required: edge.required,
-        targetEntityType: edge.targetEntityType,
-        targetSourceIdentity: edge.targetSourceIdentity,
-      })),
-      scope: record.scope,
-      sourceCollection: record.sourceCollection,
-      sourceIdentity: record.sourceIdentity,
-      sourceSchemaVersion: record.sourceSchemaVersion,
-      sourceOccurrences: record.sourceOccurrences,
-      temporalEvidence: record.temporalEvidence,
-    })),
-    source: normalized.source,
-  });
-  const payload = {
+  const snapshotPayload = {
     canonicalEncodingVersion: CANONICAL_ENCODING_VERSION,
     classificationRulesVersion: CLASSIFICATION_RULES_VERSION,
     inventorySchemaVersion: INVENTORY_SCHEMA_VERSION,
     mapperVersion: MAPPER_VERSION,
-    pagination: {checkpoints, maximumPageSize: MAX_PAGE_SIZE, pageSize},
     records: inventoryRecords,
     source: normalized.source,
+    syntheticRules: normalized.syntheticRules,
+  };
+  const sourceSnapshotSha256 = sourceSnapshotForPayload(snapshotPayload);
+  const payload = {
+    ...snapshotPayload,
+    pagination: {checkpoints, maximumPageSize: MAX_PAGE_SIZE, pageSize},
     sourceSnapshotSha256,
   };
   return {payload, payloadSha256: canonicalSha256(payload)};
@@ -792,7 +927,14 @@ function priorSourceHashes(previousReport) {
   return result;
 }
 
-function targetProposalFields(record, targetEntityType, proposedId, mappingIds, referenceMappings) {
+function targetProposalFields(
+  record,
+  targetEntityType,
+  proposedId,
+  mappingIds,
+  referenceMappings,
+  canonicalScope,
+) {
   const base = {
     associationId: record.scope.associationId,
     dataSchemaVersion: 2,
@@ -808,10 +950,13 @@ function targetProposalFields(record, targetEntityType, proposedId, mappingIds, 
     'rosterSnapshotParticipant', 'legacyAggregateEvidence', 'season', 'division'].includes(targetEntityType)) {
     Object.assign(base, {
       competitionId: record.scope.competitionId,
-      seasonId: record.scope.seasonId,
+      seasonId: canonicalScope.seasonId,
     });
   }
-  if (targetEntityType === 'teamEntry') base.teamId = mappingIds.teamIdentity;
+  if (targetEntityType === 'teamEntry') {
+    base.divisionId = canonicalScope.divisionId;
+    base.teamId = mappingIds.teamIdentity;
+  }
   if (targetEntityType === 'player') base.personId = mappingIds.person;
   if (targetEntityType === 'rosterMembership' || targetEntityType === 'rosterMembershipVersion') {
     Object.assign(base, {
@@ -824,8 +969,8 @@ function targetProposalFields(record, targetEntityType, proposedId, mappingIds, 
   if (['game', 'legacyStatSourceEvidence', 'statRevisionEvidence',
     'gameParticipantEvidence', 'rosterSnapshotParticipant'].includes(targetEntityType)) {
     Object.assign(base, {
-      divisionId: record.scope.divisionId,
-      gameId: record.scope.gameId,
+      divisionId: canonicalScope.divisionId,
+      gameId: canonicalScope.gameId,
       phaseId: record.scope.phaseId,
     });
   }
@@ -839,9 +984,24 @@ function buildDryRunReport(inventoryEnvelope) {
   const proposedCreates = [];
   const rollbackSourceMappings = [];
   const seenProposedIds = new Set();
+  const seenProposedPaths = new Set();
   const inventoryByIdentity = new Map(
     inventory.records.map((record) => [record.sourceIdentity, record]),
   );
+  const canonicalSeasons = new Map();
+  const canonicalDivisions = new Map();
+  for (const record of inventory.records) {
+    if (record.entityType === 'season') {
+      canonicalSeasons.set(seasonScopeKey(record.scope), mappingId(
+        inventory.source.associationId, record.entityType, 'season', record.sourceIdentity,
+      ));
+    }
+    if (record.entityType === 'division') {
+      canonicalDivisions.set(divisionScopeKey(record.scope), mappingId(
+        inventory.source.associationId, record.entityType, 'division', record.sourceIdentity,
+      ));
+    }
+  }
   for (const record of inventory.records) {
     const sourceLabel = sourceLabelFor(record.sourceIdentity);
     const mappingIds = {};
@@ -875,6 +1035,17 @@ function buildDryRunReport(inventoryEnvelope) {
         targetEntityType: preferredTargetType,
       }];
     }).sort((a, b) => asciiCompare(canonicalEncode(a), canonicalEncode(b)));
+    const canonicalScope = {
+      divisionId: record.entityType === 'division'
+        ? mappingIds.division
+        : canonicalDivisions.get(divisionScopeKey(record.scope)) || null,
+      gameId: record.entityType === 'legacyGame'
+        ? mappingIds.game
+        : referenceMappings.find((mapping) => mapping.relation === 'game')?.proposedId || null,
+      seasonId: record.entityType === 'season'
+        ? mappingIds.season
+        : canonicalSeasons.get(seasonScopeKey(record.scope)) || null,
+    };
     const hasMissingScope = record.issues.some((issue) => issue.code === errorCodes.missingScope);
     const proposals = targetTypes[record.entityType].map((targetEntityType) => {
       const proposedId = mappingIds[targetEntityType];
@@ -891,13 +1062,22 @@ function buildDryRunReport(inventoryEnvelope) {
         proposedId,
         mappingIds,
         referenceMappings,
+        canonicalScope,
       );
+      const destination = hasMissingScope
+        ? null
+        : proposedPath(targetEntityType, proposedId, record.scope, mappingIds, canonicalScope);
+      if (destination && seenProposedPaths.has(destination)) {
+        throw new MigrationInventoryError(
+          errorCodes.nondeterminism,
+          'Deterministic mapper produced a destination path collision.',
+        );
+      }
+      if (destination) seenProposedPaths.add(destination);
       const proposal = {
         proposedFieldHash: canonicalSha256(fields),
         proposedId,
-        proposedPath: hasMissingScope
-          ? null
-          : proposedPath(targetEntityType, proposedId, record.scope, mappingIds),
+        proposedPath: destination,
         targetEntityType,
       };
       if (!record.blocked && !record.classifications.includes('synthetic')) {
@@ -914,7 +1094,7 @@ function buildDryRunReport(inventoryEnvelope) {
       proposedMappings: proposals,
       provenanceEvidenceHash: record.provenanceEvidenceHash,
       referenceMappings,
-      sourceCollection: record.sourceCollection,
+      sourceCollectionHash: canonicalSha256(record.sourceCollection),
       sourceIdentityHash: record.sourceIdentityHash,
       sourceLabel,
       sourceSchemaVersion: record.sourceSchemaVersion,
@@ -985,7 +1165,12 @@ function buildDryRunReport(inventoryEnvelope) {
     records: sanitizedRecords,
     reportSchemaVersion: REPORT_SCHEMA_VERSION,
     rollbackSourceMappings,
-    source: inventory.source,
+    source: {
+      adapterCheckpointSha256: inventory.source.adapterCheckpointSha256,
+      associationId: inventory.source.associationId,
+      exportIdentifierHash: canonicalSha256(inventory.source.exportIdentifier),
+      projectOrExportIdHash: canonicalSha256(inventory.source.projectOrExportId),
+    },
     sourceSnapshotSha256: inventory.sourceSnapshotSha256,
     syntheticExclusions: recordsFor('synthetic'),
     unresolvedJoins,
@@ -1018,6 +1203,13 @@ function verifyEnvelope(envelope, expectedSchema) {
     : envelope.payload.inventorySchemaVersion;
   if (schema !== expectedSchema) {
     throw new MigrationInventoryError(errorCodes.unsupportedSchemaVersion, 'Envelope schema is unsupported.');
+  }
+  if (expectedSchema === INVENTORY_SCHEMA_VERSION
+      && sourceSnapshotForPayload(envelope.payload) !== envelope.payload.sourceSnapshotSha256) {
+    throw new MigrationInventoryError(
+      errorCodes.nondeterminism,
+      'Inventory source snapshot does not reconcile with its semantic evidence.',
+    );
   }
   return actual;
 }
@@ -1053,7 +1245,10 @@ function verifyReport(reportEnvelope, {inventoryEnvelope = null, compareEnvelope
 }
 
 function ensurePrivateOutputDirectory(outputDir, repoRoot) {
-  const allowedRoot = path.resolve(repoRoot, '.local/stat-migration');
+  const resolvedRepo = path.resolve(repoRoot);
+  const realRepo = fs.realpathSync(resolvedRepo);
+  const localRoot = path.join(resolvedRepo, '.local');
+  const allowedRoot = path.join(localRoot, 'stat-migration');
   const resolved = path.resolve(outputDir);
   if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) {
     throw new MigrationInventoryError(
@@ -1061,9 +1256,31 @@ function ensurePrivateOutputDirectory(outputDir, repoRoot) {
       'Output directory must stay under .local/stat-migration.',
     );
   }
-  fs.mkdirSync(allowedRoot, {recursive: true, mode: 0o700});
+  for (const directory of [localRoot, allowedRoot]) {
+    if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) {
+      throw new MigrationInventoryError(errorCodes.unsafePath, 'Private output roots cannot be symbolic links.');
+    }
+    if (!fs.existsSync(directory)) fs.mkdirSync(directory, {mode: 0o700});
+    if (!fs.lstatSync(directory).isDirectory()) {
+      throw new MigrationInventoryError(errorCodes.unsafePath, 'Private output root is not a directory.');
+    }
+  }
+  if (fs.realpathSync(allowedRoot) !== path.join(realRepo, '.local', 'stat-migration')) {
+    throw new MigrationInventoryError(errorCodes.unsafePath, 'Private output root resolves outside the repository.');
+  }
   fs.chmodSync(allowedRoot, 0o700);
-  fs.mkdirSync(resolved, {recursive: true, mode: 0o700});
+  const relative = path.relative(allowedRoot, resolved);
+  let cursor = allowedRoot;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    if (fs.existsSync(cursor) && fs.lstatSync(cursor).isSymbolicLink()) {
+      throw new MigrationInventoryError(errorCodes.unsafePath, 'Private output paths cannot contain symbolic links.');
+    }
+    if (!fs.existsSync(cursor)) fs.mkdirSync(cursor, {mode: 0o700});
+    if (!fs.lstatSync(cursor).isDirectory()) {
+      throw new MigrationInventoryError(errorCodes.unsafePath, 'Private output path is not a directory.');
+    }
+  }
   const realAllowed = fs.realpathSync(allowedRoot);
   const realResolved = fs.realpathSync(resolved);
   if (realResolved !== realAllowed && !realResolved.startsWith(`${realAllowed}${path.sep}`)) {
@@ -1074,6 +1291,17 @@ function ensurePrivateOutputDirectory(outputDir, repoRoot) {
 }
 
 function writePrivateCanonicalJson(filePath, value) {
+  let target = null;
+  try {
+    target = fs.lstatSync(filePath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (target) {
+    if (target.isSymbolicLink() || !target.isFile()) {
+      throw new MigrationInventoryError(errorCodes.unsafePath, 'Private output file must be a regular file.');
+    }
+  }
   const temporaryPath = `${filePath}.tmp`;
   try {
     fs.unlinkSync(temporaryPath);
@@ -1094,10 +1322,10 @@ function redactError(error) {
   const code = error && error.code && Object.values(errorCodes).includes(error.code)
     ? error.code
     : errorCodes.malformedSource;
-  return `${code}: ${String(error && error.message ? error.message : 'Inventory failed.')}`
-    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[redacted]')
-    .replace(/((?:phone|email|contact|guardian)\s*[=:]\s*)\S+/gi, '$1[redacted]')
-    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+  if (!(error instanceof MigrationInventoryError) || error.code !== code) {
+    return `${code}: Inventory failed safely; inspect the private operator context.`;
+  }
+  return `${code}: ${error.message}`;
 }
 
 module.exports = {
