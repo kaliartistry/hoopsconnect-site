@@ -64,14 +64,17 @@ fence-before-Auth-mutation remains mandatory.
 ## Dormant client gate
 
 The pure client reducer permits protected listeners, capabilities, and FCM
-registration only in `ready`. Each establishment is keyed by a gate-issued,
-strictly increasing session-attempt epoch, an attempt ID, and exact project,
-nullable tenant, UID, `G`, and `E`. The evaluator-produced binding carries both
-the exact attempt ID and epoch, so an event cannot pair a new attempt with an
-old binding even when every other identity field is unchanged. The gate retains
-the attempt-epoch high-water mark through refresh, sign-out, deleting, and
-deleted states; equal or lower attempt epochs cannot be observed or switched
-back in. Refresh advances the epoch before new proof can restore readiness.
+registration only in `ready`. Auth observation, account switch, and refresh are
+atomic gate methods: each returns the already-advanced gate together with its
+new attempt, and no public reducer event can install a pre-issued attempt later.
+Each establishment is keyed by a strictly increasing session-attempt epoch, a
+per-issuance opaque in-memory nonce, an attempt ID, and exact project, nullable
+tenant, UID, `G`, and `E`. The evaluator-produced binding carries the exact
+attempt ID, epoch, and nonce, so an event cannot pair a new attempt with an old
+binding even when every serialized identity field is unchanged. The gate
+retains the attempt-epoch high-water mark through refresh, sign-out, deleting,
+and deleted states. Refresh returns the already-advanced gate before the new
+attempt is available for evaluation.
 Old asynchronous completions, including same-UID/new-generation,
 same-identity retry, and retired-attempt resurrection races, cannot affect the
 current attempt.

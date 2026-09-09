@@ -22,6 +22,7 @@ void main() {
     final material = <String, Object?>{
       'sessionAttemptIdV2': fixture['sessionAttemptIdV2'],
       'sessionAttemptEpochV2': fixture['sessionAttemptEpochV2'],
+      'sessionAttemptNonceV2': Object(),
       'expectedScope': clone(fixture['scope']),
       'tokenProof': clone(fixture['tokenProof']),
       'lifecycle': clone(fixture['lifecycle']),
@@ -49,6 +50,7 @@ void main() {
         ? {
             'sessionAttemptIdV2': material['sessionAttemptIdV2'],
             'sessionAttemptEpochV2': material['sessionAttemptEpochV2'],
+            'sessionAttemptNonceV2': material['sessionAttemptNonceV2'],
             'expectedScope': material['expectedScope'],
             'tokenProof': material['tokenProof'],
             'projection': material['projection'],
@@ -57,6 +59,7 @@ void main() {
         : {
             'sessionAttemptIdV2': material['sessionAttemptIdV2'],
             'sessionAttemptEpochV2': material['sessionAttemptEpochV2'],
+            'sessionAttemptNonceV2': material['sessionAttemptNonceV2'],
             'expectedScope': material['expectedScope'],
             'tokenProof': material['tokenProof'],
             'lifecycle': material['lifecycle'],
@@ -97,6 +100,7 @@ void main() {
       final decision = evaluateAccountAuthorizationV2(
         sessionAttemptIdV2: input['sessionAttemptIdV2']! as String,
         sessionAttemptEpochV2: input['sessionAttemptEpochV2'],
+        sessionAttemptNonceV2: input['sessionAttemptNonceV2']!,
         expectedScope: input['expectedScope'],
         tokenProof: input['tokenProof'],
         lifecycle: input['lifecycle'],
@@ -125,6 +129,7 @@ void main() {
       final decision = evaluateStorageAuthorizationV2(
         sessionAttemptIdV2: input['sessionAttemptIdV2']! as String,
         sessionAttemptEpochV2: input['sessionAttemptEpochV2'],
+        sessionAttemptNonceV2: input['sessionAttemptNonceV2']!,
         expectedScope: input['expectedScope'],
         tokenProof: input['tokenProof'],
         projection: input['projection'],
@@ -238,6 +243,7 @@ void main() {
     final decision = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: input['sessionAttemptIdV2']! as String,
       sessionAttemptEpochV2: input['sessionAttemptEpochV2'],
+      sessionAttemptNonceV2: input['sessionAttemptNonceV2']!,
       expectedScope: input['expectedScope'],
       tokenProof: input['tokenProof'],
       lifecycle: input['lifecycle'],
@@ -257,9 +263,11 @@ void main() {
         (fixture['accountAuthorizationVectors'] as List).first as Map,
       ),
     );
+    final nonce = Object();
     final decision = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'attempt-exact-a',
       sessionAttemptEpochV2: 17,
+      sessionAttemptNonceV2: nonce,
       expectedScope: input['expectedScope'],
       tokenProof: input['tokenProof'],
       lifecycle: input['lifecycle'],
@@ -269,11 +277,13 @@ void main() {
     expect(decision.authorized, isTrue);
     expect(decision.binding!.sessionAttemptIdV2, 'attempt-exact-a');
     expect(decision.binding!.sessionAttemptEpochV2, 17);
+    expect(identical(decision.binding!.sessionAttemptNonceV2, nonce), isTrue);
 
     for (final attemptId in ['', 'bad\u0000attempt', 'x' * 129]) {
       final denied = evaluateAccountAuthorizationV2(
         sessionAttemptIdV2: attemptId,
         sessionAttemptEpochV2: 17,
+        sessionAttemptNonceV2: nonce,
         expectedScope: input['expectedScope'],
         tokenProof: input['tokenProof'],
         lifecycle: input['lifecycle'],
@@ -288,6 +298,7 @@ void main() {
       final denied = evaluateAccountAuthorizationV2(
         sessionAttemptIdV2: 'attempt-exact-a',
         sessionAttemptEpochV2: attemptEpoch,
+        sessionAttemptNonceV2: nonce,
         expectedScope: input['expectedScope'],
         tokenProof: input['tokenProof'],
         lifecycle: input['lifecycle'],

@@ -23,6 +23,7 @@ function applyVector(vector, includeProjection = false) {
   const material = {
     sessionAttemptIdV2: fixture.sessionAttemptIdV2,
     sessionAttemptEpochV2: fixture.sessionAttemptEpochV2,
+    sessionAttemptNonceV2: Object.freeze({}),
     expectedScope: clone(fixture.scope),
     tokenProof: clone(fixture.tokenProof),
     lifecycle: clone(fixture.lifecycle),
@@ -41,6 +42,7 @@ function applyVector(vector, includeProjection = false) {
   return includeProjection ? {
     sessionAttemptIdV2: material.sessionAttemptIdV2,
     sessionAttemptEpochV2: material.sessionAttemptEpochV2,
+    sessionAttemptNonceV2: material.sessionAttemptNonceV2,
     expectedScope: material.expectedScope,
     tokenProof: material.tokenProof,
     projection: material.projection,
@@ -48,6 +50,7 @@ function applyVector(vector, includeProjection = false) {
   } : {
     sessionAttemptIdV2: material.sessionAttemptIdV2,
     sessionAttemptEpochV2: material.sessionAttemptEpochV2,
+    sessionAttemptNonceV2: material.sessionAttemptNonceV2,
     expectedScope: material.expectedScope,
     tokenProof: material.tokenProof,
     lifecycle: material.lifecycle,
@@ -154,10 +157,13 @@ test('validated bindings are scoped to one exact session attempt', () => {
   const input = applyVector(fixture.accountAuthorizationVectors[0]);
   input.sessionAttemptIdV2 = 'attempt-exact-a';
   input.sessionAttemptEpochV2 = 17;
+  const nonce = Object.freeze({attempt: 'exact-a'});
+  input.sessionAttemptNonceV2 = nonce;
   const decision = contract.evaluateAccountAuthorizationV2(input);
   assert.equal(decision.authorized, true);
   assert.equal(decision.binding.sessionAttemptIdV2, 'attempt-exact-a');
   assert.equal(decision.binding.sessionAttemptEpochV2, 17);
+  assert.equal(decision.binding.sessionAttemptNonceV2, nonce);
 
   for (const sessionAttemptIdV2 of ['', 'bad\u0000attempt', 'x'.repeat(129)]) {
     const denied = contract.evaluateAccountAuthorizationV2({
@@ -171,6 +177,14 @@ test('validated bindings are scoped to one exact session attempt', () => {
     const denied = contract.evaluateAccountAuthorizationV2({
       ...applyVector(fixture.accountAuthorizationVectors[0]),
       sessionAttemptEpochV2,
+    });
+    assert.deepEqual(denied, {authorized: false, code: 'invalid_token_proof'});
+  }
+
+  for (const sessionAttemptNonceV2 of [null, undefined, 'nonce', 1, true]) {
+    const denied = contract.evaluateAccountAuthorizationV2({
+      ...applyVector(fixture.accountAuthorizationVectors[0]),
+      sessionAttemptNonceV2,
     });
     assert.deepEqual(denied, {authorized: false, code: 'invalid_token_proof'});
   }
@@ -205,6 +219,9 @@ void main() {
   ForgedDecision();
   AuthIncarnationSessionAttemptV2();
   ForgedAttempt();
+  AuthIncarnationSessionEventV2.authObserved(null as dynamic);
+  AuthIncarnationSessionEventV2.accountSwitchStarted(null as dynamic);
+  AuthIncarnationSessionEventV2.refreshRequired(null as dynamic);
 }
 `);
     const result = spawnSync('dart', ['analyze', sourcePath], {
@@ -218,6 +235,9 @@ void main() {
     assert.match(output, /ValidatedActiveAuthorityV2/);
     assert.match(output, /AuthIncarnationAuthorizationDecisionV2/);
     assert.match(output, /AuthIncarnationSessionAttemptV2/);
+    assert.match(output, /authObserved/);
+    assert.match(output, /accountSwitchStarted/);
+    assert.match(output, /refreshRequired/);
     assert.match(output, /allowed/);
   } finally {
     fs.rmSync(temporary, {recursive: true, force: true});

@@ -45,6 +45,7 @@ void main() {
     final allowed = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-evaluation',
       sessionAttemptEpochV2: 1,
+      sessionAttemptNonceV2: Object(),
       expectedScope: scope(),
       tokenProof: token(),
       lifecycle: lifecycle(),
@@ -58,6 +59,7 @@ void main() {
     final denied = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-evaluation',
       sessionAttemptEpochV2: 1,
+      sessionAttemptNonceV2: Object(),
       expectedScope: scope(),
       tokenProof: stale,
       lifecycle: lifecycle(),
@@ -96,6 +98,7 @@ void main() {
     final decision = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-evaluation',
       sessionAttemptEpochV2: 1,
+      sessionAttemptNonceV2: Object(),
       expectedScope: scope(),
       tokenProof: equalBoundary,
       lifecycle: lifecycle(),
@@ -106,23 +109,24 @@ void main() {
   });
 
   test('Chrome session gate opens only after proofReady', () {
-    var gate = const AuthIncarnationSessionGateV2.signedOut();
-    final attempt = gate.issueAttempt(
+    final observed = const AuthIncarnationSessionGateV2.signedOut().observeAuth(
       attemptId: 'web-attempt',
       scope: AuthIncarnationScopeV2.fromMap(scope()),
       accountGenerationV2: generation,
       accountLifecycleEpochV2: 7,
     );
+    final attempt = observed.attempt;
     final decision = evaluateAccountAuthorizationV2(
       sessionAttemptIdV2: 'web-attempt',
       sessionAttemptEpochV2: attempt.sessionAttemptEpochV2,
+      sessionAttemptNonceV2: attempt.sessionAttemptNonceV2,
       expectedScope: scope(),
       tokenProof: token(),
       lifecycle: lifecycle(),
       membership: membership(),
       requiredCapability: 'stats.enter',
     );
-    gate = gate.transition(AuthIncarnationSessionEventV2.authObserved(attempt));
+    var gate = observed.gate;
     expect(gate.permitsProtectedListeners, isFalse);
     gate = gate.transition(
       AuthIncarnationSessionEventV2.proofReady(
@@ -131,15 +135,75 @@ void main() {
       ),
     );
     expect(gate.permitsProtectedListeners, isTrue);
-    final nextAttempt = gate.issueAttempt(
+    final switched = gate.startAccountSwitch(
       attemptId: 'next-web-attempt',
       scope: AuthIncarnationScopeV2.fromMap(scope()),
       accountGenerationV2: generation,
       accountLifecycleEpochV2: 7,
     );
-    gate = gate.transition(
-      AuthIncarnationSessionEventV2.accountSwitchStarted(nextAttempt),
+    gate = switched.gate;
+    expect(gate.permitsProtectedListeners, isFalse);
+  });
+
+  test('Chrome stale atomic branches cannot share proof', () {
+    final observed = const AuthIncarnationSessionGateV2.signedOut().observeAuth(
+      attemptId: 'web-initial',
+      scope: AuthIncarnationScopeV2.fromMap(scope()),
+      accountGenerationV2: generation,
+      accountLifecycleEpochV2: 7,
     );
+    final initialDecision = evaluateAccountAuthorizationV2(
+      sessionAttemptIdV2: observed.attempt.attemptId,
+      sessionAttemptEpochV2: observed.attempt.sessionAttemptEpochV2,
+      sessionAttemptNonceV2: observed.attempt.sessionAttemptNonceV2,
+      expectedScope: scope(),
+      tokenProof: token(),
+      lifecycle: lifecycle(),
+      membership: membership(),
+      requiredCapability: 'stats.enter',
+    );
+    final ready = observed.gate.transition(
+      AuthIncarnationSessionEventV2.proofReady(
+        attempt: observed.attempt,
+        binding: initialDecision.binding!,
+      ),
+    );
+    final branch1 = ready.requireRefresh(attemptId: 'same-branch');
+    final branch2 = ready.requireRefresh(attemptId: 'same-branch');
+    expect(
+      identical(
+        branch1.attempt.sessionAttemptNonceV2,
+        branch2.attempt.sessionAttemptNonceV2,
+      ),
+      isFalse,
+    );
+    final branch1Decision = evaluateAccountAuthorizationV2(
+      sessionAttemptIdV2: branch1.attempt.attemptId,
+      sessionAttemptEpochV2: branch1.attempt.sessionAttemptEpochV2,
+      sessionAttemptNonceV2: branch1.attempt.sessionAttemptNonceV2,
+      expectedScope: scope(),
+      tokenProof: token(),
+      lifecycle: lifecycle(),
+      membership: membership(),
+      requiredCapability: 'stats.enter',
+    );
+    final staleCompletion = branch2.gate.transition(
+      AuthIncarnationSessionEventV2.proofReady(
+        attempt: branch1.attempt,
+        binding: branch1Decision.binding!,
+      ),
+    );
+    expect(
+      staleCompletion.state,
+      AuthIncarnationSessionStateV2.refreshRequired,
+    );
+    final gate = staleCompletion.transition(
+      AuthIncarnationSessionEventV2.proofReady(
+        attempt: branch2.attempt,
+        binding: branch1Decision.binding!,
+      ),
+    );
+    expect(gate.state, AuthIncarnationSessionStateV2.blocked);
     expect(gate.permitsProtectedListeners, isFalse);
   });
 }

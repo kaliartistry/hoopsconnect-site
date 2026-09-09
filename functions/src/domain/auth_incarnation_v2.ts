@@ -81,6 +81,7 @@ export type AuthIncarnationDenialCodeV2 =
 export interface ValidatedActiveAuthorityV2 {
   readonly sessionAttemptIdV2: string;
   readonly sessionAttemptEpochV2: number;
+  readonly sessionAttemptNonceV2: object;
   readonly scope: AuthIncarnationScopeV2;
   readonly accountGenerationV2: string;
   readonly accountLifecycleEpochV2: number;
@@ -285,6 +286,7 @@ function denied(code: AuthIncarnationDenialCodeV2): AuthIncarnationAuthorization
 function activeBinding(
   sessionAttemptIdV2: string,
   sessionAttemptEpochV2: number,
+  sessionAttemptNonceV2: object,
   token: AuthIncarnationTokenProofV2,
   lifecycle: AccountLifecycleAuthorityV2,
   membership: MembershipAuthorityV2,
@@ -292,6 +294,7 @@ function activeBinding(
   const binding = Object.freeze({
     sessionAttemptIdV2,
     sessionAttemptEpochV2,
+    sessionAttemptNonceV2,
     scope: Object.freeze({
       authProjectIdV2: token.authProjectIdV2,
       authTenantIdV2: token.authTenantIdV2,
@@ -310,6 +313,7 @@ function activeBinding(
 export function evaluateAccountAuthorizationV2(input: {
   sessionAttemptIdV2: unknown;
   sessionAttemptEpochV2: unknown;
+  sessionAttemptNonceV2: unknown;
   expectedScope: unknown;
   tokenProof: unknown | null | undefined;
   lifecycle: unknown;
@@ -318,6 +322,7 @@ export function evaluateAccountAuthorizationV2(input: {
 }): AuthIncarnationAuthorizationDecisionV2 {
   let sessionAttemptIdV2: string;
   let sessionAttemptEpochV2: number;
+  let sessionAttemptNonceV2: object;
   try {
     sessionAttemptIdV2 = identifier(input.sessionAttemptIdV2, "session attempt ID");
     sessionAttemptEpochV2 = safeCounter(
@@ -325,6 +330,9 @@ export function evaluateAccountAuthorizationV2(input: {
       "session attempt epoch",
     );
     if (sessionAttemptEpochV2 === 0) invalid("session attempt epoch");
+    if (typeof input.sessionAttemptNonceV2 !== "object" ||
+        input.sessionAttemptNonceV2 === null) invalid("session attempt nonce");
+    sessionAttemptNonceV2 = input.sessionAttemptNonceV2;
   } catch {
     return denied("invalid_token_proof");
   }
@@ -378,6 +386,7 @@ export function evaluateAccountAuthorizationV2(input: {
     binding: activeBinding(
       sessionAttemptIdV2,
       sessionAttemptEpochV2,
+      sessionAttemptNonceV2,
       token,
       lifecycle,
       membership,
@@ -388,6 +397,7 @@ export function evaluateAccountAuthorizationV2(input: {
 export function evaluateStorageAuthorizationV2(input: {
   sessionAttemptIdV2: unknown;
   sessionAttemptEpochV2: unknown;
+  sessionAttemptNonceV2: unknown;
   expectedScope: unknown;
   tokenProof: unknown | null | undefined;
   projection: unknown;
@@ -395,6 +405,7 @@ export function evaluateStorageAuthorizationV2(input: {
 }): AuthIncarnationAuthorizationDecisionV2 {
   let sessionAttemptIdV2: string;
   let sessionAttemptEpochV2: number;
+  let sessionAttemptNonceV2: object;
   try {
     sessionAttemptIdV2 = identifier(input.sessionAttemptIdV2, "session attempt ID");
     sessionAttemptEpochV2 = safeCounter(
@@ -402,6 +413,9 @@ export function evaluateStorageAuthorizationV2(input: {
       "session attempt epoch",
     );
     if (sessionAttemptEpochV2 === 0) invalid("session attempt epoch");
+    if (typeof input.sessionAttemptNonceV2 !== "object" ||
+        input.sessionAttemptNonceV2 === null) invalid("session attempt nonce");
+    sessionAttemptNonceV2 = input.sessionAttemptNonceV2;
   } catch {
     return denied("invalid_token_proof");
   }
@@ -465,6 +479,7 @@ export function evaluateStorageAuthorizationV2(input: {
     binding: activeBinding(
       sessionAttemptIdV2,
       sessionAttemptEpochV2,
+      sessionAttemptNonceV2,
       token,
       lifecycle,
       membership,
