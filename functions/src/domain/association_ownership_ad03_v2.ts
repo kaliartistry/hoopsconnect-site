@@ -853,8 +853,12 @@ export function parseOwnershipTransferIntentV2(value: unknown): OwnershipTransfe
     controlVersionAtResponseV2 !== null && controlVersionAtCommitV2 === null &&
     respondedAtSecV2 !== null && committedAtSecV2 === null &&
     recipientAcceptedAuthTimeSecV2 !== null;
-  const closedShape = [
-    "declined", "expired", "supersededByCustody", "cancelledByOwnerDeparture",
+  const declinedOrExpiredShape = ["declined", "expired"].includes(state) &&
+    controlVersionAtResponseV2 !== null && controlVersionAtCommitV2 === null &&
+    respondedAtSecV2 !== null && committedAtSecV2 === null &&
+    recipientAcceptedAuthTimeSecV2 === null;
+  const alternateClosedShape = [
+    "supersededByCustody", "cancelledByOwnerDeparture",
   ].includes(state) &&
     controlVersionAtResponseV2 !== null && controlVersionAtCommitV2 === null &&
     respondedAtSecV2 !== null && committedAtSecV2 === null;
@@ -862,7 +866,8 @@ export function parseOwnershipTransferIntentV2(value: unknown): OwnershipTransfe
     controlVersionAtResponseV2 !== null && controlVersionAtCommitV2 !== null &&
     respondedAtSecV2 !== null && committedAtSecV2 !== null &&
     recipientAcceptedAuthTimeSecV2 !== null;
-  if (!(pendingShape || acceptedShape || closedShape || committedShape)) {
+  if (!(pendingShape || acceptedShape || declinedOrExpiredShape ||
+      alternateClosedShape || committedShape)) {
     fail("AD03_TRANSFER_CONFLICT");
   }
   return Object.freeze({
@@ -1546,6 +1551,54 @@ function ownershipControlWith(input: {
   });
 }
 
+function expireLinkedTransferV2(input: {
+  control: AssociationOwnershipControlV2;
+  intent: OwnershipTransferIntentV2;
+  scope: {authProjectIdV2: string; authTenantIdV2: string | null; associationId: string};
+  nowSecV2: number;
+  replacementTransferIntentIdV2: string | null;
+}): {control: AssociationOwnershipControlV2; intent: OwnershipTransferIntentV2} {
+  assertTransferIntentLocatorV2({
+    intent: input.intent,
+    scope: input.scope,
+    transferIntentIdV2: input.intent.transferIntentIdV2,
+  });
+  const linkedControlVersionV2 = input.intent.stateV2 === "pendingRecipientAcceptance"
+    ? input.intent.controlVersionAtPrepareV2
+    : input.intent.stateV2 === "recipientAccepted"
+      ? input.intent.controlVersionAtResponseV2
+      : null;
+  if (
+    input.control.operationalStateV2 !== "transferPending" ||
+    input.control.pendingTransferIntentIdV2 !== input.intent.transferIntentIdV2 ||
+    linkedControlVersionV2 !== input.control.controlVersionV2 ||
+    !input.control.recoverableOwnersV2.some((owner) =>
+      ownerIdentityEquals(owner, input.intent.preparedByOwnerV2)) ||
+    input.nowSecV2 <= input.intent.expiresAtSecV2 ||
+    input.replacementTransferIntentIdV2 === input.intent.transferIntentIdV2
+  ) fail("AD03_TRANSFER_NOT_READY");
+  const nextControl = ownershipControlWith({
+    current: input.control,
+    operationalStateV2: input.replacementTransferIntentIdV2 === null
+      ? "operating"
+      : "transferPending",
+    recoverableOwnersV2: input.control.recoverableOwnersV2,
+    pendingTransferIntentIdV2: input.replacementTransferIntentIdV2,
+    activeCustodyCaseIdV2: null,
+    custodyPolicyIdV2: input.control.custodyPolicyIdV2,
+  });
+  const expiredIntent = parseOwnershipTransferIntentV2({
+    ...input.intent,
+    stateV2: "expired",
+    controlVersionAtResponseV2: nextControl.controlVersionV2,
+    controlVersionAtCommitV2: null,
+    respondedAtSecV2: input.nowSecV2,
+    committedAtSecV2: null,
+    recipientAcceptedAuthTimeSecV2: null,
+  });
+  return {control: nextControl, intent: expiredIntent};
+}
+
 function auditEventV2(input: {
   scope: {authProjectIdV2: string; authTenantIdV2: string | null; associationId: string};
   eventIdV2: string;
@@ -1634,12 +1687,44 @@ export async function prepareCandidateOwnershipTransferV2(input: OwnershipServic
       }
       return existing;
     }
-    assertControlVersion(control, request.expectedControlVersionV2);
-    if (control.operationalStateV2 !== "operating" ||
-        control.pendingTransferIntentIdV2 !== null) fail("AD03_CONTROL_CONFLICT");
     const departing = recoverableOwnerFromAuthorityV2(authority);
     if (!control.recoverableOwnersV2.some((owner) => ownerIdentityEquals(owner, departing))) {
       fail("AD03_NOT_RECOVERABLE_OWNER");
+    }
+    assertControlVersion(control, request.expectedControlVersionV2);
+    let expiredIntent: OwnershipTransferIntentV2 | null = null;
+    let nextControl: AssociationOwnershipControlV2;
+    if (control.operationalStateV2 === "operating" &&
+        control.pendingTransferIntentIdV2 === null) {
+      nextControl = ownershipControlWith({
+        current: control,
+        operationalStateV2: "transferPending",
+        recoverableOwnersV2: control.recoverableOwnersV2,
+        pendingTransferIntentIdV2: request.transferIntentIdV2,
+        activeCustodyCaseIdV2: null,
+        custodyPolicyIdV2: control.custodyPolicyIdV2,
+      });
+    } else if (control.operationalStateV2 === "transferPending" &&
+        control.pendingTransferIntentIdV2 !== null &&
+        control.pendingTransferIntentIdV2 !== request.transferIntentIdV2) {
+      // A fresh ID is the replacement boundary. The old intent is closed and
+      // the new unaccepted intent is installed under one control-version write.
+      const pendingIntentRaw = await transaction.read(ownershipTransferIntentPathV2(
+        scope,
+        control.pendingTransferIntentIdV2,
+      ));
+      if (pendingIntentRaw === null) fail("AD03_TRANSFER_NOT_READY");
+      const transition = expireLinkedTransferV2({
+        control,
+        intent: parseOwnershipTransferIntentV2(pendingIntentRaw),
+        scope,
+        nowSecV2: input.nowSecV2,
+        replacementTransferIntentIdV2: request.transferIntentIdV2,
+      });
+      nextControl = transition.control;
+      expiredIntent = transition.intent;
+    } else {
+      fail("AD03_CONTROL_CONFLICT");
     }
     const recipientScope: AuthIncarnationScopeV2 = {
       authProjectIdV2: scope.authProjectIdV2,
@@ -1656,14 +1741,6 @@ export async function prepareCandidateOwnershipTransferV2(input: OwnershipServic
         control.recoverableOwnersV2.some((owner) => ownerIdentityEquals(owner, recipient))) {
       fail("AD03_RECIPIENT_INELIGIBLE");
     }
-    const nextControl = ownershipControlWith({
-      current: control,
-      operationalStateV2: "transferPending",
-      recoverableOwnersV2: control.recoverableOwnersV2,
-      pendingTransferIntentIdV2: request.transferIntentIdV2,
-      activeCustodyCaseIdV2: null,
-      custodyPolicyIdV2: control.custodyPolicyIdV2,
-    });
     const intent = parseOwnershipTransferIntentV2({
       ownershipTransferIntentSchemaVersionV2: 2,
       ...scope,
@@ -1681,6 +1758,12 @@ export async function prepareCandidateOwnershipTransferV2(input: OwnershipServic
       committedAtSecV2: null,
       recipientAcceptedAuthTimeSecV2: null,
     });
+    if (expiredIntent !== null) {
+      transaction.write(
+        ownershipTransferIntentPathV2(scope, expiredIntent.transferIntentIdV2),
+        wireRecord(expiredIntent),
+      );
+    }
     transaction.write(associationOwnershipControlPathV2(scope), wireRecord(nextControl));
     transaction.write(intentPath, wireRecord(intent));
     return intent;
@@ -1716,10 +1799,30 @@ export async function respondToCandidateOwnershipTransferV2(
     if (!ownerMatchesAuthority(intent.recipientOwnerV2, authority)) {
       fail("AD03_AUTHORITY_DENIED");
     }
+    if (["pendingRecipientAcceptance", "recipientAccepted"].includes(intent.stateV2) &&
+        input.nowSecV2 > intent.expiresAtSecV2) {
+      const linkedControlVersionV2 = intent.stateV2 === "pendingRecipientAcceptance"
+        ? intent.controlVersionAtPrepareV2
+        : intent.controlVersionAtResponseV2;
+      const exactResponseVersionV2 = request.expectedControlVersionV2 ===
+        intent.controlVersionAtPrepareV2 &&
+        (intent.stateV2 === "pendingRecipientAcceptance" ||
+          intent.controlVersionAtResponseV2 === intent.controlVersionAtPrepareV2 + 1);
+      if (
+        control.operationalStateV2 !== "transferPending" ||
+        control.pendingTransferIntentIdV2 !== intent.transferIntentIdV2 ||
+        linkedControlVersionV2 !== control.controlVersionV2 ||
+        !exactResponseVersionV2 ||
+        !control.recoverableOwnersV2.some((owner) =>
+          ownerIdentityEquals(owner, intent.preparedByOwnerV2))
+      ) fail("AD03_CONTROL_CONFLICT");
+      fail("AD03_TRANSFER_NOT_READY");
+    }
     if (intent.stateV2 === "recipientAccepted" && request.responseV2 === "accept") {
       if (control.operationalStateV2 !== "transferPending" ||
           control.pendingTransferIntentIdV2 !== request.transferIntentIdV2 ||
-          intent.controlVersionAtResponseV2 !== control.controlVersionV2) {
+          intent.controlVersionAtResponseV2 !== control.controlVersionV2 ||
+          request.expectedControlVersionV2 !== intent.controlVersionAtPrepareV2) {
         fail("AD03_CONTROL_CONFLICT");
       }
       return intent;
@@ -1727,7 +1830,8 @@ export async function respondToCandidateOwnershipTransferV2(
     if (intent.stateV2 === "declined" && request.responseV2 === "decline") {
       if (control.operationalStateV2 !== "operating" ||
           control.pendingTransferIntentIdV2 !== null ||
-          intent.controlVersionAtResponseV2 !== control.controlVersionV2) {
+          intent.controlVersionAtResponseV2 !== control.controlVersionV2 ||
+          request.expectedControlVersionV2 !== intent.controlVersionAtPrepareV2) {
         fail("AD03_CONTROL_CONFLICT");
       }
       return intent;
@@ -1758,26 +1862,18 @@ export async function respondToCandidateOwnershipTransferV2(
       activeCustodyCaseIdV2: null,
       custodyPolicyIdV2: control.custodyPolicyIdV2,
     });
-    const expired = input.nowSecV2 > intent.expiresAtSecV2;
-    const stateV2: TransferIntentStateV2 = expired
-      ? "expired"
-      : request.responseV2 === "accept" ? "recipientAccepted" : "declined";
-    const finalControl = expired && nextControl.operationalStateV2 !== "operating"
-      ? parseAssociationOwnershipControlV2({
-        ...nextControl,
-        operationalStateV2: "operating",
-        pendingTransferIntentIdV2: null,
-      })
-      : nextControl;
+    const stateV2: TransferIntentStateV2 = request.responseV2 === "accept"
+      ? "recipientAccepted"
+      : "declined";
     const updated = parseOwnershipTransferIntentV2({
       ...intent,
       stateV2,
-      controlVersionAtResponseV2: finalControl.controlVersionV2,
+      controlVersionAtResponseV2: nextControl.controlVersionV2,
       respondedAtSecV2: input.nowSecV2,
       recipientAcceptedAuthTimeSecV2:
         stateV2 === "recipientAccepted" ? authTimeSecV2 : null,
     });
-    transaction.write(associationOwnershipControlPathV2(scope), wireRecord(finalControl));
+    transaction.write(associationOwnershipControlPathV2(scope), wireRecord(nextControl));
     transaction.write(
       ownershipTransferIntentPathV2(scope, intent.transferIntentIdV2),
       wireRecord(updated),
@@ -1897,7 +1993,7 @@ export async function commitCandidateOwnershipTransferV2(
 ): Promise<OwnershipTransferIntentV2> {
   const request = parseCommitRequest(input.request);
   if (!safeCounter(input.nowSecV2)) fail("AD03_INVALID_REQUEST");
-  return input.repository.runTransaction(async (transaction) => {
+  const outcome = await input.repository.runTransaction(async (transaction) => {
     const {authority} = await authorizeFreshInTransactionV2({
       transaction,
       auth: input.auth,
@@ -1922,17 +2018,46 @@ export async function commitCandidateOwnershipTransferV2(
       const replayIsConsistent = control.operationalStateV2 === "operating" &&
         control.pendingTransferIntentIdV2 === null &&
         intent.controlVersionAtCommitV2 === control.controlVersionV2 &&
+        request.expectedControlVersionV2 === intent.controlVersionAtResponseV2 &&
         control.recoverableOwnersV2.some((owner) =>
           ownerIdentityEquals(owner, intent.recipientOwnerV2)) &&
         !control.recoverableOwnersV2.some((owner) =>
           ownerIdentityEquals(owner, intent.preparedByOwnerV2));
       if (!replayIsConsistent) fail("AD03_CONTROL_CONFLICT");
-      return intent;
+      return {kindV2: "committed" as const, intent};
     }
-    assertControlVersion(control, request.expectedControlVersionV2);
     const departing = recoverableOwnerFromAuthorityV2(authority);
     if (!control.recoverableOwnersV2.some((owner) => ownerIdentityEquals(owner, departing))) {
       fail("AD03_NOT_RECOVERABLE_OWNER");
+    }
+    if (intent.stateV2 === "expired") {
+      const exactExpiryReplay = control.operationalStateV2 === "operating" &&
+        control.pendingTransferIntentIdV2 === null &&
+        intent.controlVersionAtResponseV2 === control.controlVersionV2 &&
+        control.controlVersionV2 > 0 &&
+        request.expectedControlVersionV2 === control.controlVersionV2 - 1;
+      if (!exactExpiryReplay) fail("AD03_CONTROL_CONFLICT");
+      return {kindV2: "expired" as const, intent};
+    }
+    assertControlVersion(control, request.expectedControlVersionV2);
+    if (["pendingRecipientAcceptance", "recipientAccepted"].includes(intent.stateV2) &&
+        input.nowSecV2 > intent.expiresAtSecV2) {
+      const expired = expireLinkedTransferV2({
+        control,
+        intent,
+        scope,
+        nowSecV2: input.nowSecV2,
+        replacementTransferIntentIdV2: null,
+      });
+      transaction.write(
+        associationOwnershipControlPathV2(scope),
+        wireRecord(expired.control),
+      );
+      transaction.write(
+        ownershipTransferIntentPathV2(scope, intent.transferIntentIdV2),
+        wireRecord(expired.intent),
+      );
+      return {kindV2: "expired" as const, intent: expired.intent};
     }
     const result = await commitAcceptedTransferInTransactionV2({
       transaction,
@@ -1947,8 +2072,12 @@ export async function commitCandidateOwnershipTransferV2(
         intent.transferIntentIdV2,
       ),
     });
-    return result.intent;
+    return {kindV2: "committed" as const, intent: result.intent};
   });
+  // Throw only after the transaction returns so the fail-closed expiry writes
+  // are durable; throwing inside a Firestore transaction would roll them back.
+  if (outcome.kindV2 === "expired") fail("AD03_TRANSFER_NOT_READY");
+  return outcome.intent;
 }
 
 async function optionalCandidatePolicyV2(input: {

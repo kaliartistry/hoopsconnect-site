@@ -86,7 +86,7 @@ function membership(uid, generation, tenant = null, patch = {}) {
   };
 }
 
-function eligibility(uid, generation, tenant = null) {
+function eligibility(uid, generation, tenant = null, patch = {}) {
   return {
     recipientEligibilitySchemaVersionV2: 2,
     ...accountScope(uid, tenant),
@@ -97,6 +97,7 @@ function eligibility(uid, generation, tenant = null) {
     recoveryChannelStateV2: 'verified',
     checkedAtSecV2: now - 60,
     expiresAtSecV2: now + 240,
+    ...patch,
   };
 }
 
@@ -374,5 +375,171 @@ test('recipient loss before commit cannot falsely complete and explicit custody 
       ad03.ownershipTransferIntentPathV2(associationScope(), 'transfer-1'),
     ));
     assert.equal(intent.data().stateV2, 'supersededByCustody');
+  });
+});
+
+test('accepted transfer expiry commits an owner-authorized unlock before stable not-ready replay', async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await seedScenario(db, [owner('owner-a', fixture.generations.ownerA)]);
+    const repository = new EmulatorTransactionRepository(db);
+    await ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA),
+      request: {
+        associationOwnershipSchemaVersionV2: 2,
+        associationId: fixture.associationId,
+        transferIntentIdV2: 'accepted-expiry',
+        recipientAuthUidV2: 'recipient-c',
+        expectedControlVersionV2: 1,
+      },
+    });
+    await ad03.respondToCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'recipient-c', fixture.generations.recipientC, now + 1),
+      request: {
+        associationOwnershipSchemaVersionV2: 2,
+        associationId: fixture.associationId,
+        transferIntentIdV2: 'accepted-expiry',
+        expectedControlVersionV2: 2,
+        responseV2: 'accept',
+      },
+    });
+    const expiryTime = now + fixture.transferTtlSecV2 + 1;
+    for (const responseV2 of ['accept', 'decline']) {
+      await assert.rejects(
+        ad03.respondToCandidateOwnershipTransferV2({
+          ...serviceInput(
+            repository,
+            'recipient-c',
+            fixture.generations.recipientC,
+            expiryTime,
+          ),
+          request: {
+            associationOwnershipSchemaVersionV2: 2,
+            associationId: fixture.associationId,
+            transferIntentIdV2: 'accepted-expiry',
+            expectedControlVersionV2: 2,
+            responseV2,
+          },
+        }),
+        {codeV2: 'AD03_TRANSFER_NOT_READY'},
+      );
+    }
+    const expiredCommit = {
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, expiryTime),
+      request: {
+        associationOwnershipSchemaVersionV2: 2,
+        associationId: fixture.associationId,
+        transferIntentIdV2: 'accepted-expiry',
+        expectedControlVersionV2: 3,
+      },
+    };
+    await assert.rejects(
+      ad03.commitCandidateOwnershipTransferV2(expiredCommit),
+      {codeV2: 'AD03_TRANSFER_NOT_READY'},
+    );
+    const controlAfterExpiry = await getDoc(doc(db, fixture.paths.rootControl));
+    assert.equal(controlAfterExpiry.data().controlVersionV2, 4);
+    assert.equal(controlAfterExpiry.data().operationalStateV2, 'operating');
+    assert.equal(controlAfterExpiry.data().pendingTransferIntentIdV2, null);
+    const intentPath = ad03.ownershipTransferIntentPathV2(
+      associationScope(),
+      'accepted-expiry',
+    );
+    const intentAfterExpiry = await getDoc(doc(db, intentPath));
+    assert.equal(intentAfterExpiry.data().stateV2, 'expired');
+    assert.equal(intentAfterExpiry.data().recipientAcceptedAuthTimeSecV2, null);
+
+    await assert.rejects(
+      ad03.commitCandidateOwnershipTransferV2({
+        ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, expiryTime + 1),
+        request: expiredCommit.request,
+      }),
+      {codeV2: 'AD03_TRANSFER_NOT_READY'},
+    );
+    const afterReplay = await getDoc(doc(db, fixture.paths.rootControl));
+    assert.deepEqual(afterReplay.data(), controlAfterExpiry.data());
+  });
+});
+
+test('real transactions serialize concurrent expired-intent replacements and reject stale control', async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await seedScenario(db, [owner('owner-a', fixture.generations.ownerA)]);
+    const repository = new EmulatorTransactionRepository(db);
+    await ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA),
+      request: {
+        associationOwnershipSchemaVersionV2: 2,
+        associationId: fixture.associationId,
+        transferIntentIdV2: 'unanswered-expiry',
+        recipientAuthUidV2: 'recipient-c',
+        expectedControlVersionV2: 1,
+      },
+    });
+    const replacementTime = now + fixture.transferTtlSecV2 + 1;
+    await setDoc(
+      doc(db, ad03.recipientEligibilityEvidencePathV2(accountScope('recipient-c'))),
+      eligibility('recipient-c', fixture.generations.recipientC, null, {
+        checkedAtSecV2: replacementTime,
+        expiresAtSecV2: replacementTime + 240,
+      }),
+    );
+    const replacementRequests = ['replacement-a', 'replacement-b'].map(
+      (transferIntentIdV2) => ({
+        associationOwnershipSchemaVersionV2: 2,
+        associationId: fixture.associationId,
+        transferIntentIdV2,
+        recipientAuthUidV2: 'recipient-c',
+        expectedControlVersionV2: 2,
+      }),
+    );
+    const results = await Promise.allSettled(replacementRequests.map((request) =>
+      ad03.prepareCandidateOwnershipTransferV2({
+        ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime),
+        request,
+      })));
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter((result) => result.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0].reason.codeV2, 'AD03_CONTROL_CONFLICT');
+    const winner = fulfilled[0].value;
+    assert.equal(winner.stateV2, 'pendingRecipientAcceptance');
+    assert.equal(winner.recipientAcceptedAuthTimeSecV2, null);
+
+    const controlAfterRace = await getDoc(doc(db, fixture.paths.rootControl));
+    assert.equal(controlAfterRace.data().controlVersionV2, 3);
+    assert.equal(controlAfterRace.data().operationalStateV2, 'transferPending');
+    assert.equal(
+      controlAfterRace.data().pendingTransferIntentIdV2,
+      winner.transferIntentIdV2,
+    );
+    const oldIntent = await getDoc(doc(
+      db,
+      ad03.ownershipTransferIntentPathV2(associationScope(), 'unanswered-expiry'),
+    ));
+    assert.equal(oldIntent.data().stateV2, 'expired');
+    assert.equal(oldIntent.data().recipientAcceptedAuthTimeSecV2, null);
+
+    const winningRequest = replacementRequests.find(
+      (request) => request.transferIntentIdV2 === winner.transferIntentIdV2,
+    );
+    const replay = await ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime + 1),
+      request: winningRequest,
+    });
+    assert.deepEqual(replay, winner);
+    await assert.rejects(
+      ad03.prepareCandidateOwnershipTransferV2({
+        ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime + 1),
+        request: {
+          ...winningRequest,
+          transferIntentIdV2: 'stale-control-replacement',
+        },
+      }),
+      {codeV2: 'AD03_CONTROL_CONFLICT'},
+    );
+    const afterStaleAttempt = await getDoc(doc(db, fixture.paths.rootControl));
+    assert.deepEqual(afterStaleAttempt.data(), controlAfterRace.data());
   });
 });

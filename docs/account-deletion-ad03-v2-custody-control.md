@@ -61,6 +61,19 @@ The transfer protocol is `prepare -> recipient acceptance -> commit`:
    departing owner, close the intent, and write a fixed-length hashed-ID
    minimal audit event.
 
+Transfer expiry is processed lazily inside these same transactions; no
+production scheduler or sweeper is introduced by AD03. After
+`expiresAtSecV2`, recipient accept/decline calls fail with
+`AD03_TRANSFER_NOT_READY` and cannot return or alter stale consent. A current
+exact recoverable owner can either submit the expired intent to the standalone
+commit operation, which atomically marks it `expired`, clears
+`transferPending`, and then reports `AD03_TRANSFER_NOT_READY`, or prepare a
+different intent ID. That replacement transaction closes the old intent and
+creates the new pending intent with one control-version advance. The expired
+record clears the prior acceptance authentication time, so a replacement must
+obtain fresh explicit consent. Exact replacement retries return the existing
+new intent; changed recipient or version data under its ID conflicts.
+
 An accepted recipient who declines, loses Auth, changes `G`/`E`, becomes
 inactive, loses `association.manage`, or loses verified recovery eligibility is
 never installed as owner. The departing owner may then choose the separately

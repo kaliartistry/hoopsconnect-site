@@ -420,6 +420,18 @@ test('prepare, fresh recipient acceptance, and commit transfer exact ownership a
   assert.equal(accepted.stateV2, 'recipientAccepted');
   assert.equal(accepted.controlVersionAtResponseV2, 3);
   assert.equal(accepted.recipientAcceptedAuthTimeSecV2, now - 9);
+  const acceptedReplay = await ad03.respondToCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'recipient-c', fixture.generations.recipientC, now + 1),
+    request: responseRequest('accept'),
+  });
+  assert.deepEqual(acceptedReplay, accepted);
+  await assert.rejects(
+    ad03.respondToCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'recipient-c', fixture.generations.recipientC, now + 1),
+      request: responseRequest('accept', 3),
+    }),
+    {codeV2: 'AD03_CONTROL_CONFLICT'},
+  );
 
   const committed = await ad03.commitCandidateOwnershipTransferV2({
     ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, now + 2),
@@ -427,6 +439,23 @@ test('prepare, fresh recipient acceptance, and commit transfer exact ownership a
   });
   assert.equal(committed.stateV2, 'committed');
   assert.equal(committed.controlVersionAtCommitV2, 4);
+  const commitReplay = await ad03.commitCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, now + 3),
+    request: commitRequest(),
+  });
+  assert.deepEqual(commitReplay, committed);
+  await assert.rejects(
+    ad03.commitCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, now + 3),
+      request: commitRequest(4),
+    }),
+    {codeV2: 'AD03_CONTROL_CONFLICT'},
+  );
+  const lostPrepareResponseReplay = await ad03.prepareCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, now + 3),
+    request: prepareRequest(),
+  });
+  assert.deepEqual(lostPrepareResponseReplay, committed);
   const finalControl = await stored(
     repository,
     ad03.associationOwnershipControlPathV2(associationScope()),
@@ -478,6 +507,232 @@ test('transfer replay is idempotent and changed payload under one intent conflic
       request: {...prepareRequest(), recipientAuthUidV2: 'owner-b'},
     }),
     {codeV2: 'AD03_TRANSFER_CONFLICT'},
+  );
+});
+
+test('pending transfer expiry permits one atomic owner replacement with fresh consent', async () => {
+  const {repository} = repositoryWith();
+  await ad03.prepareCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'owner-a', fixture.generations.ownerA),
+    request: prepareRequest(),
+  });
+  const replacementTime = now + fixture.transferTtlSecV2 + 1;
+  repository.values.set(
+    ad03.recipientEligibilityEvidencePathV2(accountScope('recipient-c')),
+    eligibility('recipient-c', fixture.generations.recipientC, null, {
+      checkedAtSecV2: replacementTime,
+      expiresAtSecV2: replacementTime + 240,
+    }),
+  );
+  const replacementRequest = {
+    ...prepareRequest(2),
+    transferIntentIdV2: 'transfer-replacement',
+  };
+  await assert.rejects(
+    ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(
+        repository,
+        'owner-a',
+        fixture.generations.ownerA,
+        now + fixture.transferTtlSecV2,
+      ),
+      request: {...replacementRequest, transferIntentIdV2: 'not-yet-expired'},
+    }),
+    {codeV2: 'AD03_TRANSFER_NOT_READY'},
+  );
+  await assert.rejects(
+    ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-b', fixture.generations.ownerB, replacementTime),
+      request: {...replacementRequest, transferIntentIdV2: 'non-owner-replacement'},
+    }),
+    {codeV2: 'AD03_NOT_RECOVERABLE_OWNER'},
+  );
+  await assert.rejects(
+    ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerB, replacementTime),
+      request: {...replacementRequest, transferIntentIdV2: 'wrong-generation-replacement'},
+    }),
+    {codeV2: 'AD03_AUTHORITY_DENIED'},
+  );
+  const replacement = await ad03.prepareCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime),
+    request: replacementRequest,
+  });
+  assert.equal(replacement.stateV2, 'pendingRecipientAcceptance');
+  assert.equal(replacement.controlVersionAtPrepareV2, 3);
+  assert.equal(replacement.recipientAcceptedAuthTimeSecV2, null);
+
+  const expired = await stored(
+    repository,
+    ad03.ownershipTransferIntentPathV2(associationScope(), 'transfer-1'),
+  );
+  assert.equal(expired.stateV2, 'expired');
+  assert.equal(expired.controlVersionAtResponseV2, 3);
+  assert.equal(expired.respondedAtSecV2, replacementTime);
+  assert.equal(expired.recipientAcceptedAuthTimeSecV2, null);
+  const current = await stored(
+    repository,
+    ad03.associationOwnershipControlPathV2(associationScope()),
+  );
+  assert.equal(current.controlVersionV2, 3);
+  assert.equal(current.operationalStateV2, 'transferPending');
+  assert.equal(current.pendingTransferIntentIdV2, 'transfer-replacement');
+
+  const replay = await ad03.prepareCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime + 1),
+    request: replacementRequest,
+  });
+  assert.deepEqual(replay, replacement);
+  await assert.rejects(
+    ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime + 1),
+      request: {...replacementRequest, recipientAuthUidV2: 'owner-b'},
+    }),
+    {codeV2: 'AD03_TRANSFER_CONFLICT'},
+  );
+  await assert.rejects(
+    ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime + 1),
+      request: {...replacementRequest, expectedControlVersionV2: 3},
+    }),
+    {codeV2: 'AD03_TRANSFER_CONFLICT'},
+  );
+  await assert.rejects(
+    ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime + 1),
+      request: {
+        ...prepareRequest(2),
+        transferIntentIdV2: 'stale-replacement',
+      },
+    }),
+    {codeV2: 'AD03_CONTROL_CONFLICT'},
+  );
+  const afterConflicts = await stored(
+    repository,
+    ad03.associationOwnershipControlPathV2(associationScope()),
+  );
+  assert.deepEqual(afterConflicts, current);
+});
+
+test('expired replacement rejects tampered locator, owner binding, and linked version', async () => {
+  const cases = [
+    {
+      expected: 'AD03_TRANSFER_CONFLICT',
+      mutate: (intent) => ({...intent, associationId: 'other-association'}),
+    },
+    {
+      expected: 'AD03_TRANSFER_NOT_READY',
+      mutate: (intent) => ({
+        ...intent,
+        preparedByOwnerV2: owner('owner-b', fixture.generations.ownerB),
+      }),
+    },
+    {
+      expected: 'AD03_TRANSFER_NOT_READY',
+      mutate: (intent) => ({...intent, controlVersionAtPrepareV2: 1}),
+    },
+  ];
+  for (const [index, currentCase] of cases.entries()) {
+    const {repository} = repositoryWith();
+    await ad03.prepareCandidateOwnershipTransferV2({
+      ...serviceInput(repository, 'owner-a', fixture.generations.ownerA),
+      request: prepareRequest(),
+    });
+    const intentPath = ad03.ownershipTransferIntentPathV2(associationScope(), 'transfer-1');
+    const currentIntent = await stored(repository, intentPath);
+    repository.values.set(intentPath, currentCase.mutate(currentIntent));
+    const replacementTime = now + fixture.transferTtlSecV2 + 1;
+    repository.values.set(
+      ad03.recipientEligibilityEvidencePathV2(accountScope('recipient-c')),
+      eligibility('recipient-c', fixture.generations.recipientC, null, {
+        checkedAtSecV2: replacementTime,
+        expiresAtSecV2: replacementTime + 240,
+      }),
+    );
+    await assert.rejects(
+      ad03.prepareCandidateOwnershipTransferV2({
+        ...serviceInput(repository, 'owner-a', fixture.generations.ownerA, replacementTime),
+        request: {
+          ...prepareRequest(2),
+          transferIntentIdV2: `tampered-replacement-${index}`,
+        },
+      }),
+      {codeV2: currentCase.expected},
+    );
+    const controlAfter = await stored(
+      repository,
+      ad03.associationOwnershipControlPathV2(associationScope()),
+    );
+    assert.equal(controlAfter.controlVersionV2, 2);
+    assert.equal(controlAfter.operationalStateV2, 'transferPending');
+    assert.equal(controlAfter.pendingTransferIntentIdV2, 'transfer-1');
+    assert.equal(await stored(
+      repository,
+      ad03.ownershipTransferIntentPathV2(
+        associationScope(),
+        `tampered-replacement-${index}`,
+      ),
+    ), null);
+  }
+});
+
+test('accepted transfer expiry is durably closed by owner commit before not-ready replay', async () => {
+  const ownerA = owner('owner-a', fixture.generations.ownerA);
+  const ownerB = owner('owner-b', fixture.generations.ownerB);
+  const {repository} = repositoryWith({owners: [ownerA, ownerB]});
+  await ad03.prepareCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'owner-a', fixture.generations.ownerA),
+    request: prepareRequest(),
+  });
+  await ad03.respondToCandidateOwnershipTransferV2({
+    ...serviceInput(repository, 'recipient-c', fixture.generations.recipientC, now + 1),
+    request: responseRequest('accept'),
+  });
+  const expiryTime = now + fixture.transferTtlSecV2 + 1;
+  for (const responseV2 of ['accept', 'decline']) {
+    await assert.rejects(
+      ad03.respondToCandidateOwnershipTransferV2({
+        ...serviceInput(repository, 'recipient-c', fixture.generations.recipientC, expiryTime),
+        request: responseRequest(responseV2),
+      }),
+      {codeV2: 'AD03_TRANSFER_NOT_READY'},
+    );
+  }
+  const expiredCommitInput = {
+    ...serviceInput(repository, 'owner-b', fixture.generations.ownerB, expiryTime),
+    request: commitRequest(3),
+  };
+  await assert.rejects(
+    ad03.commitCandidateOwnershipTransferV2(expiredCommitInput),
+    {codeV2: 'AD03_TRANSFER_NOT_READY'},
+  );
+  const expired = await stored(
+    repository,
+    ad03.ownershipTransferIntentPathV2(associationScope(), 'transfer-1'),
+  );
+  assert.equal(expired.stateV2, 'expired');
+  assert.equal(expired.controlVersionAtResponseV2, 4);
+  assert.equal(expired.respondedAtSecV2, expiryTime);
+  assert.equal(expired.recipientAcceptedAuthTimeSecV2, null);
+  const current = await stored(
+    repository,
+    ad03.associationOwnershipControlPathV2(associationScope()),
+  );
+  assert.equal(current.controlVersionV2, 4);
+  assert.equal(current.operationalStateV2, 'operating');
+  assert.equal(current.pendingTransferIntentIdV2, null);
+  assert.deepEqual(current.recoverableOwnersV2, [ownerA, ownerB]);
+
+  await assert.rejects(
+    ad03.commitCandidateOwnershipTransferV2({
+      ...expiredCommitInput,
+      ...serviceInput(repository, 'owner-b', fixture.generations.ownerB, expiryTime + 1),
+    }),
+    {codeV2: 'AD03_TRANSFER_NOT_READY'},
+  );
+  assert.deepEqual(
+    await stored(repository, ad03.associationOwnershipControlPathV2(associationScope())),
+    current,
   );
 });
 
