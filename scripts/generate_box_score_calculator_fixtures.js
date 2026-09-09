@@ -201,6 +201,31 @@ const incident = ({
   scoresheetCode: type === "personal" ? "P" : "T",
   teamEntryId,
 });
+const disqualifyingIncident = ({
+  incidentId,
+  teamEntryId = "team_home",
+  participantId = "participant_home_1",
+  periodNumber = 1,
+  clockRemainingMs = known(300000),
+}) => {
+  const value = incident({
+    incidentId,
+    participantId,
+    periodNumber,
+    teamEntryId,
+    type: "disqualifying",
+  });
+  value.clockRemainingMs = clockRemainingMs;
+  value.countsTowardPlayerDisqualification = true;
+  value.scoresheetCode = "D";
+  return value;
+};
+const departureAt = (periodNumber, clockRemainingMs, suffix, kind = "ejected") => ({
+  clockRemainingMs,
+  evidenceRefs: known([`departure_evidence_${suffix}`]),
+  kind,
+  periodNumber: known(periodNumber),
+});
 
 const base = {
   administrativeResult: playedAdministration(),
@@ -255,6 +280,27 @@ const base = {
 syncTeam(base.teams[0]);
 syncTeam(base.teams[1]);
 
+const twoPeriodBase = () => {
+  const input = clone(base);
+  input.rules = genericRules(2);
+  input.periods = [regulationPeriod(1, 2, 0), regulationPeriod(2, 0, 0)];
+  input.teams[0].players[0].time = exactTime(600000);
+  input.teams[1].players[0].time = exactTime(1200000);
+  return input;
+};
+const addPlayer = (input, teamIndex, suffix, time) => {
+  const side = teamIndex === 0 ? "home" : "away";
+  const line = player({
+    participantId: `participant_${side}_${suffix}`,
+    playerId: `player_${side}_${suffix}`,
+    teamEntryId: `team_${side}`,
+    time,
+  });
+  input.teams[teamIndex].players.push(line);
+  syncTeam(input.teams[teamIndex]);
+  return line;
+};
+
 const pathValue = (value, dottedPath) => dottedPath.split(".").reduce(
   (current, key) => current[Number.isInteger(Number(key)) ? Number(key) : key],
   value,
@@ -270,6 +316,42 @@ add("complete_zero_disciplinary_incidents", clone(base), accepted(
   {path: "normalizedBoxScore.teams.0.totals.totalRebounds", value: 0},
   {path: "normalizedBoxScore.disciplineIncidents.length", value: 0},
 ));
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_nfc_expansion_resource_limit";
+  input.provenance.sourceLabel = "\u0344".repeat(512);
+  add("reject_post_nfc_expansion_above_preflight_limit", input, rejected(
+    "resourceLimitExceeded", "$.provenance.sourceLabel",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_nfc_expansion_field_boundary";
+  input.provenance.sourceLabel = "\u0344".repeat(128);
+  add("post_nfc_expansion_at_field_byte_boundary", input, accepted(
+    {path: "normalizedBoxScore.provenance.sourceLabel", value: "\u0308\u0301".repeat(128)},
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_nfc_expansion_above_field_boundary";
+  input.provenance.sourceLabel = "\u0344".repeat(129);
+  add("reject_post_nfc_expansion_above_field_byte_boundary", input, rejected(
+    "invalidString", "$.provenance.sourceLabel",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_nfc_contraction_near_source_boundary";
+  input.provenance.sourceLabel = "A\u030a".repeat(170);
+  add("post_nfc_contraction_near_source_byte_boundary", input, accepted(
+    {path: "normalizedBoxScore.provenance.sourceLabel", value: "\u00c5".repeat(170)},
+  ));
+}
 
 {
   const input = clone(base);
@@ -625,6 +707,262 @@ for (const [name, mutate, errorPath] of [
   };
   add("departure_time_exact_boundary_is_valid", input, accepted(
     {path: "normalizedBoxScore.teams.0.players.0.time.possibleIntervalMs.value.lowerInclusive", value: 1000},
+  ));
+}
+
+for (const [name, reverse] of [
+  ["reject_later_incident_before_earlier_disqualification", false],
+  ["reject_later_incident_after_earlier_disqualification", true],
+]) {
+  const input = twoPeriodBase();
+  input.scope.gameId = name;
+  const later = incident({incidentId: `${name}_personal`, periodNumber: 2});
+  const disqualification = disqualifyingIncident({
+    incidentId: `${name}_disqualification`,
+    periodNumber: 1,
+    clockRemainingMs: known(0),
+  });
+  input.disciplineIncidents = reverse ? [disqualification, later] : [later, disqualification];
+  add(name, input, rejected(
+    "invalidDisciplineIncident",
+    `$.disciplineIncidents[${reverse ? 1 : 0}].chargedParticipantId`,
+  ));
+}
+
+for (const [name, reverse] of [
+  ["reject_same_period_later_incident_before_disqualification", false],
+  ["reject_same_period_later_incident_after_disqualification", true],
+]) {
+  const input = clone(base);
+  input.scope.gameId = name;
+  input.teams[0].players[0].time = exactTime(300000);
+  const later = incident({incidentId: `${name}_personal`});
+  later.clockRemainingMs = known(299000);
+  const disqualification = disqualifyingIncident({
+    incidentId: `${name}_disqualification`,
+    clockRemainingMs: known(300000),
+  });
+  input.disciplineIncidents = reverse ? [disqualification, later] : [later, disqualification];
+  add(name, input, rejected(
+    "invalidDisciplineIncident",
+    `$.disciplineIncidents[${reverse ? 1 : 0}].chargedParticipantId`,
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_same_period_incident_before_disqualification";
+  input.teams[0].players[0].time = exactTime(300000);
+  const before = incident({incidentId: "personal_before_disqualification"});
+  before.clockRemainingMs = known(301000);
+  input.disciplineIncidents = [
+    disqualifyingIncident({
+      incidentId: "same_period_disqualification",
+      clockRemainingMs: known(300000),
+    }),
+    before,
+  ];
+  add("same_period_incident_before_disqualification_is_valid", input, accepted(
+    {path: "normalizedBoxScore.disciplineIncidents.length", value: 2},
+  ));
+}
+
+{
+  const input = twoPeriodBase();
+  input.scope.gameId = "game_earlier_period_incident_before_later_disqualification";
+  input.teams[0].players[0].time = exactTime(900000);
+  input.disciplineIncidents = [
+    disqualifyingIncident({
+      incidentId: "period_two_disqualification",
+      periodNumber: 2,
+      clockRemainingMs: known(300000),
+    }),
+    incident({incidentId: "period_one_personal", periodNumber: 1}),
+  ];
+  add("earlier_period_incident_before_later_disqualification_is_valid", input, accepted(
+    {path: "normalizedBoxScore.disciplineIncidents.length", value: 2},
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_disqualification_without_departure_time_conflict";
+  input.disciplineIncidents = [disqualifyingIncident({
+    incidentId: "one_second_disqualification",
+    clockRemainingMs: known(599000),
+  })];
+  add("reject_time_impossible_before_disqualification_without_departure", input, rejected(
+    "departureTimeConflict", "$.participants.participant_home_1.time",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_matching_disqualification_departure";
+  input.teams[0].players[0].time = exactTime(1000);
+  input.teams[0].players[0].departure = departureAt(
+    1, known(599000), "matching_disqualification",
+  );
+  input.disciplineIncidents = [disqualifyingIncident({
+    incidentId: "matching_disqualification",
+    clockRemainingMs: known(599000),
+  })];
+  add("matching_disqualification_departure_is_valid", input, accepted(
+    {path: "normalizedBoxScore.teams.0.players.0.departure.clockRemainingMs.value", value: 599000},
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_conflicting_disqualification_departure";
+  input.teams[0].players[0].time = exactTime(1000);
+  input.teams[0].players[0].departure = departureAt(
+    1, known(598000), "conflicting_disqualification",
+  );
+  input.disciplineIncidents = [disqualifyingIncident({
+    incidentId: "conflicting_disqualification",
+    clockRemainingMs: known(599000),
+  })];
+  add("reject_conflicting_disqualification_departure", input, rejected(
+    "invalidDeparture", "$.participants.participant_home_1.departure",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_common_disqualification_deadline_over_capacity";
+  input.teams[0].players[0].time = exactTime(300000);
+  const second = addPlayer(input, 0, "deadline_2", exactTime(300000));
+  input.disciplineIncidents = [
+    disqualifyingIncident({incidentId: "deadline_disqualification_1"}),
+    disqualifyingIncident({
+      incidentId: "deadline_disqualification_2",
+      participantId: second.participantId,
+    }),
+  ];
+  add("reject_common_disqualification_deadline_over_team_capacity", input, rejected(
+    "timeOutsideGameDuration", "$.teams.team_home.players",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_common_departure_deadline_over_capacity";
+  input.teams[0].players[0].time = exactTime(300000);
+  input.teams[0].players[0].departure = departureAt(1, known(300000), "common_1");
+  const second = addPlayer(input, 0, "common_2", exactTime(300000));
+  second.departure = departureAt(1, known(300000), "common_2");
+  add("reject_common_departure_deadline_over_team_capacity", input, rejected(
+    "timeOutsideGameDuration", "$.teams.team_home.players",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_common_rounded_deadline_boundary";
+  input.teams[0].players[0].time = roundedTime(300000);
+  input.teams[0].players[0].departure = departureAt(1, known(60000), "rounded_1");
+  const second = addPlayer(input, 0, "rounded_2", roundedTime(300000));
+  second.departure = departureAt(1, known(60000), "rounded_2");
+  add("rounded_lower_bounds_at_common_deadline_equality_are_valid", input, accepted(
+    {path: "normalizedBoxScore.teams.0.players.0.time.possibleIntervalMs.value.lowerInclusive", value: 270000},
+  ));
+}
+
+for (const [name, secondTime, status] of [
+  ["staggered_deadline_boundary", 100000, "accepted"],
+  ["staggered_deadline_over_capacity", 200000, "rejected"],
+]) {
+  const input = clone(base);
+  input.scope.gameId = `game_${name}`;
+  input.teams[0].players[0].time = exactTime(200000);
+  input.teams[0].players[0].departure = departureAt(1, known(400000), `${name}_1`);
+  const second = addPlayer(input, 0, `${name}_2`, exactTime(secondTime));
+  second.departure = departureAt(1, known(300000), `${name}_2`);
+  add(
+    status === "accepted" ? "staggered_deadline_boundary_is_valid" :
+      "reject_staggered_deadline_over_team_capacity",
+    input,
+    status === "accepted" ? accepted(
+      {path: "normalizedBoxScore.teams.0.players.1.time.playedTimeMs.value", value: secondTime},
+    ) : rejected("timeOutsideGameDuration", "$.teams.team_home.players"),
+  );
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_later_survivor_not_charged_early";
+  input.teams[0].players[0].time = exactTime(300000);
+  input.teams[0].players[0].departure = departureAt(1, known(300000), "early_exit");
+  addPlayer(input, 0, "survivor", exactTime(300000));
+  add("later_survivor_does_not_inflate_early_deadline_demand", input, accepted(
+    {path: "normalizedBoxScore.teams.0.players.length", value: 2},
+  ));
+}
+
+for (const [name, survivorTime, status] of [
+  ["later_survivor_forced_early_boundary", 400000, "accepted"],
+  ["later_survivor_forced_early_over_capacity", 500000, "rejected"],
+]) {
+  const input = clone(base);
+  input.scope.gameId = `game_${name}`;
+  input.rules.teamTimeCapacityMultiplier = known(2);
+  input.teams[0].players[0].time = exactTime(250000);
+  input.teams[0].players[0].departure = departureAt(1, known(300000), `${name}_1`);
+  const second = addPlayer(input, 0, `${name}_2`, exactTime(250000));
+  second.departure = departureAt(1, known(300000), `${name}_2`);
+  addPlayer(input, 0, `${name}_survivor`, exactTime(survivorTime));
+  add(
+    status === "accepted" ?
+      "later_survivor_forced_early_boundary_is_valid" :
+      "reject_later_survivor_forced_early_over_team_capacity",
+    input,
+    status === "accepted" ? accepted(
+      {path: "normalizedBoxScore.teams.0.players.2.time.playedTimeMs.value", value: survivorTime},
+    ) : rejected("timeOutsideGameDuration", "$.teams.team_home.players"),
+  );
+}
+
+{
+  const input = twoPeriodBase();
+  input.scope.gameId = "game_unknown_clock_conservative_deadline";
+  input.teams[0].players[0].time = exactTime(400000);
+  input.teams[0].players[0].departure = departureAt(
+    1, unknown("not_recorded"), "unknown_clock_1",
+  );
+  const second = addPlayer(input, 0, "unknown_clock_2", exactTime(400000));
+  second.departure = departureAt(1, unknown("not_recorded"), "unknown_clock_2");
+  add("reject_unknown_clock_conservative_deadline_over_team_capacity", input, rejected(
+    "timeOutsideGameDuration", "$.teams.team_home.players",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_overtime_deadline_over_capacity";
+  input.rules = genericRules(2);
+  input.rules.regulationPeriodCount = 1;
+  input.periods = [regulationPeriod(1, 0, 0), overtimePeriod(2, 1, 2, 0)];
+  input.teams[0].players[0].time = exactTime(400000);
+  input.teams[0].players[0].departure = departureAt(2, known(200000), "overtime_1");
+  addPlayer(input, 0, "overtime_2", exactTime(400000)).departure = departureAt(
+    2, known(200000), "overtime_2",
+  );
+  input.teams[1].players[0].time = exactTime(900000);
+  add("reject_overtime_deadline_over_team_capacity", input, rejected(
+    "timeOutsideGameDuration", "$.teams.team_home.players",
+  ));
+}
+
+{
+  const input = clone(base);
+  input.scope.gameId = "game_away_deadline_over_capacity";
+  input.teams[1].players[0].time = exactTime(300000);
+  input.teams[1].players[0].departure = departureAt(1, known(300000), "away_1");
+  const second = addPlayer(input, 1, "deadline_2", exactTime(300000));
+  second.departure = departureAt(1, known(300000), "away_2");
+  add("reject_away_deadline_over_team_capacity", input, rejected(
+    "timeOutsideGameDuration", "$.teams.team_away.players",
   ));
 }
 

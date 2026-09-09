@@ -32,6 +32,10 @@ const reviewedFixtureHashes = Object.freeze({
   partial_period_keeps_nominal_and_elapsed_separate: "ea717faf4c9993e71c8ed6fe8cb7249aac230769603c303aac75f07ebc61a1a2",
   fiba_reference_groups_q4_and_repeated_overtime: "405f2024121b6a3962b55acfab84aa8eb9b67557afb379c0c9f4948c16de51d8",
   reject_safe_integer_arithmetic_overflow: "54d9b13316c81b5733c8a949c9beda857070386e4aa9a0de848eddaea471b110",
+  reject_post_nfc_expansion_above_preflight_limit: "909eac28350df309bc96fe60155df0c0f117dc6b090726f27ebed753ae900ef7",
+  post_nfc_expansion_at_field_byte_boundary: "90bfb823a4bcdda03e83a1d3aaca4d0bbe2ef87f2824cdb3aed69b334799f47c",
+  reject_post_nfc_expansion_above_field_byte_boundary: "ebe8a68a97419a75ae8642093fcad3b2f5079096e64e5f98e4469cbab40e61e3",
+  post_nfc_contraction_near_source_byte_boundary: "4f95821d3632179f0b3c5dcdae3908d0188e6b7f2d57e6154a0952da86effdad",
 });
 
 test("calculator versions and vocabularies are unique and fixture-bound", () => {

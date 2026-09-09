@@ -17,7 +17,7 @@ from urllib import request
 from urllib.parse import urlencode, urlparse
 
 
-EXPECTED_CASES = 37
+EXPECTED_CASES = 61
 
 
 def expected_status(case_count=EXPECTED_CASES):
@@ -94,9 +94,15 @@ def _receive_exact(connection, length):
 class _WebSocket:
     def __init__(self, url, timeout_seconds):
         parsed = urlparse(url)
-        self.connection = socket.create_connection(
-            (parsed.hostname, parsed.port), timeout=timeout_seconds
-        )
+        handshake_deadline = time.monotonic() + timeout_seconds
+        try:
+            self.connection = socket.create_connection(
+                (parsed.hostname, parsed.port), timeout=timeout_seconds
+            )
+        except TimeoutError as error:
+            raise RuntimeError(
+                "Chrome DevTools WebSocket upgrade timed out"
+            ) from error
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         request_bytes = (
@@ -107,12 +113,46 @@ class _WebSocket:
             f"Sec-WebSocket-Key: {key}\r\n"
             "Sec-WebSocket-Version: 13\r\n\r\n"
         ).encode("ascii")
-        self.connection.sendall(request_bytes)
-        response = bytearray()
-        while b"\r\n\r\n" not in response:
-            response.extend(self.connection.recv(4096))
-        if b" 101 " not in bytes(response).split(b"\r\n", 1)[0]:
-            raise RuntimeError("Chrome rejected the DevTools WebSocket upgrade")
+        try:
+            remaining = handshake_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Chrome DevTools WebSocket upgrade timed out"
+                )
+            self.connection.settimeout(remaining)
+            self.connection.sendall(request_bytes)
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                remaining = handshake_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "Chrome DevTools WebSocket upgrade timed out"
+                    )
+                self.connection.settimeout(remaining)
+                try:
+                    chunk = self.connection.recv(4096)
+                except TimeoutError as error:
+                    raise RuntimeError(
+                        "Chrome DevTools WebSocket upgrade timed out"
+                    ) from error
+                if not chunk:
+                    raise RuntimeError(
+                        "Chrome DevTools WebSocket upgrade closed before "
+                        "headers completed"
+                    )
+                response.extend(chunk)
+            if b" 101 " not in bytes(response).split(b"\r\n", 1)[0]:
+                raise RuntimeError(
+                    "Chrome rejected the DevTools WebSocket upgrade"
+                )
+        except TimeoutError as error:
+            self.connection.close()
+            raise RuntimeError(
+                "Chrome DevTools WebSocket upgrade timed out"
+            ) from error
+        except BaseException:
+            self.connection.close()
+            raise
 
     def close(self):
         self.connection.close()

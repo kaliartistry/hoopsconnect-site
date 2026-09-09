@@ -100,6 +100,9 @@ function preflight(value: unknown): unknown {
         fail("resourceLimitExceeded", path);
       }
       const normalized = normalizeOfficialStatText(current);
+      if (utf8Length(normalized) > normalizedBoxScoreLimits.maxStringBytes) {
+        fail("resourceLimitExceeded", path);
+      }
       charge(utf8Length(JSON.stringify(normalized)), path);
       return normalized;
     }
@@ -1072,6 +1075,47 @@ function nominalElapsedThrough(
   return elapsed;
 }
 
+interface PermanentExitEvidence {
+  clockRemainingMs: ExplicitFact<number>;
+  incidentIndex: number | null;
+  periodNumber: number;
+}
+
+function exitOpportunityUpperBound(
+  periods: readonly Record<string, unknown>[],
+  exit: PermanentExitEvidence,
+  path: string,
+): number {
+  const period = periods[exit.periodNumber - 1];
+  const nominal = period.nominalDurationMs as {state: "known"; value: number};
+  const elapsed = period.elapsedDurationMs as ExplicitFact<number>;
+  let opportunity = nominalElapsedThrough(periods, exit.periodNumber - 1);
+  if (exit.clockRemainingMs.state === "known") {
+    opportunity = safeAdd(
+      opportunity,
+      nominal.value - exit.clockRemainingMs.value,
+      path,
+    );
+  } else {
+    opportunity = safeAdd(
+      opportunity,
+      elapsed.state === "known" ? elapsed.value : nominal.value,
+      path,
+    );
+  }
+  return opportunity;
+}
+
+function eventOccursAfterExit(
+  eventPeriod: number,
+  eventClock: ExplicitFact<number>,
+  exit: PermanentExitEvidence,
+): boolean {
+  if (eventPeriod !== exit.periodNumber) return eventPeriod > exit.periodNumber;
+  return eventClock.state === "known" && exit.clockRemainingMs.state === "known" &&
+    eventClock.value < exit.clockRemainingMs.value;
+}
+
 function validatePlayerTimeline(
   teams: readonly TeamResult[],
   periods: readonly Record<string, unknown>[],
@@ -1152,6 +1196,81 @@ function validatePlayerTimeline(
           `$.teams.${team.output.teamEntryId}.players`,
         )) {
       fail("timeOutsideGameDuration", `$.teams.${team.output.teamEntryId}.players`);
+    }
+  }
+}
+
+function validatePermanentExitTimeConstraints(
+  teams: readonly TeamResult[],
+  periods: readonly Record<string, unknown>[],
+  totalElapsedMs: ExplicitFact<number>,
+  rules: ParsedRules,
+  disqualifications: ReadonlyMap<string, readonly PermanentExitEvidence[]>,
+): void {
+  const durationUpperBound = totalElapsedMs.state === "known" ?
+    totalElapsedMs.value : nominalElapsedThrough(periods, periods.length);
+  for (const team of teams) {
+    const playerDemands: {deadline: number; minimum: number}[] = [];
+    const exitDeadlines: number[] = [];
+    for (const player of team.output.players as Record<string, unknown>[]) {
+      const interval = (player.time as ParsedTime).possibleIntervalMs as ExplicitFact<{
+        lowerInclusive: number;
+        upperExclusive: number;
+      }>;
+      if (interval.state !== "known") continue;
+      const exits: PermanentExitEvidence[] = [];
+      const departure = player.departure as Record<string, unknown>;
+      const departurePeriod = departure.periodNumber as ExplicitFact<number>;
+      if (departure.kind !== "none" && departurePeriod.state === "known") {
+        exits.push({
+          clockRemainingMs: departure.clockRemainingMs as ExplicitFact<number>,
+          incidentIndex: null,
+          periodNumber: departurePeriod.value,
+        });
+      }
+      exits.push(...(disqualifications.get(player.participantId as string) ?? []));
+      const path = `$.participants.${player.participantId}.time`;
+      let earliestDeadline = durationUpperBound;
+      for (const exit of exits) {
+        earliestDeadline = Math.min(
+          earliestDeadline,
+          exitOpportunityUpperBound(periods, exit, path),
+        );
+      }
+      if (interval.value.lowerInclusive > earliestDeadline) {
+        fail("departureTimeConflict", path);
+      }
+      playerDemands.push({
+        deadline: earliestDeadline,
+        minimum: interval.value.lowerInclusive,
+      });
+      if (exits.length > 0) exitDeadlines.push(earliestDeadline);
+    }
+    if (rules.teamTimeCapacityMultiplier.state !== "known") continue;
+    const checkpoints = [...new Set(exitDeadlines)].sort((left, right) => left - right);
+    const teamPath = `$.teams.${team.output.teamEntryId}.players`;
+    for (const checkpoint of checkpoints) {
+      let requiredThroughCheckpoint = 0;
+      for (const demand of playerDemands) {
+        const availableAfterCheckpoint = demand.deadline > checkpoint ?
+          demand.deadline - checkpoint : 0;
+        const forcedBeforeOrAtCheckpoint = Math.max(
+          0,
+          demand.minimum - availableAfterCheckpoint,
+        );
+        requiredThroughCheckpoint = safeAdd(
+          requiredThroughCheckpoint,
+          forcedBeforeOrAtCheckpoint,
+          teamPath,
+        );
+      }
+      if (requiredThroughCheckpoint > safeMultiply(
+        checkpoint,
+        rules.teamTimeCapacityMultiplier.value,
+        teamPath,
+      )) {
+        fail("timeOutsideGameDuration", teamPath);
+      }
     }
   }
 }
@@ -1303,7 +1422,7 @@ function validateExceptionalPointsByPeriod(
 
 function validateAdjustmentDisqualificationEligibility(
   adjustments: readonly Record<string, unknown>[],
-  disqualifiedInPeriod: ReadonlyMap<string, number>,
+  disqualifications: ReadonlyMap<string, readonly PermanentExitEvidence[]>,
 ): void {
   for (const [index, adjustment] of adjustments.entries()) {
     const participantId = (
@@ -1312,7 +1431,9 @@ function validateAdjustmentDisqualificationEligibility(
     const periodNumber = (
       adjustment.periodNumber as {state: "known"; value: number}
     ).value;
-    if (periodNumber > (disqualifiedInPeriod.get(participantId) ?? Infinity)) {
+    if ((disqualifications.get(participantId) ?? []).some(
+      (exit) => periodNumber > exit.periodNumber,
+    )) {
       fail("invalidScoreAdjustment", `$.playedScoreAdjustments[${index}].creditedParticipantId`);
     }
   }
@@ -1328,14 +1449,14 @@ function validateDiscipline(
   incidents: Record<string, unknown>[];
   byParticipant: Map<string, Record<string, unknown>>;
   byTeam: Map<string, Record<string, unknown>>;
-  disqualifiedInPeriod: Map<string, number>;
+  disqualifications: Map<string, PermanentExitEvidence[]>;
 } {
   const rawIncidents = array(rawValue, "$.disciplineIncidents");
   if (rawIncidents.length > normalizedBoxScoreLimits.maxIncidents) {
     fail("resourceLimitExceeded", "$.disciplineIncidents");
   }
   const incidentIds = new Set<string>();
-  const disqualifiedInPeriod = new Map<string, number>();
+  const disqualifications = new Map<string, PermanentExitEvidence[]>();
   const byParticipant = new Map<string, Record<string, unknown>>();
   const byTeam = new Map<string, Record<string, unknown>>();
   for (const participantId of participants.keys()) {
@@ -1457,23 +1578,6 @@ function validateDiscipline(
           !absentFact(clockRemainingMs, "interval_or_bench_context")) {
         fail("invalidDisciplineIncident", `${path}.clockRemainingMs`);
       }
-      if (chargedPartyKind === "player" && chargedParticipantId.state === "known") {
-        const participant = participants.get(chargedParticipantId.value)!;
-        const departure = participant.output.departure as Record<string, unknown>;
-        const departurePeriod = departure.periodNumber as ExplicitFact<number>;
-        const priorDisqualification = disqualifiedInPeriod.get(chargedParticipantId.value);
-        if ((departure.kind !== "none" && departurePeriod.state === "known" &&
-             periodNumber.value > departurePeriod.value) ||
-            (priorDisqualification !== undefined && periodNumber.value > priorDisqualification)) {
-          fail("invalidDisciplineIncident", `${path}.chargedParticipantId`);
-        }
-        if (incidentType === "disqualifying") {
-          disqualifiedInPeriod.set(
-            chargedParticipantId.value,
-            Math.min(periodNumber.value, priorDisqualification ?? Infinity),
-          );
-        }
-      }
     }
     const evidenceRefs = evidenceFact(raw.evidenceRefs, `${path}.evidenceRefs`);
     if (evidenceRefs.state !== "known" || evidenceRefs.value.length === 0) {
@@ -1533,6 +1637,60 @@ function validateDiscipline(
       teamEntryId,
     };
   });
+  for (const [index, incident] of incidents.entries()) {
+    const chargedParticipantId = incident.chargedParticipantId as ExplicitFact<string>;
+    const periodNumber = incident.periodNumber as ExplicitFact<number>;
+    if (incident.chargedPartyKind !== "player" || chargedParticipantId.state !== "known" ||
+        periodNumber.state !== "known" || incident.incidentType !== "disqualifying") {
+      continue;
+    }
+    const exits = disqualifications.get(chargedParticipantId.value) ?? [];
+    exits.push({
+      clockRemainingMs: incident.clockRemainingMs as ExplicitFact<number>,
+      incidentIndex: index,
+      periodNumber: periodNumber.value,
+    });
+    disqualifications.set(chargedParticipantId.value, exits);
+  }
+  for (const [index, incident] of incidents.entries()) {
+    const chargedParticipantId = incident.chargedParticipantId as ExplicitFact<string>;
+    const periodNumber = incident.periodNumber as ExplicitFact<number>;
+    if (incident.chargedPartyKind !== "player" || chargedParticipantId.state !== "known" ||
+        periodNumber.state !== "known") {
+      continue;
+    }
+    const clock = incident.clockRemainingMs as ExplicitFact<number>;
+    const participant = participants.get(chargedParticipantId.value)!;
+    const departure = participant.output.departure as Record<string, unknown>;
+    const departurePeriod = departure.periodNumber as ExplicitFact<number>;
+    if (departure.kind !== "none" && departurePeriod.state === "known" &&
+        eventOccursAfterExit(periodNumber.value, clock, {
+          clockRemainingMs: departure.clockRemainingMs as ExplicitFact<number>,
+          incidentIndex: null,
+          periodNumber: departurePeriod.value,
+        })) {
+      fail("invalidDisciplineIncident", `$.disciplineIncidents[${index}].chargedParticipantId`);
+    }
+    for (const exit of disqualifications.get(chargedParticipantId.value) ?? []) {
+      if (exit.incidentIndex !== index &&
+          eventOccursAfterExit(periodNumber.value, clock, exit)) {
+        fail("invalidDisciplineIncident", `$.disciplineIncidents[${index}].chargedParticipantId`);
+      }
+    }
+  }
+  for (const [participantId, exits] of disqualifications) {
+    const departure = participants.get(participantId)!.output.departure as Record<string, unknown>;
+    const departurePeriod = departure.periodNumber as ExplicitFact<number>;
+    const departureClock = departure.clockRemainingMs as ExplicitFact<number>;
+    if (departure.kind === "none" || departurePeriod.state !== "known") continue;
+    for (const exit of exits) {
+      if (departurePeriod.value !== exit.periodNumber ||
+          (departureClock.state === "known" && exit.clockRemainingMs.state === "known" &&
+           departureClock.value !== exit.clockRemainingMs.value)) {
+        fail("invalidDeparture", `$.participants.${participantId}.departure`);
+      }
+    }
+  }
   for (const summary of byTeam.values()) {
     const teamFouls = summary.teamFoulsByPeriod as Record<string, number>;
     const penaltyStateByPeriod: Record<string, unknown> = {};
@@ -1567,7 +1725,7 @@ function validateDiscipline(
     summary.penaltyGroups = penaltyGroups;
     summary.penaltyStateByPeriod = penaltyStateByPeriod;
   }
-  return {incidents, byParticipant, byTeam, disqualifiedInPeriod};
+  return {incidents, byParticipant, byTeam, disqualifications};
 }
 
 function validateAdministrativeResult(
@@ -1875,7 +2033,14 @@ function calculateAccepted(rawInput: unknown): CalculatorAccepted {
   );
   validateAdjustmentDisqualificationEligibility(
     adjustments,
-    discipline.disqualifiedInPeriod,
+    discipline.disqualifications,
+  );
+  validatePermanentExitTimeConstraints(
+    teamResults,
+    periodResult.periods,
+    periodResult.totalElapsedMs,
+    root.rules,
+    discipline.disqualifications,
   );
   for (const team of teamResults) {
     team.output.discipline = discipline.byTeam.get(team.output.teamEntryId as string)!;

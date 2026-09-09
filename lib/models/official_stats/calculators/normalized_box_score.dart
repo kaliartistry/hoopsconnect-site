@@ -1353,6 +1353,50 @@ int _nominalElapsedThrough(List<Object?> periods, int periodCount) {
   return elapsed;
 }
 
+typedef _PermanentExitEvidence = ({
+  Map<String, Object?> clockRemainingMs,
+  int? incidentIndex,
+  int periodNumber,
+});
+
+int _exitOpportunityUpperBound(
+  List<Object?> periods,
+  _PermanentExitEvidence exit,
+  String path,
+) {
+  final period = periods[exit.periodNumber - 1]! as Map<String, Object?>;
+  final nominal = period['nominalDurationMs']! as Map<String, Object?>;
+  final elapsed = period['elapsedDurationMs']! as Map<String, Object?>;
+  var opportunity = _nominalElapsedThrough(periods, exit.periodNumber - 1);
+  if (exit.clockRemainingMs['state'] == 'known') {
+    opportunity = _safeAdd(
+      opportunity,
+      (nominal['value']! as int) - (exit.clockRemainingMs['value']! as int),
+      path,
+    );
+  } else {
+    opportunity = _safeAdd(
+      opportunity,
+      elapsed['state'] == 'known'
+          ? elapsed['value']! as int
+          : nominal['value']! as int,
+      path,
+    );
+  }
+  return opportunity;
+}
+
+bool _eventOccursAfterExit(
+  int eventPeriod,
+  Map<String, Object?> eventClock,
+  _PermanentExitEvidence exit,
+) {
+  if (eventPeriod != exit.periodNumber) return eventPeriod > exit.periodNumber;
+  return eventClock['state'] == 'known' &&
+      exit.clockRemainingMs['state'] == 'known' &&
+      (eventClock['value']! as int) < (exit.clockRemainingMs['value']! as int);
+}
+
 void _validatePlayerTimeline(
   List<({Map<String, int> counts, Map<String, Object?> output})> teams,
   List<Object?> periods,
@@ -1472,6 +1516,86 @@ void _validatePlayerTimeline(
         r'$.teams.'
             '${team.output['teamEntryId']}.players',
       );
+    }
+  }
+}
+
+void _validatePermanentExitTimeConstraints(
+  List<({Map<String, int> counts, Map<String, Object?> output})> teams,
+  List<Object?> periods,
+  Map<String, Object?> totalElapsedMs,
+  Map<String, Object?> rules,
+  Map<String, List<_PermanentExitEvidence>> disqualifications,
+) {
+  final durationUpperBound = totalElapsedMs['state'] == 'known'
+      ? totalElapsedMs['value']! as int
+      : _nominalElapsedThrough(periods, periods.length);
+  for (final team in teams) {
+    final playerDemands = <({int deadline, int minimum})>[];
+    final exitDeadlines = <int>[];
+    for (final playerValue in team.output['players']! as List<Object?>) {
+      final player = playerValue! as Map<String, Object?>;
+      final time = player['time']! as Map<String, Object?>;
+      final interval = time['possibleIntervalMs']! as Map<String, Object?>;
+      if (interval['state'] != 'known') continue;
+      final exits = <_PermanentExitEvidence>[];
+      final departure = player['departure']! as Map<String, Object?>;
+      final departurePeriod =
+          departure['periodNumber']! as Map<String, Object?>;
+      if (departure['kind'] != 'none' && departurePeriod['state'] == 'known') {
+        exits.add((
+          clockRemainingMs:
+              departure['clockRemainingMs']! as Map<String, Object?>,
+          incidentIndex: null,
+          periodNumber: departurePeriod['value']! as int,
+        ));
+      }
+      exits.addAll(disqualifications[player['participantId']] ?? const []);
+      final path =
+          r'$.participants.'
+          '${player['participantId']}.time';
+      var earliestDeadline = durationUpperBound;
+      for (final exit in exits) {
+        final deadline = _exitOpportunityUpperBound(periods, exit, path);
+        if (deadline < earliestDeadline) {
+          earliestDeadline = deadline;
+        }
+      }
+      final bounds = interval['value']! as Map<String, Object?>;
+      final minimum = bounds['lowerInclusive']! as int;
+      if (minimum > earliestDeadline) {
+        _fail('departureTimeConflict', path);
+      }
+      playerDemands.add((deadline: earliestDeadline, minimum: minimum));
+      if (exits.isNotEmpty) exitDeadlines.add(earliestDeadline);
+    }
+    final capacity =
+        rules['teamTimeCapacityMultiplier']! as Map<String, Object?>;
+    if (capacity['state'] != 'known') continue;
+    final teamPath =
+        r'$.teams.'
+        '${team.output['teamEntryId']}.players';
+    final checkpoints = exitDeadlines.toSet().toList()..sort();
+    for (final checkpoint in checkpoints) {
+      var requiredThroughCheckpoint = 0;
+      for (final demand in playerDemands) {
+        final availableAfterCheckpoint = demand.deadline > checkpoint
+            ? demand.deadline - checkpoint
+            : 0;
+        final forcedBeforeOrAtCheckpoint =
+            demand.minimum > availableAfterCheckpoint
+            ? demand.minimum - availableAfterCheckpoint
+            : 0;
+        requiredThroughCheckpoint = _safeAdd(
+          requiredThroughCheckpoint,
+          forcedBeforeOrAtCheckpoint,
+          teamPath,
+        );
+      }
+      if (requiredThroughCheckpoint >
+          _safeMultiply(checkpoint, capacity['value']! as int, teamPath)) {
+        _fail('timeOutsideGameDuration', teamPath);
+      }
     }
   }
 }
@@ -1675,7 +1799,7 @@ void _validateExceptionalPointsByPeriod(
 
 void _validateAdjustmentDisqualificationEligibility(
   List<Object?> adjustments,
-  Map<String, int> disqualifiedInPeriod,
+  Map<String, List<_PermanentExitEvidence>> disqualifications,
 ) {
   for (var index = 0; index < adjustments.length; index += 1) {
     final adjustment = adjustments[index]! as Map<String, Object?>;
@@ -1684,9 +1808,9 @@ void _validateAdjustmentDisqualificationEligibility(
             as String;
     final periodNumber =
         (adjustment['periodNumber']! as Map<String, Object?>)['value']! as int;
-    final disqualificationPeriod = disqualifiedInPeriod[participantId];
-    if (disqualificationPeriod != null &&
-        periodNumber > disqualificationPeriod) {
+    if ((disqualifications[participantId] ?? const []).any(
+      (exit) => periodNumber > exit.periodNumber,
+    )) {
       _fail(
         'invalidScoreAdjustment',
         r'$.playedScoreAdjustments'
@@ -1700,7 +1824,7 @@ void _validateAdjustmentDisqualificationEligibility(
   List<Object?> incidents,
   Map<String, Map<String, Object?>> byParticipant,
   Map<String, Map<String, Object?>> byTeam,
-  Map<String, int> disqualifiedInPeriod,
+  Map<String, List<_PermanentExitEvidence>> disqualifications,
 })
 _validateDiscipline(
   Object? value,
@@ -1715,7 +1839,7 @@ _validateDiscipline(
     _fail('resourceLimitExceeded', r'$.disciplineIncidents');
   }
   final incidentIds = <String>{};
-  final disqualifiedInPeriod = <String, int>{};
+  final disqualifications = <String, List<_PermanentExitEvidence>>{};
   final byParticipant = <String, Map<String, Object?>>{
     for (final participantId in participants.keys)
       participantId: {
@@ -1887,30 +2011,6 @@ _validateDiscipline(
           !_absentFact(clockRemainingMs, 'interval_or_bench_context')) {
         _fail('invalidDisciplineIncident', '$path.clockRemainingMs');
       }
-      if (chargedPartyKind == 'player' &&
-          chargedParticipantId['state'] == 'known') {
-        final participant = participants[chargedParticipantId['value']]!;
-        final output = participant['output']! as Map<String, Object?>;
-        final departure = output['departure']! as Map<String, Object?>;
-        final departurePeriod =
-            departure['periodNumber']! as Map<String, Object?>;
-        final number = periodNumber['value']! as int;
-        final participantId = chargedParticipantId['value']! as String;
-        final priorDisqualification = disqualifiedInPeriod[participantId];
-        if ((departure['kind'] != 'none' &&
-                departurePeriod['state'] == 'known' &&
-                number > (departurePeriod['value']! as int)) ||
-            (priorDisqualification != null && number > priorDisqualification)) {
-          _fail('invalidDisciplineIncident', '$path.chargedParticipantId');
-        }
-        if (incidentType == 'disqualifying') {
-          disqualifiedInPeriod[participantId] = priorDisqualification == null
-              ? number
-              : (number < priorDisqualification
-                    ? number
-                    : priorDisqualification);
-        }
-      }
     }
     final evidenceRefs = _evidenceFact(
       raw['evidenceRefs'],
@@ -1990,6 +2090,89 @@ _validateDiscipline(
       'teamEntryId': teamEntryId,
     });
   }
+  for (var index = 0; index < incidents.length; index += 1) {
+    final incident = incidents[index]! as Map<String, Object?>;
+    final chargedParticipantId =
+        incident['chargedParticipantId']! as Map<String, Object?>;
+    final periodNumber = incident['periodNumber']! as Map<String, Object?>;
+    if (incident['chargedPartyKind'] != 'player' ||
+        chargedParticipantId['state'] != 'known' ||
+        periodNumber['state'] != 'known' ||
+        incident['incidentType'] != 'disqualifying') {
+      continue;
+    }
+    final participantId = chargedParticipantId['value']! as String;
+    disqualifications.putIfAbsent(participantId, () => []).add((
+      clockRemainingMs: incident['clockRemainingMs']! as Map<String, Object?>,
+      incidentIndex: index,
+      periodNumber: periodNumber['value']! as int,
+    ));
+  }
+  for (var index = 0; index < incidents.length; index += 1) {
+    final incident = incidents[index]! as Map<String, Object?>;
+    final chargedParticipantId =
+        incident['chargedParticipantId']! as Map<String, Object?>;
+    final periodNumber = incident['periodNumber']! as Map<String, Object?>;
+    if (incident['chargedPartyKind'] != 'player' ||
+        chargedParticipantId['state'] != 'known' ||
+        periodNumber['state'] != 'known') {
+      continue;
+    }
+    final participantId = chargedParticipantId['value']! as String;
+    final clock = incident['clockRemainingMs']! as Map<String, Object?>;
+    final participant = participants[participantId]!;
+    final output = participant['output']! as Map<String, Object?>;
+    final departure = output['departure']! as Map<String, Object?>;
+    final departurePeriod = departure['periodNumber']! as Map<String, Object?>;
+    if (departure['kind'] != 'none' &&
+        departurePeriod['state'] == 'known' &&
+        _eventOccursAfterExit(periodNumber['value']! as int, clock, (
+          clockRemainingMs:
+              departure['clockRemainingMs']! as Map<String, Object?>,
+          incidentIndex: null,
+          periodNumber: departurePeriod['value']! as int,
+        ))) {
+      _fail(
+        'invalidDisciplineIncident',
+        r'$.disciplineIncidents'
+            '[$index].chargedParticipantId',
+      );
+    }
+    for (final exit in disqualifications[participantId] ?? const []) {
+      if (exit.incidentIndex != index &&
+          _eventOccursAfterExit(periodNumber['value']! as int, clock, exit)) {
+        _fail(
+          'invalidDisciplineIncident',
+          r'$.disciplineIncidents'
+              '[$index].chargedParticipantId',
+        );
+      }
+    }
+  }
+  for (final entry in disqualifications.entries) {
+    final participantId = entry.key;
+    final output =
+        participants[participantId]!['output']! as Map<String, Object?>;
+    final departure = output['departure']! as Map<String, Object?>;
+    final departurePeriod = departure['periodNumber']! as Map<String, Object?>;
+    final departureClock =
+        departure['clockRemainingMs']! as Map<String, Object?>;
+    if (departure['kind'] == 'none' || departurePeriod['state'] != 'known') {
+      continue;
+    }
+    for (final exit in entry.value) {
+      if ((departurePeriod['value']! as int) != exit.periodNumber ||
+          (departureClock['state'] == 'known' &&
+              exit.clockRemainingMs['state'] == 'known' &&
+              departureClock['value'] != exit.clockRemainingMs['value'])) {
+        _fail(
+          'invalidDeparture',
+          r'$.participants.'
+              '$participantId.departure',
+        );
+      }
+    }
+  }
   for (final summary in byTeam.values) {
     final teamFouls = summary['teamFoulsByPeriod']! as Map<String, Object?>;
     final penaltyStateByPeriod = <String, Object?>{};
@@ -2038,7 +2221,7 @@ _validateDiscipline(
     incidents: incidents,
     byParticipant: byParticipant,
     byTeam: byTeam,
-    disqualifiedInPeriod: disqualifiedInPeriod,
+    disqualifications: disqualifications,
   );
 }
 
@@ -2445,7 +2628,14 @@ Map<String, Object?> _calculateAccepted(Object? rawInput) {
   );
   _validateAdjustmentDisqualificationEligibility(
     adjustments,
-    discipline.disqualifiedInPeriod,
+    discipline.disqualifications,
+  );
+  _validatePermanentExitTimeConstraints(
+    teamResults,
+    periodResult.periods,
+    periodResult.totalElapsedMs,
+    rules,
+    discipline.disqualifications,
   );
   for (final team in teamResults) {
     team.output['discipline'] = discipline.byTeam[team.output['teamEntryId']]!;
