@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "v1Interoperability": "none",
+  "projectId": "demo-hoopsconnect",
+  "rootScope": {
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "shared-user"
+  },
+  "tenantScope": {
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": "league-tenant",
+    "authUidV2": "shared-user"
+  },
+  "generationA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "generationB": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "lifecycleEpoch": 7,
+  "reauthAfterSecV2": 1700000000,
+  "freshAuthTimeSec": 1700000001,
+  "associationId": "jba",
+  "capabilities": [
+    "association.read",
+    "members.read",
+    "posts.acknowledge",
+    "stats.approve"
+  ],
+  "paths": {
+    "root": {
+      "lifecycle": "accountLifecycleV2Root/shared-user",
+      "membership": "membershipsV2Root/shared-user",
+      "projection": "storageAuthorizationsV2Root/shared-user",
+      "profile": "accountProfilesV2Root/shared-user",
+      "registration": "accountFcmRegistrationsV2Root/shared-user/installations/slot0",
+      "suppression": "accountGenerationSuppressionsV2Root/shared-user"
+    },
+    "tenant": {
+      "lifecycle": "accountLifecycleV2Tenants/league-tenant/users/shared-user",
+      "membership": "membershipsV2Tenants/league-tenant/users/shared-user",
+      "projection": "storageAuthorizationsV2Tenants/league-tenant/users/shared-user",
+      "profile": "accountProfilesV2Tenants/league-tenant/users/shared-user",
+      "registration": "accountFcmRegistrationsV2Tenants/league-tenant/users/shared-user/installations/slot0",
+      "suppression": "accountGenerationSuppressionsV2Tenants/league-tenant/users/shared-user"
+    }
+  },
+  "directoryEntry": {
+    "accountDirectorySchemaVersionV2": 2,
+    "uid": "shared-user",
+    "displayName": "Test Member",
+    "teamId": "team-a",
+    "divisionId": "division-a"
+  },
+  "routeExpectations": {
+    "signedOutOrdinary": "/login",
+    "signedOutDeletion": "/delete-account",
+    "establishing": "/loading",
+    "refreshRequired": "/loading",
+    "ready": "/board",
+    "blocked": "/access-blocked",
+    "deleting": "/delete-account",
+    "deleted": "/delete-account"
+  },
+  "requiredDenials": [
+    "missing_token_proof",
+    "invalid_token_proof",
+    "invalid_lifecycle",
+    "lifecycle_inactive",
+    "invalid_membership",
+    "membership_inactive",
+    "scope_mismatch",
+    "generation_mismatch",
+    "epoch_mismatch",
+    "reauthentication_required",
+    "capability_denied"
+  ],
+  "deferredOwners": {
+    "acceptanceCleanupAndAuthDeletion": "AD04",
+    "privacyEpochAndCrashSafeOfficialStatProjectionCustody": "AD06"
+  }
+}
