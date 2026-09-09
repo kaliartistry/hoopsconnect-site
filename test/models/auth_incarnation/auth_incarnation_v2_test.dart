@@ -91,6 +91,24 @@ void main() {
     expect(fixture['maxSafeInteger'], AuthIncarnationV2.maxSafeInteger);
     expect(AuthIncarnationV2.generationClaim, 'accountGenerationV2');
     expect(AuthIncarnationV2.lifecycleEpochClaim, 'accountLifecycleEpochV2');
+    expect(fixture['sessionRequirements'], {
+      'attemptIdentity': [
+        'attemptId',
+        'sessionAttemptEpochV2',
+        'sessionAttemptNonceV2',
+        'authProjectIdV2',
+        'authTenantIdV2',
+        'authUidV2',
+        'accountGenerationV2',
+        'accountLifecycleEpochV2',
+      ],
+      'sessionAttemptEpochUsesStrictlyIncreasingGateHighWater': true,
+      'sessionAttemptNonceIsEphemeralPerIssuanceInMemoryIdentity': true,
+      'attemptIssuanceReturnsAlreadyAdvancedGate': true,
+      'publicReducerMayInstallPreissuedAttempt': false,
+      'proofReadyRequiresEvaluatorBinding': true,
+      'staleCompletionMayOpenReady': false,
+    });
   });
 
   test('Dart account evaluator matches every shared fail-closed vector', () {

@@ -122,7 +122,11 @@
     "0123456789abcdef"
   ],
   "sessionRequirements": {
-    "attemptIdentity": ["attemptId", "authProjectIdV2", "authTenantIdV2", "authUidV2", "accountGenerationV2", "accountLifecycleEpochV2"],
+    "attemptIdentity": ["attemptId", "sessionAttemptEpochV2", "sessionAttemptNonceV2", "authProjectIdV2", "authTenantIdV2", "authUidV2", "accountGenerationV2", "accountLifecycleEpochV2"],
+    "sessionAttemptEpochUsesStrictlyIncreasingGateHighWater": true,
+    "sessionAttemptNonceIsEphemeralPerIssuanceInMemoryIdentity": true,
+    "attemptIssuanceReturnsAlreadyAdvancedGate": true,
+    "publicReducerMayInstallPreissuedAttempt": false,
     "proofReadyRequiresEvaluatorBinding": true,
     "staleCompletionMayOpenReady": false
   }

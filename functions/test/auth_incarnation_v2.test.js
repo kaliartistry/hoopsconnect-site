@@ -66,6 +66,24 @@ test('shared fixture is dormant V2 and preserves the JavaScript-safe counter bou
   assert.equal(fixture.maxSafeInteger, contract.MAX_SAFE_AUTHORITY_INTEGER_V2);
   assert.equal(contract.ACCOUNT_GENERATION_CLAIM_V2, 'accountGenerationV2');
   assert.equal(contract.ACCOUNT_LIFECYCLE_EPOCH_CLAIM_V2, 'accountLifecycleEpochV2');
+  assert.deepEqual(fixture.sessionRequirements, {
+    attemptIdentity: [
+      'attemptId',
+      'sessionAttemptEpochV2',
+      'sessionAttemptNonceV2',
+      'authProjectIdV2',
+      'authTenantIdV2',
+      'authUidV2',
+      'accountGenerationV2',
+      'accountLifecycleEpochV2',
+    ],
+    sessionAttemptEpochUsesStrictlyIncreasingGateHighWater: true,
+    sessionAttemptNonceIsEphemeralPerIssuanceInMemoryIdentity: true,
+    attemptIssuanceReturnsAlreadyAdvancedGate: true,
+    publicReducerMayInstallPreissuedAttempt: false,
+    proofReadyRequiresEvaluatorBinding: true,
+    staleCompletionMayOpenReady: false,
+  });
 });
 
 test('account evaluator follows every shared fail-closed vector without mutation', () => {
