@@ -116,6 +116,43 @@ function listDocumentsUrl(baseUrl, collectionPath, pageSize, pageToken) {
   return `${target}?${query.toString()}`;
 }
 
+async function readBoundedJsonResponse(response) {
+  const contentLength = Number(response.headers && response.headers.get
+    ? response.headers.get('content-length')
+    : NaN);
+  if (Number.isFinite(contentLength) && contentLength > MAX_PROVIDER_RESPONSE_BYTES) {
+    throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+  }
+  if (response.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_PROVIDER_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return JSON.parse(Buffer.concat(chunks, totalBytes).toString('utf8'));
+  }
+  if (typeof response.arrayBuffer === 'function') {
+    const rawBody = Buffer.from(await response.arrayBuffer());
+    if (rawBody.byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
+      throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+    }
+    return JSON.parse(rawBody.toString('utf8'));
+  }
+  const body = await response.json();
+  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
+    throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
+  }
+  return body;
+}
+
 async function readCollection({
   baseUrl,
   bearerToken,
@@ -153,25 +190,7 @@ async function readCollection({
         `Read-only Firestore request failed with HTTP ${response ? response.status : 'unknown'}.`,
       );
     }
-    const contentLength = Number(response.headers && response.headers.get
-      ? response.headers.get('content-length')
-      : NaN);
-    if (Number.isFinite(contentLength) && contentLength > MAX_PROVIDER_RESPONSE_BYTES) {
-      throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
-    }
-    let body;
-    if (typeof response.arrayBuffer === 'function') {
-      const rawBody = Buffer.from(await response.arrayBuffer());
-      if (rawBody.byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
-        throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
-      }
-      body = JSON.parse(rawBody.toString('utf8'));
-    } else {
-      body = await response.json();
-      if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
-        throw new MigrationInventoryError(errorCodes.oversizedReport, 'Provider response byte bound exceeded.');
-      }
-    }
+    const body = await readBoundedJsonResponse(response);
     const page = Array.isArray(body.documents) ? body.documents : [];
     if (page.length > requestPageSize) {
       throw new MigrationInventoryError(errorCodes.oversizedPage, 'Provider returned an oversized page.');
