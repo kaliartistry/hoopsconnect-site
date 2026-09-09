@@ -77,10 +77,14 @@ String? _tenant(Object? value) =>
     value == null ? null : _identifier(value, 'tenant ID');
 
 int _counter(Object? value, String label) {
-  if (value is! int || value < 0 || value > AuthIncarnationV2.maxSafeInteger) {
+  if (value is! num ||
+      !value.isFinite ||
+      value < 0 ||
+      value > AuthIncarnationV2.maxSafeInteger ||
+      value.truncateToDouble() != value.toDouble()) {
     _invalid(label);
   }
-  return value;
+  return value.toInt();
 }
 
 String _generation(Object? value) {
@@ -422,7 +426,7 @@ class StorageAuthorizationProjectionV2 {
   };
 }
 
-class ValidatedActiveAuthorityV2 {
+final class ValidatedActiveAuthorityV2 {
   final AuthIncarnationScopeV2 scope;
   final String accountGenerationV2;
   final int accountLifecycleEpochV2;
@@ -455,7 +459,7 @@ class AuthIncarnationAuthorizationDecisionV2 {
     AuthIncarnationDenialCodeV2 denial,
   ) : this._(authorized: false, code: denial);
 
-  AuthIncarnationAuthorizationDecisionV2.allowed(
+  AuthIncarnationAuthorizationDecisionV2._allowed(
     ValidatedActiveAuthorityV2 authority,
   ) : this._(authorized: true, binding: authority);
 }
@@ -553,7 +557,7 @@ AuthIncarnationAuthorizationDecisionV2 evaluateAccountAuthorizationV2({
       AuthIncarnationDenialCodeV2.capabilityDenied,
     );
   }
-  return AuthIncarnationAuthorizationDecisionV2.allowed(
+  return AuthIncarnationAuthorizationDecisionV2._allowed(
     ValidatedActiveAuthorityV2._(
       scope: scope,
       accountGenerationV2: token.accountGenerationV2,
@@ -642,7 +646,7 @@ AuthIncarnationAuthorizationDecisionV2 evaluateStorageAuthorizationV2({
       AuthIncarnationDenialCodeV2.capabilityDenied,
     );
   }
-  return AuthIncarnationAuthorizationDecisionV2.allowed(
+  return AuthIncarnationAuthorizationDecisionV2._allowed(
     ValidatedActiveAuthorityV2._(
       scope: scope,
       accountGenerationV2: token.accountGenerationV2,

@@ -3,6 +3,22 @@
   "activationAllowed": false,
   "schemaVersion": 2,
   "maxSafeInteger": 9007199254740991,
+  "numericSemantics": {
+    "accepted": [0, -0.0, 7, 7.0, 7e0, 9007199254740991],
+    "rejected": [-1, 7.5, 9007199254740992]
+  },
+  "authorityPathContract": {
+    "nullTenant": {
+      "lifecycle": "accountLifecycleV2Root/{uid}",
+      "membership": "membershipsV2Root/{uid}",
+      "projection": "storageAuthorizationsV2Root/{uid}"
+    },
+    "concreteTenant": {
+      "lifecycle": "accountLifecycleV2Tenants/{tenantId}/users/{uid}",
+      "membership": "membershipsV2Tenants/{tenantId}/users/{uid}",
+      "projection": "storageAuthorizationsV2Tenants/{tenantId}/users/{uid}"
+    }
+  },
   "scope": {
     "authProjectIdV2": "demo-hoopsconnect",
     "authTenantIdV2": null,
@@ -103,13 +119,9 @@
     "g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "0123456789abcdef"
   ],
-  "sessionSequences": [
-    {"name": "signup-or-signin-ready", "events": ["authObserved", "proofReady"], "states": ["establishing", "ready"]},
-    {"name": "refresh-then-ready", "events": ["authObserved", "refreshRequired", "proofReady"], "states": ["establishing", "refreshRequired", "ready"]},
-    {"name": "proof-loss-closes-access", "events": ["authObserved", "proofReady", "proofLost"], "states": ["establishing", "ready", "blocked"]},
-    {"name": "account-switch-closes-before-new-proof", "events": ["authObserved", "proofReady", "accountSwitchStarted", "proofReady"], "states": ["establishing", "ready", "establishing", "ready"]},
-    {"name": "deletion-intent-never-provisions", "events": ["authObserved", "lifecycleDeleting", "proofReady"], "states": ["establishing", "deleting", "blocked"]},
-    {"name": "deleted-never-provisions", "events": ["authObserved", "lifecycleDeleted", "proofReady"], "states": ["establishing", "deleted", "blocked"]},
-    {"name": "signout-closes-access", "events": ["authObserved", "proofReady", "signedOut"], "states": ["establishing", "ready", "signedOut"]}
-  ]
+  "sessionRequirements": {
+    "attemptIdentity": ["attemptId", "authProjectIdV2", "authTenantIdV2", "authUidV2", "accountGenerationV2", "accountLifecycleEpochV2"],
+    "proofReadyRequiresEvaluatorBinding": true,
+    "staleCompletionMayOpenReady": false
+  }
 }

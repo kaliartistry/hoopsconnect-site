@@ -20,7 +20,8 @@ encoded as exactly 64 lowercase hexadecimal characters, `accountGenerationV2`
 Protected authority is valid only when all of the following are true:
 
 1. the token, lifecycle, and membership use the explicit V2 schema;
-2. their project, nullable tenant, UID, `G`, and `E` values match exactly;
+2. their project, nullable tenant, UID, `G`, and `E` values match exactly,
+   including provider `aud` and Firebase `firebase.tenant` reconciliation;
 3. lifecycle and membership are active;
 4. `auth_time > reauthAfterSecV2` (equality is denied); and
 5. the membership contains the required capability.
@@ -30,7 +31,14 @@ lifecycle state, membership state, freshness boundary, association, and
 capabilities. The token must match that projection exactly. Token comparisons
 add no document reads. The candidate Firestore policy reads lifecycle plus
 membership; the candidate Storage policy reads one Firestore projection plus
-the Storage resource.
+the Storage resource. Generic candidate Storage paths are read-only; mutation
+stays denied until a concrete object policy defines operation-specific grants.
+
+Authority addressing is tenant-aware without a magic sentinel. Null-tenant
+records use `accountLifecycleV2Root/{uid}`, `membershipsV2Root/{uid}`, and
+`storageAuthorizationsV2Root/{uid}`. Concrete tenants use the corresponding
+`*V2Tenants/{tenantId}/users/{uid}` lane. The same UID in two tenants therefore
+cannot share a lifecycle, membership, or projection slot.
 
 Every malformed, missing, inactive, or mismatched value fails closed. A V1
 generation hash, receipt, suppression key, lifecycle record, or unbound
@@ -56,18 +64,24 @@ fence-before-Auth-mutation remains mandatory.
 ## Dormant client gate
 
 The pure client reducer permits protected listeners, capabilities, and FCM
-registration only in `ready`. Authentication alone moves to `establishing`.
+registration only in `ready`. Each establishment is keyed by an attempt ID plus
+exact project, nullable tenant, UID, `G`, and `E`. Readiness requires an
+evaluator-produced binding for that same attempt. Old asynchronous completions,
+including same-UID/new-generation races, cannot affect the current attempt.
 Refresh, proof-loss, deletion, sign-out, and account-switch sequences remain
-non-granting until a validated proof transition. Nothing instantiates this
-reducer in the production provider tree in this packet.
+non-granting until a matching validated proof transition. Nothing instantiates
+this reducer in the production provider tree in this packet.
 
 ## Candidate policy fixtures
 
 - `functions/test/fixtures/auth_incarnation_v2/firestore.rules`
 - `functions/test/fixtures/auth_incarnation_v2/storage.rules`
 
-These files are loaded directly by emulator tests. `firebase.json` continues
-to reference only `firestore.rules` and `storage.rules`.
+These files are loaded directly by emulator tests. Their
+`AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect` marker and project
+selector are test-only and are not a production selector.
+`firebase.json` continues to reference only `firestore.rules` and
+`storage.rules`.
 
 ## Green-base dormancy hashes
 

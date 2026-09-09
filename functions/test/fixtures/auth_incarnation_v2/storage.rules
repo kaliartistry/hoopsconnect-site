@@ -1,10 +1,32 @@
 rules_version = '2';
 
-// Candidate-only policy fixture. This file is not referenced by firebase.json.
+// AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect
+// Candidate-only emulator policy. This file is not referenced by firebase.json
+// and the selector above is never a production project selector.
 service firebase.storage {
   match /b/{bucket}/o {
     function validId(value) {
-      return value is string && value.size() > 0 && value.size() <= 128;
+      return value is string
+        && value.size() > 0
+        && value.size() <= 128
+        && !value.matches('.*[\\x00-\\x1f\\x7f].*');
+    }
+
+    function validCounter(value) {
+      return value is number
+        && value >= 0
+        && value <= 9007199254740991
+        && value % 1 == 0;
+    }
+
+    function providerTenantV2() {
+      return request.auth.token.firebase.get('tenant', null);
+    }
+
+    function projectionPathV2(uid) {
+      return request.auth.token.authTenantIdV2 == null
+        ? /databases/(default)/documents/storageAuthorizationsV2Root/$(uid)
+        : /databases/(default)/documents/storageAuthorizationsV2Tenants/$(request.auth.token.authTenantIdV2)/users/$(uid);
     }
 
     function validCapabilities(value) {
@@ -38,16 +60,15 @@ service firebase.storage {
         ])
         && request.auth.token.authIncarnationSchemaVersionV2 == 2
         && request.auth.token.authProjectIdV2 == 'demo-hoopsconnect'
+        && request.auth.token.aud == request.auth.token.authProjectIdV2
         && (request.auth.token.authTenantIdV2 == null
           || validId(request.auth.token.authTenantIdV2))
+        && providerTenantV2() == request.auth.token.authTenantIdV2
         && request.auth.token.authUidV2 == request.auth.uid
         && request.auth.token.accountGenerationV2 is string
         && request.auth.token.accountGenerationV2.matches('^[a-f0-9]{64}$')
-        && request.auth.token.accountLifecycleEpochV2 is int
-        && request.auth.token.accountLifecycleEpochV2 >= 0
-        && request.auth.token.accountLifecycleEpochV2 <= 9007199254740991
-        && request.auth.token.auth_time is int
-        && request.auth.token.auth_time >= 0;
+        && validCounter(request.auth.token.accountLifecycleEpochV2)
+        && validCounter(request.auth.token.auth_time);
     }
     // TOKEN_V2_END
 
@@ -68,21 +89,15 @@ service firebase.storage {
         && data.authIncarnationSchemaVersionV2 == 2
         && data.accountGenerationV2 is string
         && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
-        && data.accountLifecycleEpochV2 is int
-        && data.accountLifecycleEpochV2 >= 0
-        && data.accountLifecycleEpochV2 <= 9007199254740991
-        && data.reauthAfterSecV2 is int
-        && data.reauthAfterSecV2 >= 0
-        && data.reauthAfterSecV2 <= 9007199254740991
+        && validCounter(data.accountLifecycleEpochV2)
+        && validCounter(data.reauthAfterSecV2)
         && validId(data.associationId)
         && validCapabilities(data.capabilities);
     }
 
     // ACTIVE_V2_BEGIN: one Firestore projection read plus the Storage resource.
     function activeStorageV2(uid, associationId, capability) {
-      let projection = firestore.get(
-        /databases/(default)/documents/storageAuthorizationsV2/$(uid)
-      ).data;
+      let projection = firestore.get(projectionPathV2(uid)).data;
       return validTokenV2()
         && projectionShape(projection)
         && projection.authProjectIdV2 == 'demo-hoopsconnect'
@@ -103,11 +118,9 @@ service firebase.storage {
     match /protectedV2/{associationId}/{allPaths=**} {
       allow read: if resource != null
         && activeStorageV2(request.auth.uid, associationId, 'association.read');
-      allow create, update: if request.resource != null
-        && request.resource.size < 10 * 1024 * 1024
-        && activeStorageV2(request.auth.uid, associationId, 'association.read');
-      allow delete: if resource != null
-        && activeStorageV2(request.auth.uid, associationId, 'association.read');
+      // Generic candidate paths are read-only until a concrete object policy
+      // defines operation-specific mutation capabilities and invariants.
+      allow create, update, delete: if false;
     }
 
     match /{allPaths=**} {

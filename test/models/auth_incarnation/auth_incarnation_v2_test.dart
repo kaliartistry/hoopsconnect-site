@@ -163,51 +163,61 @@ void main() {
     },
   );
 
-  test(
-    'all counters reject fractional, negative, string, non-finite, and unsafe values',
-    () {
-      final token = Map<String, Object?>.from(fixture['tokenProof'] as Map);
-      final lifecycle = Map<String, Object?>.from(fixture['lifecycle'] as Map);
-      final invalidCounters = <Object?>[
-        -1,
-        1.5,
-        '7',
-        double.nan,
-        double.infinity,
-        9007199254740992,
-      ];
-      for (final invalid in invalidCounters) {
-        expect(
-          () => AuthIncarnationTokenProofV2.fromMap({
-            ...token,
-            'accountLifecycleEpochV2': invalid,
-          }),
-          throwsFormatException,
-        );
-        expect(
-          () => AuthIncarnationTokenProofV2.fromMap({
-            ...token,
-            'authTimeSec': invalid,
-          }),
-          throwsFormatException,
-        );
-        expect(
-          () => AccountLifecycleAuthorityV2.fromMap({
-            ...lifecycle,
-            'reauthAfterSecV2': invalid,
-          }),
-          throwsFormatException,
-        );
-      }
+  test('all runtimes use finite mathematically integral safe counters', () {
+    final token = Map<String, Object?>.from(fixture['tokenProof'] as Map);
+    final lifecycle = Map<String, Object?>.from(fixture['lifecycle'] as Map);
+    for (final accepted
+        in Map<String, dynamic>.from(
+              fixture['numericSemantics'] as Map,
+            )['accepted']
+            as List) {
+      final parsed = AuthIncarnationTokenProofV2.fromMap({
+        ...token,
+        'accountLifecycleEpochV2': accepted,
+      });
+      expect(parsed.accountLifecycleEpochV2, accepted == 0 ? 0 : accepted);
+      expect(parsed.accountLifecycleEpochV2, isA<int>());
+    }
+    final invalidCounters = <Object?>[
+      ...Map<String, dynamic>.from(
+            fixture['numericSemantics'] as Map,
+          )['rejected']
+          as List,
+      '7',
+      double.nan,
+      double.infinity,
+    ];
+    for (final invalid in invalidCounters) {
       expect(
         () => AuthIncarnationTokenProofV2.fromMap({
           ...token,
-          'accountLifecycleEpochV2': AuthIncarnationV2.maxSafeInteger,
+          'accountLifecycleEpochV2': invalid,
         }),
-        returnsNormally,
+        throwsFormatException,
       );
-    },
-  );
+      expect(
+        () => AuthIncarnationTokenProofV2.fromMap({
+          ...token,
+          'authTimeSec': invalid,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => AccountLifecycleAuthorityV2.fromMap({
+          ...lifecycle,
+          'reauthAfterSecV2': invalid,
+        }),
+        throwsFormatException,
+      );
+    }
+    expect(
+      () => AuthIncarnationTokenProofV2.fromMap({
+        ...token,
+        'accountLifecycleEpochV2': AuthIncarnationV2.maxSafeInteger,
+      }),
+      returnsNormally,
+    );
+  });
 
   test('projection builder accepts only an evaluator-produced binding', () {
     final input = applyVector(

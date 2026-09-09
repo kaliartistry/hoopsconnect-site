@@ -65,6 +65,13 @@ void main() {
   });
 
   test('Chrome rejects unsafe JSON integers and freshness equality', () {
+    final integralDouble = token()..['accountLifecycleEpochV2'] = 7.0;
+    expect(
+      AuthIncarnationTokenProofV2.fromMap(
+        integralDouble,
+      ).accountLifecycleEpochV2,
+      7,
+    );
     final unsafeToken = Map<String, Object?>.from(
       jsonDecode(
             '{"authIncarnationSchemaVersionV2":2,'
@@ -93,12 +100,39 @@ void main() {
   });
 
   test('Chrome session gate opens only after proofReady', () {
+    final attempt = AuthIncarnationSessionAttemptV2(
+      attemptId: 'web-attempt',
+      scope: AuthIncarnationScopeV2.fromMap(scope()),
+      accountGenerationV2: generation,
+      accountLifecycleEpochV2: 7,
+    );
+    final decision = evaluateAccountAuthorizationV2(
+      expectedScope: scope(),
+      tokenProof: token(),
+      lifecycle: lifecycle(),
+      membership: membership(),
+      requiredCapability: 'stats.enter',
+    );
     var gate = const AuthIncarnationSessionGateV2.signedOut();
-    gate = gate.transition(AuthIncarnationSessionEventV2.authObserved);
+    gate = gate.transition(AuthIncarnationSessionEventV2.authObserved(attempt));
     expect(gate.permitsProtectedListeners, isFalse);
-    gate = gate.transition(AuthIncarnationSessionEventV2.proofReady);
+    gate = gate.transition(
+      AuthIncarnationSessionEventV2.proofReady(
+        attempt: attempt,
+        binding: decision.binding!,
+      ),
+    );
     expect(gate.permitsProtectedListeners, isTrue);
-    gate = gate.transition(AuthIncarnationSessionEventV2.accountSwitchStarted);
+    gate = gate.transition(
+      AuthIncarnationSessionEventV2.accountSwitchStarted(
+        AuthIncarnationSessionAttemptV2(
+          attemptId: 'next-web-attempt',
+          scope: AuthIncarnationScopeV2.fromMap(scope()),
+          accountGenerationV2: generation,
+          accountLifecycleEpochV2: 7,
+        ),
+      ),
+    );
     expect(gate.permitsProtectedListeners, isFalse);
   });
 }

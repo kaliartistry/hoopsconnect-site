@@ -28,8 +28,10 @@ const storageRulesPath = path.resolve(
 let testEnv;
 const bytes = new Uint8Array([2, 7, 2, 7]);
 
-function claims(patch = {}, removeKeys = []) {
+function claims(patch = {}, removeKeys = [], providerTenant = null) {
   const token = fixture.tokenProof;
+  const firebase = {sign_in_provider: 'custom', identities: {}};
+  if (providerTenant !== null) firebase.tenant = providerTenant;
   const result = {
     authIncarnationSchemaVersionV2: token.authIncarnationSchemaVersionV2,
     authProjectIdV2: token.authProjectIdV2,
@@ -38,53 +40,78 @@ function claims(patch = {}, removeKeys = []) {
     accountGenerationV2: token.accountGenerationV2,
     accountLifecycleEpochV2: token.accountLifecycleEpochV2,
     auth_time: token.authTimeSec,
+    firebase,
     ...patch,
   };
   for (const key of removeKeys) delete result[key];
   return result;
 }
 
-function authedFirestore(patch, removeKeys) {
-  return testEnv.authenticatedContext('operator', claims(patch, removeKeys)).firestore();
+function authedFirestore(tokenClaims = claims(), uid = 'operator') {
+  return testEnv.authenticatedContext(uid, tokenClaims).firestore();
 }
 
-function authedStorage(patch, removeKeys) {
-  return testEnv.authenticatedContext('operator', claims(patch, removeKeys)).storage();
+function authedStorage(tokenClaims = claims(), uid = 'operator') {
+  return testEnv.authenticatedContext(uid, tokenClaims).storage();
 }
 
-async function seedAuthority(changes = {}) {
+function authorityPaths(tenant, uid = 'operator') {
+  if (tenant === null) {
+    return {
+      lifecycle: `accountLifecycleV2Root/${uid}`,
+      membership: `membershipsV2Root/${uid}`,
+      projection: `storageAuthorizationsV2Root/${uid}`,
+    };
+  }
+  return {
+    lifecycle: `accountLifecycleV2Tenants/${tenant}/users/${uid}`,
+    membership: `membershipsV2Tenants/${tenant}/users/${uid}`,
+    projection: `storageAuthorizationsV2Tenants/${tenant}/users/${uid}`,
+  };
+}
+
+async function seedAuthority({
+  tenant = null,
+  uid = 'operator',
+  lifecycle = {},
+  membership = {},
+  projection = {},
+} = {}) {
+  const paths = authorityPaths(tenant, uid);
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'accountLifecycleV2/operator'), {
-      ...fixture.lifecycle,
-      ...(changes.lifecycle || {}),
-    });
-    await setDoc(doc(db, 'membershipsV2/operator'), changes.replaceMembership || {
-      ...fixture.membership,
-      ...(changes.membership || {}),
-    });
-    await setDoc(doc(db, 'storageAuthorizationsV2/operator'), {
-      ...fixture.projection,
-      ...(changes.projection || {}),
-    });
+    const scope = {authTenantIdV2: tenant, authUidV2: uid};
+    await setDoc(doc(db, paths.lifecycle), {...fixture.lifecycle, ...scope, ...lifecycle});
+    await setDoc(doc(db, paths.membership), {...fixture.membership, ...scope, ...membership});
+    await setDoc(doc(db, paths.projection), {...fixture.projection, ...scope, ...projection});
+  });
+}
+
+async function seedProtectedRecords() {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
     await setDoc(doc(db, 'protectedRecordsV2/record-1'), {
-      ownerUid: 'operator',
-      requiredCapability: 'stats.enter',
-      value: 'protected',
+      ownerUid: 'operator', associationId: 'jba',
+      requiredCapability: 'stats.enter', value: 'protected',
     });
     await setDoc(doc(db, 'protectedRecordsV2/other-record'), {
-      ownerUid: 'other-user',
-      requiredCapability: 'stats.enter',
-      value: 'other protected',
+      ownerUid: 'other-user', associationId: 'jba',
+      requiredCapability: 'stats.enter', value: 'other protected',
+    });
+    await setDoc(doc(db, 'protectedRecordsV2/other-association'), {
+      ownerUid: 'operator', associationId: 'other-association',
+      requiredCapability: 'stats.enter', value: 'other association',
     });
   });
 }
 
-async function seedStorageObject() {
-  await assertSucceeds(uploadBytes(
-    storageRef(authedStorage(), 'protectedV2/jba/object.bin'),
-    bytes,
-  ));
+async function seedStorageObject(contents = bytes) {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await uploadBytes(storageRef(
+      context.storage(),
+      'protectedV2/jba/object.bin',
+    ), contents);
+  });
 }
 
 test.before(async () => {
@@ -99,141 +126,172 @@ test.beforeEach(async () => {
   await testEnv.clearFirestore();
   await testEnv.clearStorage();
   await seedAuthority();
+  await seedProtectedRecords();
 });
 
 test.after(async () => testEnv.cleanup());
 
-test('candidate Firestore grants only an all-exact active V2 tuple', async () => {
+test('candidate Firestore grants only owner-and-association-bound operations', async () => {
   const db = authedFirestore();
   await assertSucceeds(getDoc(doc(db, 'protectedRecordsV2/record-1')));
+  await assertFails(getDoc(doc(db, 'protectedRecordsV2/other-record')));
+  await assertFails(getDoc(doc(db, 'protectedRecordsV2/other-association')));
   await assertSucceeds(setDoc(doc(db, 'protectedRecordsV2/owned'), {
-    ownerUid: 'operator',
-    requiredCapability: 'stats.enter',
-    value: 'created',
+    ownerUid: 'operator', associationId: 'jba',
+    requiredCapability: 'stats.enter', value: 'created',
+  }));
+  await assertFails(setDoc(doc(db, 'protectedRecordsV2/owned-cross-association'), {
+    ownerUid: 'operator', associationId: 'other-association',
+    requiredCapability: 'stats.enter', value: 'created',
   }));
   await assertSucceeds(setDoc(doc(db, 'protectedRecordsV2/record-1'), {
-    ownerUid: 'operator',
-    requiredCapability: 'stats.enter',
-    value: 'updated',
-  }));
-  await assertFails(setDoc(doc(db, 'protectedRecordsV2/other-record'), {
-    ownerUid: 'operator',
-    requiredCapability: 'stats.enter',
-    value: 'stolen',
+    ownerUid: 'operator', associationId: 'jba',
+    requiredCapability: 'stats.enter', value: 'updated',
   }));
   await assertSucceeds(deleteDoc(doc(db, 'protectedRecordsV2/record-1')));
 });
 
-test('candidate Firestore denies missing, malformed, V1-only, and mismatched token proof', async () => {
-  const cases = [
-    [claims({}, [
-      'authIncarnationSchemaVersionV2', 'authProjectIdV2', 'authTenantIdV2',
-      'authUidV2', 'accountGenerationV2', 'accountLifecycleEpochV2',
-    ])],
-    [{...claims(), accountGenerationV2: 'BAD'}],
-    [{...claims(), accountGenerationV2: 'f'.repeat(64)}],
-    [{...claims(), accountLifecycleEpochV2: 8}],
-    [{...claims(), accountLifecycleEpochV2: -1}],
-    [{...claims(), accountLifecycleEpochV2: 7.5}],
-    [{...claims(), accountLifecycleEpochV2: '7'}],
-    [{...claims(), accountLifecycleEpochV2: 9007199254740992}],
-    [{...claims(), authProjectIdV2: 'other-project'}],
-    [{...claims(), authTenantIdV2: 'tenant-a'}],
-    [{...claims(), authUidV2: 'other-user'}],
-  ];
-  for (const [tokenClaims] of cases) {
-    const db = testEnv.authenticatedContext('operator', tokenClaims).firestore();
-    await assertFails(getDoc(doc(db, 'protectedRecordsV2/record-1')));
+test('candidate Firestore keeps owner, association, and capability immutable', async () => {
+  const db = authedFirestore();
+  for (const patch of [
+    {ownerUid: 'other-user'},
+    {associationId: 'other-association'},
+    {requiredCapability: 'association.read'},
+  ]) {
+    await assertFails(setDoc(doc(db, 'protectedRecordsV2/record-1'), {
+      ownerUid: 'operator', associationId: 'jba',
+      requiredCapability: 'stats.enter', value: 'downgrade', ...patch,
+    }));
   }
 });
 
-test('candidate Firestore denies lifecycle, membership, freshness, and legacy-adoption attacks', async () => {
-  const variants = [
-    {lifecycle: {lifecycleStateV2: 'pending'}},
-    {lifecycle: {lifecycleStateV2: 'deleting'}},
-    {lifecycle: {accountGenerationV2: 'f'.repeat(64)}},
-    {lifecycle: {accountLifecycleEpochV2: 8}},
-    {membership: {membershipStatusV2: 'suspended'}},
-    {membership: {accountGenerationV2: 'f'.repeat(64)}},
-    {membership: {accountLifecycleEpochV2: 8}},
-    {membership: {authTenantIdV2: 'tenant-a'}},
-    {membership: {capabilities: ['stats.enter', 'stats.enter']}},
-    {membership: {capabilities: ['stats.enter', 7]}},
-    {membership: {capabilities: ['stats.enter', 'unknown.grant']}},
-    {replaceMembership: {
-      authorizationSchemaVersion: 1,
-      role: 'superAdmin',
-      status: 'active',
-      associationId: 'jba',
-      capabilities: ['stats.enter'],
-    }},
+test('provider and custom tenant must match exactly in both candidate Rules', async () => {
+  await seedStorageObject();
+  const mismatches = [
+    claims({}, [], 'tenant-a'),
+    claims({authTenantIdV2: 'tenant-a'}),
+    claims({authTenantIdV2: 'tenant-b'}, [], 'tenant-a'),
   ];
-  for (const variant of variants) {
-    await seedAuthority(variant);
-    await assertFails(getDoc(doc(authedFirestore(), 'protectedRecordsV2/record-1')));
+  for (const tokenClaims of mismatches) {
+    await assertFails(getDoc(doc(
+      authedFirestore(tokenClaims),
+      'protectedRecordsV2/record-1',
+    )));
+    await assertFails(getBytes(storageRef(
+      authedStorage(tokenClaims),
+      'protectedV2/jba/object.bin',
+    )));
   }
-  await seedAuthority();
+
+  await seedAuthority({tenant: 'tenant-a'});
+  const tenantClaims = claims({authTenantIdV2: 'tenant-a'}, [], 'tenant-a');
+  await assertSucceeds(getDoc(doc(
+    authedFirestore(tenantClaims),
+    'protectedRecordsV2/record-1',
+  )));
+  await assertSucceeds(getBytes(storageRef(
+    authedStorage(tenantClaims),
+    'protectedV2/jba/object.bin',
+  )));
+});
+
+test('same UID in root and tenant lanes cannot collide', async () => {
+  await seedAuthority({lifecycle: {lifecycleStateV2: 'deleted'}});
+  await seedAuthority({tenant: 'tenant-a'});
+  const tenantClaims = claims({authTenantIdV2: 'tenant-a'}, [], 'tenant-a');
   await assertFails(getDoc(doc(
-    authedFirestore({auth_time: fixture.lifecycle.reauthAfterSecV2}),
+    authedFirestore(),
+    'protectedRecordsV2/record-1',
+  )));
+  await assertSucceeds(getDoc(doc(
+    authedFirestore(tenantClaims),
     'protectedRecordsV2/record-1',
   )));
 });
 
-test('candidate authority documents are never client writable or directly readable', async () => {
+test('malformed token, freshness, and control-character identifiers fail closed', async () => {
+  const cases = [
+    claims({}, [
+      'authIncarnationSchemaVersionV2', 'authProjectIdV2', 'authTenantIdV2',
+      'authUidV2', 'accountGenerationV2', 'accountLifecycleEpochV2',
+    ]),
+    claims({accountGenerationV2: 'BAD'}),
+    claims({accountGenerationV2: 'f'.repeat(64)}),
+    claims({accountLifecycleEpochV2: 7.5}),
+    claims({accountLifecycleEpochV2: -1}),
+    claims({accountLifecycleEpochV2: 9007199254740992}),
+    claims({authProjectIdV2: 'demo-hoopsconnect\u0000'}),
+    claims({authUidV2: 'operator\u001f'}),
+    claims({authUidV2: 'operator\u007f'}),
+    claims({auth_time: fixture.lifecycle.reauthAfterSecV2}),
+  ];
+  for (const tokenClaims of cases) {
+    await assertFails(getDoc(doc(
+      authedFirestore(tokenClaims),
+      'protectedRecordsV2/record-1',
+    )));
+  }
+
+  for (const associationId of ['jba\u0000', 'jba\u001f', 'jba\u007f']) {
+    await seedAuthority({membership: {associationId}});
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'protectedRecordsV2/record-1'), {
+        ownerUid: 'operator', associationId,
+        requiredCapability: 'stats.enter', value: 'control vector',
+      });
+    });
+    await assertFails(getDoc(doc(authedFirestore(), 'protectedRecordsV2/record-1')));
+  }
+  await seedAuthority();
+  await seedProtectedRecords();
+  await assertSucceeds(getDoc(doc(
+    authedFirestore(claims({accountLifecycleEpochV2: 7.0})),
+    'protectedRecordsV2/record-1',
+  )));
+});
+
+test('candidate authority documents are never directly client accessible', async () => {
   const db = authedFirestore();
-  for (const target of [
-    'accountLifecycleV2/operator',
-    'membershipsV2/operator',
-    'storageAuthorizationsV2/operator',
-  ]) {
+  for (const target of Object.values(authorityPaths(null))) {
     await assertFails(getDoc(doc(db, target)));
     await assertFails(setDoc(doc(db, target), {owned: true}));
   }
 });
 
-test('candidate Storage grants only exact V2 token/projection binding', async () => {
+test('candidate Storage is readable only with exact V2 projection binding', async () => {
   await seedStorageObject();
   await assertSucceeds(getBytes(storageRef(
     authedStorage(),
     'protectedV2/jba/object.bin',
   )));
-  await assertSucceeds(deleteObject(storageRef(
-    authedStorage(),
-    'protectedV2/jba/object.bin',
-  )));
-});
-
-test('candidate Storage denies missing, stale, mismatched, inactive, and equality-bound proof', async () => {
-  await seedStorageObject();
-  const tokenCases = [
+  for (const tokenClaims of [
     claims({}, ['accountGenerationV2']),
-    {...claims(), accountGenerationV2: 'f'.repeat(64)},
-    {...claims(), accountLifecycleEpochV2: 8},
-    {...claims(), authTenantIdV2: 'tenant-a'},
-    {...claims(), auth_time: fixture.projection.reauthAfterSecV2},
-  ];
-  for (const tokenClaims of tokenCases) {
-    const storage = testEnv.authenticatedContext('operator', tokenClaims).storage();
-    await assertFails(getBytes(storageRef(storage, 'protectedV2/jba/object.bin')));
-  }
-  for (const projection of [
-    {accountGenerationV2: 'f'.repeat(64)},
-    {accountLifecycleEpochV2: 6},
-    {lifecycleStateV2: 'deleted'},
-    {membershipStatusV2: 'revoked'},
-    {authProjectIdV2: 'other-project'},
-    {capabilities: ['members.manage']},
-    {capabilities: ['association.read', 'unknown.grant']},
+    claims({accountGenerationV2: 'f'.repeat(64)}),
+    claims({accountLifecycleEpochV2: 8}),
+    claims({auth_time: fixture.projection.reauthAfterSecV2}),
   ]) {
-    await seedAuthority({projection});
     await assertFails(getBytes(storageRef(
-      authedStorage(),
+      authedStorage(tokenClaims),
       'protectedV2/jba/object.bin',
     )));
   }
 });
 
-test('candidate rule read budgets keep token checks read-free and authority reads fixed', () => {
+test('generic candidate Storage denies upload, overwrite, and delete', async () => {
+  await seedStorageObject();
+  const storage = authedStorage();
+  await assertFails(uploadBytes(
+    storageRef(storage, 'protectedV2/jba/new.bin'),
+    bytes,
+  ));
+  await assertFails(uploadBytes(
+    storageRef(storage, 'protectedV2/jba/object.bin'),
+    new Uint8Array([9]),
+  ));
+  await assertFails(deleteObject(storageRef(storage, 'protectedV2/jba/object.bin')));
+});
+
+test('candidate rule read budgets remain fixed and selectors remain test-only', () => {
   const firestoreRules = fs.readFileSync(firestoreRulesPath, 'utf8');
   const storageRules = fs.readFileSync(storageRulesPath, 'utf8');
   const firestoreToken = firestoreRules.match(/TOKEN_V2_BEGIN([\s\S]*?)TOKEN_V2_END/)[1];
@@ -244,4 +302,6 @@ test('candidate rule read budgets keep token checks read-free and authority read
   assert.doesNotMatch(storageToken, /\b(?:get|exists)\s*\(/);
   assert.equal((firestoreActive.match(/\bget\s*\(/g) || []).length, 2);
   assert.equal((storageActive.match(/\bfirestore\.get\s*\(/g) || []).length, 1);
+  assert.match(firestoreRules, /AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect/);
+  assert.match(storageRules, /AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect/);
 });

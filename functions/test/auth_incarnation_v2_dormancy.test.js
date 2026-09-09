@@ -14,6 +14,7 @@ const baselineGitBlobHashes = Object.freeze({
   'lib/main.dart': 'e362527e198c63d829fd81be72792239625619d5',
   'lib/providers/auth_providers.dart': 'b7513cb1767b0943949ca40976bbd05f4a0effba',
   'lib/app/router/app_router.dart': 'f4e0417b6a0a7d25f1edb4d27be4d0463c3467a4',
+  'firebase.json': 'bffa6ccd0f69f3f39d9be8cdc49941adab02f3dc',
 });
 
 function read(relativePath) {
@@ -82,4 +83,17 @@ test('shared fixture and documentation keep activation explicitly closed', () =>
   assert.match(documentation, /activationAllowed:\s*false/);
   assert.match(documentation, /Production UID reuse is prohibited/);
   assert.match(documentation, /fence-before-Auth-mutation/);
+  assert.match(documentation, /AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect/);
+  for (const candidate of [
+    'functions/test/fixtures/auth_incarnation_v2/firestore.rules',
+    'functions/test/fixtures/auth_incarnation_v2/storage.rules',
+  ]) {
+    assert.match(
+      read(candidate).toString('utf8'),
+      /AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect/,
+    );
+  }
+  for (const production of ['firestore.rules', 'storage.rules', 'firebase.json']) {
+    assert.doesNotMatch(read(production).toString('utf8'), /demo-hoopsconnect/);
+  }
 });

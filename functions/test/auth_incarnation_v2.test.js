@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const {spawnSync} = require('node:child_process');
 const {randomBytes} = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -94,8 +95,17 @@ test('generation parser accepts only 32-byte lowercase hexadecimal values', () =
   }
 });
 
-test('all counters reject fractional, negative, string, non-finite, and unsafe values', () => {
-  const invalidCounters = [-1, 1.5, '7', Number.NaN, Number.POSITIVE_INFINITY, 9007199254740992];
+test('all runtimes use finite mathematically integral safe counters', () => {
+  for (const accepted of fixture.numericSemantics.accepted) {
+    assert.doesNotThrow(() => contract.parseAuthIncarnationTokenProofV2({
+      ...fixture.tokenProof,
+      accountLifecycleEpochV2: accepted,
+    }));
+  }
+  const invalidCounters = [
+    ...fixture.numericSemantics.rejected,
+    '7', Number.NaN, Number.POSITIVE_INFINITY,
+  ];
   for (const invalidCounter of invalidCounters) {
     assert.throws(() => contract.parseAuthIncarnationTokenProofV2({
       ...fixture.tokenProof,
@@ -132,6 +142,40 @@ test('validated binding is the only input accepted by the projection builder', (
   const projection = contract.buildStorageAuthorizationProjectionV2(decision.binding);
   assert.deepEqual(projection, fixture.projection);
   assert.equal(Object.isFrozen(projection), true);
+});
+
+test('Dart external libraries cannot forge bindings or construct allowed decisions', {
+  timeout: 120000,
+}, () => {
+  const repositoryRoot = path.resolve(__dirname, '../..');
+  const buildRoot = path.join(repositoryRoot, 'build');
+  fs.mkdirSync(buildRoot, {recursive: true});
+  const temporary = fs.mkdtempSync(path.join(buildRoot, 'auth-v2-provenance-'));
+  try {
+    const sourcePath = path.join(temporary, 'forgery.dart');
+    fs.writeFileSync(sourcePath, `
+import 'package:hoops_connect/models/auth_incarnation/auth_incarnation_v2.dart';
+final class Forged implements ValidatedActiveAuthorityV2 {
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+void main() {
+  StorageAuthorizationProjectionV2.fromValidated(Forged());
+  AuthIncarnationAuthorizationDecisionV2.allowed(null as dynamic);
+}
+`);
+    const result = spawnSync('dart', ['analyze', sourcePath], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      timeout: 110000,
+    });
+    const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+    assert.equal(result.error, undefined, output);
+    assert.notEqual(result.status, 0, 'forged external library unexpectedly analyzed');
+    assert.match(output, /ValidatedActiveAuthorityV2/);
+    assert.match(output, /allowed/);
+  } finally {
+    fs.rmSync(temporary, {recursive: true, force: true});
+  }
 });
 
 test('default trusted issuer is closed and an injected test fake uses 32 CSPRNG bytes', async () => {

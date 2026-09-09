@@ -1,10 +1,38 @@
 rules_version = '2';
 
-// Candidate-only policy fixture. This file is not referenced by firebase.json.
+// AUTH_INCARNATION_V2_TEST_ONLY_PROJECT=demo-hoopsconnect
+// Candidate-only emulator policy. This file is not referenced by firebase.json
+// and the selector above is never a production project selector.
 service cloud.firestore {
   match /databases/{database}/documents {
     function validId(value) {
-      return value is string && value.size() > 0 && value.size() <= 128;
+      return value is string
+        && value.size() > 0
+        && value.size() <= 128
+        && !value.matches('.*[\\x00-\\x1f\\x7f].*');
+    }
+
+    function validCounter(value) {
+      return value is number
+        && value >= 0
+        && value <= 9007199254740991
+        && value % 1 == 0;
+    }
+
+    function providerTenantV2() {
+      return request.auth.token.firebase.get('tenant', null);
+    }
+
+    function lifecyclePathV2(uid) {
+      return request.auth.token.authTenantIdV2 == null
+        ? /databases/$(database)/documents/accountLifecycleV2Root/$(uid)
+        : /databases/$(database)/documents/accountLifecycleV2Tenants/$(request.auth.token.authTenantIdV2)/users/$(uid);
+    }
+
+    function membershipPathV2(uid) {
+      return request.auth.token.authTenantIdV2 == null
+        ? /databases/$(database)/documents/membershipsV2Root/$(uid)
+        : /databases/$(database)/documents/membershipsV2Tenants/$(request.auth.token.authTenantIdV2)/users/$(uid);
     }
 
     function validCapabilities(value) {
@@ -38,16 +66,15 @@ service cloud.firestore {
         ])
         && request.auth.token.authIncarnationSchemaVersionV2 == 2
         && request.auth.token.authProjectIdV2 == 'demo-hoopsconnect'
+        && request.auth.token.aud == request.auth.token.authProjectIdV2
         && (request.auth.token.authTenantIdV2 == null
           || validId(request.auth.token.authTenantIdV2))
+        && providerTenantV2() == request.auth.token.authTenantIdV2
         && request.auth.token.authUidV2 == request.auth.uid
         && request.auth.token.accountGenerationV2 is string
         && request.auth.token.accountGenerationV2.matches('^[a-f0-9]{64}$')
-        && request.auth.token.accountLifecycleEpochV2 is int
-        && request.auth.token.accountLifecycleEpochV2 >= 0
-        && request.auth.token.accountLifecycleEpochV2 <= 9007199254740991
-        && request.auth.token.auth_time is int
-        && request.auth.token.auth_time >= 0;
+        && validCounter(request.auth.token.accountLifecycleEpochV2)
+        && validCounter(request.auth.token.auth_time);
     }
     // TOKEN_V2_END
 
@@ -73,12 +100,8 @@ service cloud.firestore {
         && data.authIncarnationSchemaVersionV2 == 2
         && data.accountGenerationV2 is string
         && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
-        && data.accountLifecycleEpochV2 is int
-        && data.accountLifecycleEpochV2 >= 0
-        && data.accountLifecycleEpochV2 <= 9007199254740991
-        && data.reauthAfterSecV2 is int
-        && data.reauthAfterSecV2 >= 0
-        && data.reauthAfterSecV2 <= 9007199254740991;
+        && validCounter(data.accountLifecycleEpochV2)
+        && validCounter(data.reauthAfterSecV2);
     }
 
     function membershipShape(data) {
@@ -96,17 +119,15 @@ service cloud.firestore {
         && data.authIncarnationSchemaVersionV2 == 2
         && data.accountGenerationV2 is string
         && data.accountGenerationV2.matches('^[a-f0-9]{64}$')
-        && data.accountLifecycleEpochV2 is int
-        && data.accountLifecycleEpochV2 >= 0
-        && data.accountLifecycleEpochV2 <= 9007199254740991
+        && validCounter(data.accountLifecycleEpochV2)
         && validId(data.associationId)
         && validCapabilities(data.capabilities);
     }
 
     // ACTIVE_V2_BEGIN: exactly two Firestore document reads.
-    function activeAccountV2(uid, capability) {
-      let lifecycle = get(/databases/$(database)/documents/accountLifecycleV2/$(uid)).data;
-      let membership = get(/databases/$(database)/documents/membershipsV2/$(uid)).data;
+    function activeAccountV2(uid, associationId, capability) {
+      let lifecycle = get(lifecyclePathV2(uid)).data;
+      let membership = get(membershipPathV2(uid)).data;
       return validTokenV2()
         && lifecycleShape(lifecycle)
         && membershipShape(membership)
@@ -114,6 +135,7 @@ service cloud.firestore {
         && validScope(membership, uid)
         && lifecycle.lifecycleStateV2 == 'active'
         && membership.membershipStatusV2 == 'active'
+        && membership.associationId == associationId
         && request.auth.token.accountGenerationV2 == lifecycle.accountGenerationV2
         && request.auth.token.accountGenerationV2 == membership.accountGenerationV2
         && request.auth.token.accountLifecycleEpochV2 == lifecycle.accountLifecycleEpochV2
@@ -124,37 +146,63 @@ service cloud.firestore {
     // ACTIVE_V2_END
 
     function protectedShape(data) {
-      return data.keys().hasOnly(['ownerUid', 'requiredCapability', 'value'])
+      return data.keys().hasOnly([
+          'ownerUid', 'associationId', 'requiredCapability', 'value'
+        ])
         && validId(data.ownerUid)
+        && validId(data.associationId)
         && validId(data.requiredCapability);
     }
 
-    match /accountLifecycleV2/{uid} {
+    match /accountLifecycleV2Root/{uid} {
       allow read, write: if false;
     }
 
-    match /membershipsV2/{uid} {
+    match /accountLifecycleV2Tenants/{tenantId}/users/{uid} {
       allow read, write: if false;
     }
 
-    match /storageAuthorizationsV2/{uid} {
+    match /membershipsV2Root/{uid} {
+      allow read, write: if false;
+    }
+
+    match /membershipsV2Tenants/{tenantId}/users/{uid} {
       allow read, write: if false;
     }
 
     match /protectedRecordsV2/{recordId} {
       allow read: if protectedShape(resource.data)
-        && activeAccountV2(request.auth.uid, resource.data.requiredCapability);
+        && resource.data.ownerUid == request.auth.uid
+        && activeAccountV2(
+          request.auth.uid,
+          resource.data.associationId,
+          resource.data.requiredCapability
+        );
       allow create: if protectedShape(request.resource.data)
         && request.resource.data.ownerUid == request.auth.uid
-        && activeAccountV2(request.auth.uid, request.resource.data.requiredCapability);
+        && activeAccountV2(
+          request.auth.uid,
+          request.resource.data.associationId,
+          request.resource.data.requiredCapability
+        );
       allow update: if protectedShape(resource.data)
         && protectedShape(request.resource.data)
         && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == request.auth.uid
-        && activeAccountV2(request.auth.uid, request.resource.data.requiredCapability);
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.associationId == resource.data.associationId
+        && request.resource.data.requiredCapability == resource.data.requiredCapability
+        && activeAccountV2(
+          request.auth.uid,
+          resource.data.associationId,
+          resource.data.requiredCapability
+        );
       allow delete: if protectedShape(resource.data)
         && resource.data.ownerUid == request.auth.uid
-        && activeAccountV2(request.auth.uid, resource.data.requiredCapability);
+        && activeAccountV2(
+          request.auth.uid,
+          resource.data.associationId,
+          resource.data.requiredCapability
+        );
     }
 
     match /{document=**} {
