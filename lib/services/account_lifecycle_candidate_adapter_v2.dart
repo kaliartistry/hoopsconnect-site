@@ -25,6 +25,24 @@ final class CandidateDetachResultV2 {
   bool get permitsAuthChange => ownerBindingRemoved || installationTokenRotated;
 }
 
+/// A live, non-cacheable-authority view. Holding this object never preserves a
+/// past ready decision; every getter reads the adapter's current fence.
+final class CandidateGateViewV2 {
+  final AccountLifecycleCandidateClientAdapterV2 _adapter;
+
+  const CandidateGateViewV2._(this._adapter);
+
+  AuthIncarnationSessionStateV2 get state => _adapter._authChangeLatch
+      ? AuthIncarnationSessionStateV2.signedOut
+      : _adapter._gate.state;
+  AuthIncarnationSessionAttemptV2? get attempt =>
+      _adapter._authChangeLatch ? null : _adapter._gate.attempt;
+  int get sessionAttemptHighWaterV2 => _adapter._gate.sessionAttemptHighWaterV2;
+  bool get permitsProtectedListeners => _adapter.permitsProtectedListeners;
+  bool get permitsCapabilities => _adapter.permitsCapabilities;
+  bool get permitsFcmRegistration => _adapter.permitsFcmRegistration;
+}
+
 /// Fake-adapter integration of the actual Auth Incarnation V2 gate.
 ///
 /// This class is deliberately absent from production providers and roots. It
@@ -37,9 +55,7 @@ final class AccountLifecycleCandidateClientAdapterV2 {
   CandidateFcmOwnerV2? _fcmOwner;
   bool _authChangeLatch = false;
 
-  AuthIncarnationSessionGateV2 get gate => _authChangeLatch
-      ? _gate.transition(const AuthIncarnationSessionEventV2.signedOut())
-      : _gate;
+  CandidateGateViewV2 get gate => CandidateGateViewV2._(this);
   CandidateFcmOwnerV2? get fcmOwner => _fcmOwner;
   int get protectedListenerCount => _listenerDisposers.length;
   bool get permitsProtectedListeners =>
@@ -67,22 +83,68 @@ final class AccountLifecycleCandidateClientAdapterV2 {
     return advance.attempt;
   }
 
-  AuthIncarnationSessionAttemptV2 startAccountSwitch({
+  Future<AuthIncarnationSessionAttemptV2> startAccountSwitch({
     required String attemptId,
     required AuthIncarnationScopeV2 scope,
     required String accountGenerationV2,
     required int accountLifecycleEpochV2,
+    required Future<void> Function() removeOwnerBinding,
+    required Future<void> Function() rotateInstallationToken,
   }) {
-    _ensureAuthTransitionAvailable();
-    _retireProtectedConsumers();
-    final advance = _gate.startAccountSwitch(
+    if (_authChangeLatch) {
+      return Future<AuthIncarnationSessionAttemptV2>.error(
+        StateError('Auth change is already in progress.'),
+      );
+    }
+    final previousGate = _gate;
+    final previousOwner = _fcmOwner;
+    final advance = previousGate.startAccountSwitch(
       attemptId: attemptId,
       scope: scope,
       accountGenerationV2: accountGenerationV2,
       accountLifecycleEpochV2: accountLifecycleEpochV2,
     );
-    _gate = advance.gate;
-    return advance.attempt;
+    _authChangeLatch = true;
+    _retireProtectedConsumers();
+    return _serializeTokenMutation(() async {
+      var removed = false;
+      var rotated = false;
+      Object? removeError;
+      StackTrace? removeStack;
+      Object? rotateError;
+      StackTrace? rotateStack;
+      try {
+        await removeOwnerBinding();
+        removed = true;
+      } catch (error, stack) {
+        removeError = error;
+        removeStack = stack;
+      }
+      try {
+        await rotateInstallationToken();
+        rotated = true;
+      } catch (error, stack) {
+        rotateError = error;
+        rotateStack = stack;
+      }
+      if (!removed && !rotated) {
+        if (identical(_gate, previousGate)) _fcmOwner = previousOwner;
+        _authChangeLatch = false;
+        if (removeError != null) {
+          Error.throwWithStackTrace(removeError, removeStack!);
+        }
+        Error.throwWithStackTrace(rotateError!, rotateStack!);
+      }
+      if (!identical(_gate, previousGate)) {
+        _fcmOwner = null;
+        _authChangeLatch = false;
+        throw StateError('Account lifecycle changed during account switch.');
+      }
+      _gate = advance.gate;
+      _fcmOwner = null;
+      _authChangeLatch = false;
+      return advance.attempt;
+    });
   }
 
   AuthIncarnationSessionAttemptV2 requireRefresh({required String attemptId}) {
@@ -176,14 +238,19 @@ final class AccountLifecycleCandidateClientAdapterV2 {
     required Future<void> Function() rotateInstallationToken,
     required Future<void> Function() signOut,
     required Future<void> Function() restoreRegistration,
+    Future<bool> Function(AuthIncarnationSessionAttemptV2 attempt)?
+    verifyAuthStillCurrent,
   }) {
+    if (_authChangeLatch) {
+      return Future<CandidateDetachResultV2>.error(
+        StateError('Auth change is already in progress.'),
+      );
+    }
+    final previousGate = _gate;
+    final previousOwner = _fcmOwner;
+    _authChangeLatch = true;
+    _retireProtectedConsumers();
     return _serializeTokenMutation(() async {
-      _ensureAuthTransitionAvailable();
-      final previousGate = _gate;
-      final previousOwner = _fcmOwner;
-      _authChangeLatch = true;
-      _retireProtectedConsumers();
-
       var removed = false;
       var rotated = false;
       Object? removeError;
@@ -230,10 +297,17 @@ final class AccountLifecycleCandidateClientAdapterV2 {
         return detach;
       } catch (error, stack) {
         var registrationRestored = false;
-        if (identical(_gate, previousGate)) {
+        final previousAttempt = previousGate.attempt;
+        if (identical(_gate, previousGate) &&
+            previousAttempt != null &&
+            verifyAuthStillCurrent != null) {
           try {
-            await restoreRegistration();
-            registrationRestored = true;
+            if (await verifyAuthStillCurrent(previousAttempt)) {
+              await restoreRegistration();
+              registrationRestored = await verifyAuthStillCurrent(
+                previousAttempt,
+              );
+            }
           } catch (_) {
             // The original Auth transition error is the actionable failure.
           }

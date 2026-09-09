@@ -72,14 +72,14 @@ function paths(tenant = null, uid = fixture.rootScope.authUidV2) {
     membership: `membershipsV2Root/${uid}`,
     projection: `storageAuthorizationsV2Root/${uid}`,
     profile: `accountProfilesV2Root/${uid}`,
-    registration: `accountFcmRegistrationsV2Root/${uid}/installations/device_a`,
+    registration: `accountFcmRegistrationsV2Root/${uid}/installations/slot0`,
   } : {
     lifecycle: `accountLifecycleV2Tenants/${tenant}/users/${uid}`,
     membership: `membershipsV2Tenants/${tenant}/users/${uid}`,
     projection: `storageAuthorizationsV2Tenants/${tenant}/users/${uid}`,
     profile: `accountProfilesV2Tenants/${tenant}/users/${uid}`,
     registration:
-      `accountFcmRegistrationsV2Tenants/${tenant}/users/${uid}/installations/device_a`,
+      `accountFcmRegistrationsV2Tenants/${tenant}/users/${uid}/installations/slot0`,
   };
 }
 
@@ -145,7 +145,7 @@ function registration(tenant = null, uid = fixture.rootScope.authUidV2, patch = 
     accountGenerationV2: generationA,
     accountLifecycleEpochV2: 7,
     associationId: 'jba',
-    installationId: 'device_a',
+    installationId: 'slot0',
     fcmToken: 'installation-token',
     updatedAt: serverTimestamp(),
     ...patch,
@@ -374,6 +374,15 @@ test('FCM registration is own-lane, ready-authority bound, and lifecycle fenced'
 
   const otherPath = paths(null, 'other-user').registration;
   await assertFails(setDoc(doc(db, otherPath), registration(null, 'other-user')));
+  const lastSlot = target.replace('/slot0', '/slot7');
+  await assertSucceeds(setDoc(doc(db, lastSlot), registration(null, fixture.rootScope.authUidV2, {
+    installationId: 'slot7',
+  })));
+  await assertSucceeds(deleteDoc(doc(db, lastSlot)));
+  const overflowSlot = target.replace('/slot0', '/slot8');
+  await assertFails(setDoc(doc(db, overflowSlot), registration(null, fixture.rootScope.authUidV2, {
+    installationId: 'slot8',
+  })));
 
   await seedAuthority({
     lifecyclePatch: {lifecycleStateV2: 'deleting', accountLifecycleEpochV2: 8},

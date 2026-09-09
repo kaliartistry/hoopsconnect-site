@@ -105,6 +105,7 @@ class MemoryProvider {
   constructor(events = []) {
     this.events = events;
     this.calls = [];
+    this.payloadWasFrozen = false;
     this.failure = null;
     this.response = null;
   }
@@ -112,6 +113,7 @@ class MemoryProvider {
   async submit(input) {
     this.events.push(`provider:${input.chunkIndex}`);
     this.calls.push(structuredClone(input));
+    this.payloadWasFrozen = Object.isFrozen(input.payload) && Object.isFrozen(input.payload.data);
     if (this.failure) throw this.failure;
     return this.response ?? {successCount: input.tokens.length, failureCount: 0};
   }
@@ -120,8 +122,15 @@ class MemoryProvider {
 function request(store, provider, overrides = {}) {
   return {
     effectId: overrides.effectId ?? 'effect-001',
+    authProjectIdV2: 'demo-hoopsconnect',
+    authTenantIdV2: overrides.authTenantIdV2 ?? null,
     associationId: 'jba',
     capability: 'posts.acknowledge',
+    payload: overrides.payload ?? {
+      title: 'New post',
+      body: 'A new post is ready.',
+      data: {route: 'board'},
+    },
     recipients: overrides.recipients ?? [recipient(1)],
     preference: 'newPosts',
     store,
@@ -146,14 +155,14 @@ test('delivery tokens come only from current exact V2 installation registrations
   const current = {
     binding: {...binding(1)},
     associationId: 'jba',
-    installationId: 'device_a',
+    installationId: 'slot0',
     token: 'current-token',
   };
   const selected = notificationRecipientFromActiveMemberV2(member, [
     current,
-    {...current, binding: binding(1, null, 'b'.repeat(64), 0), token: 'old-token'},
-    {...current, binding: binding(1, 'tenant-a'), token: 'tenant-token'},
-    {...current, associationId: 'other', token: 'other-token'},
+    {...current, installationId: 'slot1', binding: binding(1, null, 'b'.repeat(64), 0), token: 'old-token'},
+    {...current, installationId: 'slot2', binding: binding(1, 'tenant-a'), token: 'tenant-token'},
+    {...current, installationId: 'slot3', associationId: 'other', token: 'other-token'},
   ]);
   assert.deepEqual(selected.fcmTokens, ['current-token']);
   current.binding.accountGenerationV2 = 'b'.repeat(64);
@@ -167,7 +176,10 @@ test('effect and attempt identity bind project/tenant/UID/G/E and provider prece
   const result = await sendAuthorizedNotificationChunksV2(request(
     store,
     provider,
-    {recipients: [recipient(1, {binding: binding(1, 'tenant-a')})]},
+    {
+      authTenantIdV2: 'tenant-a',
+      recipients: [recipient(1, {binding: binding(1, 'tenant-a')})],
+    },
   ));
   assert.deepEqual(result, {
     reserved: 1,
@@ -180,6 +192,15 @@ test('effect and attempt identity bind project/tenant/UID/G/E and provider prece
   });
   const persisted = [...store.attempts.values()][0];
   assert.deepEqual(persisted.attempt.intended[0].recipient, binding(1, 'tenant-a'));
+  assert.equal(persisted.attempt.authProjectIdV2, 'demo-hoopsconnect');
+  assert.equal(persisted.attempt.authTenantIdV2, 'tenant-a');
+  assert.equal(persisted.attempt.payloadHash, provider.calls[0].payloadHash);
+  assert.deepEqual(provider.calls[0].payload, {
+    title: 'New post',
+    body: 'A new post is ready.',
+    data: {route: 'board'},
+  });
+  assert.equal(provider.payloadWasFrozen, true);
   const providerIndex = events.findIndex((entry) => entry === 'provider:0');
   const submittedIndex = events.findIndex((entry) => entry.startsWith('mark-submitted:'));
   assert.ok(providerIndex >= 0 && submittedIndex > providerIndex, events.join('\n'));
@@ -191,7 +212,9 @@ test('501-token delivery revalidates each chunk and suppresses a switched second
   const events = [];
   const store = new MemoryDeliveryStore(events);
   const provider = new MemoryProvider(events);
-  const recipients = Array.from({length: 501}, (_, index) => recipient(index));
+  const recipients = Array.from({length: 63}, (_, index) => recipient(index, {
+    fcmTokens: Array.from({length: 8}, (_, tokenIndex) => `token-${index}-${tokenIndex}`),
+  }));
   store.activeTokens = new Set(recipients.flatMap((value) => value.fcmTokens));
   const result = await sendAuthorizedNotificationChunksV2(request(store, provider, {
     recipients,
@@ -354,6 +377,22 @@ test('same effect ID with a changed token or generation is a conflict, not a new
   assert.equal(provider.calls.length, 1);
 });
 
+test('same effect ID with a changed exact payload conflicts before resend', async () => {
+  const store = new MemoryDeliveryStore();
+  const provider = new MemoryProvider();
+  await sendAuthorizedNotificationChunksV2(request(store, provider));
+  const result = await sendAuthorizedNotificationChunksV2(request(store, provider, {
+    payload: {
+      title: 'Changed post',
+      body: 'Different provider-visible content.',
+      data: {route: 'board'},
+    },
+  }));
+  assert.equal(result.duplicates, 1);
+  assert.equal(result.submitted, 0);
+  assert.equal(provider.calls.length, 1);
+});
+
 test('one token claimed by two incarnation bindings fails closed', async () => {
   const store = new MemoryDeliveryStore();
   const provider = new MemoryProvider();
@@ -361,7 +400,7 @@ test('one token claimed by two incarnation bindings fails closed', async () => {
     recipients: [
       recipient(1, {fcmTokens: ['shared-token']}),
       recipient(2, {
-        binding: binding(2, 'tenant-a'),
+        binding: binding(2),
         fcmTokens: ['shared-token'],
       }),
     ],
@@ -392,24 +431,50 @@ test('missing or false notification preference is never treated as opt-in', asyn
   assert.deepEqual(provider.calls[0].tokens, ['token-3']);
 });
 
-test('length-safe effect identity cannot collide through separator injection', async () => {
+test('notification batches reject mixed project or tenant scope', async () => {
+  const store = new MemoryDeliveryStore();
+  const provider = new MemoryProvider();
+  await assert.rejects(
+    sendAuthorizedNotificationChunksV2(request(store, provider, {
+      recipients: [
+        recipient(1),
+        recipient(2, {binding: binding(2, 'tenant-a')}),
+      ],
+    })),
+    /Mixed-scope/,
+  );
+  assert.equal(provider.calls.length, 0);
+  assert.equal(store.effect, null);
+});
+
+test('per-recipient and per-effect notification work is bounded', async () => {
+  const provider = new MemoryProvider();
+  await assert.rejects(
+    sendAuthorizedNotificationChunksV2(request(new MemoryDeliveryStore(), provider, {
+      recipients: [recipient(1, {
+        fcmTokens: Array.from({length: 9}, (_, index) => `token-${index}`),
+      })],
+    })),
+    /oversized/,
+  );
+  await assert.rejects(
+    sendAuthorizedNotificationChunksV2(request(new MemoryDeliveryStore(), provider, {
+      recipients: Array.from({length: 201}, (_, index) => recipient(index)),
+    })),
+    /Invalid AD02 V2 notification request/,
+  );
+  assert.equal(provider.calls.length, 0);
+});
+
+test('effect identity binds exact project and tenant without separator ambiguity', async () => {
   const firstStore = new MemoryDeliveryStore();
   const secondStore = new MemoryDeliveryStore();
   const provider = new MemoryProvider();
-  await sendAuthorizedNotificationChunksV2({
-    ...request(firstStore, provider),
-    associationId: 'jba\u0000x',
-    capability: 'capability',
-    effectId: 'effect-001',
-    recipients: [recipient(1, {associationId: 'jba\u0000x'})],
-  });
-  await sendAuthorizedNotificationChunksV2({
-    ...request(secondStore, provider),
-    associationId: 'jba',
-    capability: 'x\u0000capability',
-    effectId: 'effect-001',
-    recipients: [recipient(1, {associationId: 'jba'})],
-  });
+  await sendAuthorizedNotificationChunksV2(request(firstStore, provider));
+  await sendAuthorizedNotificationChunksV2(request(secondStore, provider, {
+    authTenantIdV2: 'tenant-a',
+    recipients: [recipient(1, {binding: binding(1, 'tenant-a')})],
+  }));
   assert.notEqual(firstStore.effect.effectClaimId, secondStore.effect.effectClaimId);
   assert.equal(provider.calls.length, 2);
 });

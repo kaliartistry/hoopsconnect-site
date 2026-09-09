@@ -264,7 +264,7 @@ service cloud.firestore {
         && data.accountLifecycleEpochV2 == request.auth.token.accountLifecycleEpochV2
         && validId(data.associationId)
         && data.installationId == installationId
-        && validId(data.installationId)
+        && data.installationId.matches('^slot[0-7]$')
         && data.fcmToken is string
         && data.fcmToken.size() > 0
         && data.fcmToken.size() <= 4096

@@ -112,6 +112,7 @@ async function authorize({tenant = null, auth, repository, capability = 'associa
     configuredProjectId: fixture.projectId,
     attempt: attempt(),
     requiredCapability: capability,
+    expectedAssociationId: 'jba',
   });
 }
 
@@ -151,11 +152,11 @@ test('AD02 stays dormant, has no V1 bridge, and uses exact tenant-aware paths', 
     `accountLifecycleV2Tenants/${fixture.tenantScope.authTenantIdV2}/users/${fixture.tenantScope.authUidV2}`,
   );
   assert.equal(
-    ad02.accountFcmRegistrationPathV2(fixture.rootScope, 'device_a'),
+    ad02.accountFcmRegistrationPathV2(fixture.rootScope, 'slot0'),
     fixture.paths.root.registration,
   );
   assert.equal(
-    ad02.accountFcmRegistrationPathV2(fixture.tenantScope, 'device_a'),
+    ad02.accountFcmRegistrationPathV2(fixture.tenantScope, 'slot0'),
     fixture.paths.tenant.registration,
   );
   assert.deepEqual(fixture.rootScope, scope(null));
@@ -168,6 +169,10 @@ test('AD02 stays dormant, has no V1 bridge, and uses exact tenant-aware paths', 
       /path segment/,
     );
   }
+  assert.throws(
+    () => ad02.accountFcmRegistrationPathV2(fixture.rootScope, 'slot8'),
+    /installation slot/,
+  );
 });
 
 test('provider proof is bound to aud, provider tenant, custom scope, UID, G, and E', async () => {
@@ -203,6 +208,14 @@ test('root and tenant same-UID lanes never fall back to each other', async () =>
   const denied = await authorize({tenant: 'tenant-a', repository: shared});
   assert.equal(denied.authorized, false);
   assert.equal(denied.code, 'invalid_lifecycle');
+});
+
+test('request authority binds the caller-selected association exactly', async () => {
+  const repository = repositoryFor(null, {
+    membership: membership({associationId: 'other'}),
+  });
+  const denied = await authorize({repository});
+  assert.deepEqual(denied, {authorized: false, code: 'scope_mismatch'});
 });
 
 test('full V2 denial matrix remains fail closed, including strict freshness equality', async () => {
@@ -336,7 +349,12 @@ test('active-member directory strips authority, delivery, contact, and role data
     expectedAssociationId: 'jba',
   });
   assert.ok(active);
-  const directory = ad02.buildActiveMemberDirectoryV2([active]);
+  const directory = ad02.buildActiveMemberDirectoryV2({
+    members: [active],
+    authProjectIdV2: fixture.projectId,
+    authTenantIdV2: null,
+    associationId: 'jba',
+  });
   assert.deepEqual(directory, {
     accountDirectorySchemaVersionV2: 2,
     users: [{
@@ -351,6 +369,19 @@ test('active-member directory strips authority, delivery, contact, and role data
   const serialized = JSON.stringify(directory);
   for (const forbidden of ['fcmTokens', 'notificationPrefs', 'capabilities', 'role', 'email']) {
     assert.doesNotMatch(serialized, new RegExp(forbidden));
+  }
+
+  for (const foreign of [
+    {...active, scope: {...active.scope, authProjectIdV2: 'other-project'}},
+    {...active, scope: {...active.scope, authTenantIdV2: 'tenant-a'}},
+    {...active, associationId: 'other'},
+  ]) {
+    assert.throws(() => ad02.buildActiveMemberDirectoryV2({
+      members: [active, foreign],
+      authProjectIdV2: fixture.projectId,
+      authTenantIdV2: null,
+      associationId: 'jba',
+    }), /Mixed-scope/);
   }
 });
 
@@ -411,6 +442,29 @@ test('legacy derived writers bind original approval scope/G/E and recheck inside
       return result;
     },
   };
+
+  values.set(ad02.accountLifecycleAuthorityPathV2(scope()), lifecycle());
+  values.set(ad02.membershipAuthorityPathV2(scope()), membership());
+  const committedResult = await ad02.commitCandidateDerivedWriteV2({
+    repository,
+    expectedFence: captured,
+    commit(transaction) {
+      transaction.write('candidateDerived/output', {written: true});
+      return 'committed';
+    },
+  });
+  assert.equal(committedResult, 'committed');
+  assert.deepEqual(committed.get('candidateDerived/output'), {written: true});
+  committed.clear();
+
+  values.set(ad02.accountLifecycleAuthorityPathV2(scope()), lifecycle({
+    lifecycleStateV2: 'deleting',
+    accountLifecycleEpochV2: 8,
+  }));
+  values.set(ad02.membershipAuthorityPathV2(scope()), membership({
+    membershipStatusV2: 'revoked',
+    accountLifecycleEpochV2: 8,
+  }));
   await assert.rejects(
     ad02.commitCandidateDerivedWriteV2({
       repository,

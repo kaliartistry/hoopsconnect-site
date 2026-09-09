@@ -239,14 +239,17 @@ void main() {
         removeStaleRegistration: () async => staleRemoved += 1,
       );
       await writeStarted.future;
-      final newAttempt = adapter.startAccountSwitch(
+      final switchFuture = adapter.startAccountSwitch(
         attemptId: 'attempt-b',
         scope: _scope(),
         accountGenerationV2: _generationB,
         accountLifecycleEpochV2: 8,
+        removeOwnerBinding: () async {},
+        rotateInstallationToken: () async {},
       );
       releaseWrite.complete();
       expect(await registration, isFalse);
+      final newAttempt = await switchFuture;
       expect(staleRemoved, 1);
       expect(disposed, 1);
       expect(adapter.fcmOwner, isNull);
@@ -302,14 +305,16 @@ void main() {
     expect(adapter.gate.state, AuthIncarnationSessionStateV2.deleted);
   });
 
-  test('stale branch events cannot tear down a newer ready attempt', () {
+  test('stale branch events cannot tear down a newer ready attempt', () async {
     final adapter = AccountLifecycleCandidateClientAdapterV2();
     final oldAttempt = _makeReady(adapter);
-    final nextAttempt = adapter.startAccountSwitch(
+    final nextAttempt = await adapter.startAccountSwitch(
       attemptId: 'next-attempt',
       scope: _scope(),
       accountGenerationV2: _generationB,
       accountLifecycleEpochV2: 8,
+      removeOwnerBinding: () async {},
+      rotateInstallationToken: () async {},
     );
     adapter.acceptProof(attempt: nextAttempt, binding: _binding(nextAttempt));
     var disposed = 0;
@@ -327,32 +332,37 @@ void main() {
     expect(disposed, 0);
   });
 
-  test('a faulty listener disposer cannot keep the old ready gate open', () {
-    final adapter = AccountLifecycleCandidateClientAdapterV2();
-    final oldAttempt = _makeReady(adapter);
-    var secondDisposed = 0;
-    adapter.attachProtectedListener(
-      attempt: oldAttempt,
-      start: () =>
-          () => throw StateError('dispose failed'),
-    );
-    adapter.attachProtectedListener(
-      attempt: oldAttempt,
-      start: () =>
-          () => secondDisposed += 1,
-    );
+  test(
+    'a faulty listener disposer cannot keep the old ready gate open',
+    () async {
+      final adapter = AccountLifecycleCandidateClientAdapterV2();
+      final oldAttempt = _makeReady(adapter);
+      var secondDisposed = 0;
+      adapter.attachProtectedListener(
+        attempt: oldAttempt,
+        start: () =>
+            () => throw StateError('dispose failed'),
+      );
+      adapter.attachProtectedListener(
+        attempt: oldAttempt,
+        start: () =>
+            () => secondDisposed += 1,
+      );
 
-    final nextAttempt = adapter.startAccountSwitch(
-      attemptId: 'next-attempt',
-      scope: _scope(uid: 'next-user'),
-      accountGenerationV2: _generationB,
-      accountLifecycleEpochV2: 8,
-    );
-    expect(secondDisposed, 1);
-    expect(adapter.protectedListenerCount, 0);
-    expect(adapter.gate.attempt!.sameAttempt(nextAttempt), isTrue);
-    expect(adapter.permitsCapabilities, isFalse);
-  });
+      final nextAttempt = await adapter.startAccountSwitch(
+        attemptId: 'next-attempt',
+        scope: _scope(uid: 'next-user'),
+        accountGenerationV2: _generationB,
+        accountLifecycleEpochV2: 8,
+        removeOwnerBinding: () async {},
+        rotateInstallationToken: () async {},
+      );
+      expect(secondDisposed, 1);
+      expect(adapter.protectedListenerCount, 0);
+      expect(adapter.gate.attempt!.sameAttempt(nextAttempt), isTrue);
+      expect(adapter.permitsCapabilities, isFalse);
+    },
+  );
 
   test(
     'both detach controls failing blocks Auth sign-out and restores ready gate',
@@ -420,6 +430,7 @@ void main() {
               throw StateError('rotate failed'),
           signOut: () async => throw StateError('sign-out failed'),
           restoreRegistration: () async => restored += 1,
+          verifyAuthStillCurrent: (_) async => true,
         ),
         throwsStateError,
       );
@@ -476,16 +487,19 @@ void main() {
         rotateInstallationToken: () async => throw StateError('rotate failed'),
         signOut: () async => throw StateError('sign-out failed'),
         restoreRegistration: () async {},
+        verifyAuthStillCurrent: (_) async => true,
       );
       await detachStarted.future;
 
       expect(adapter.gate.state, AuthIncarnationSessionStateV2.signedOut);
-      expect(
-        () => adapter.startAccountSwitch(
+      await expectLater(
+        adapter.startAccountSwitch(
           attemptId: 'concurrent-attempt',
           scope: _scope(uid: 'next-user'),
           accountGenerationV2: _generationB,
           accountLifecycleEpochV2: 0,
+          removeOwnerBinding: () async {},
+          rotateInstallationToken: () async {},
         ),
         throwsStateError,
       );
@@ -555,13 +569,148 @@ void main() {
         secondControlCalls += 1;
       },
     );
+    final secondExpectation = expectLater(second, throwsStateError);
     releaseFirst.complete();
     await expectLater(first, throwsStateError);
-    await expectLater(second, throwsStateError);
+    await secondExpectation;
     expect(secondControlCalls, 0);
     expect(adapter.gate.state, AuthIncarnationSessionStateV2.signedOut);
     expect(adapter.permitsProtectedListeners, isFalse);
     expect(adapter.permitsCapabilities, isFalse);
     expect(adapter.permitsFcmRegistration, isFalse);
+  });
+
+  test(
+    'account switch removes or rotates the prior remote FCM owner',
+    () async {
+      final adapter = AccountLifecycleCandidateClientAdapterV2();
+      final attempt = _makeReady(adapter);
+      var remoteRegistration = true;
+      await adapter.registerFcmToken(
+        attempt: attempt,
+        token: 'token-a',
+        writeRegistration: () async => remoteRegistration = true,
+        removeStaleRegistration: () async => remoteRegistration = false,
+      );
+
+      final next = await adapter.startAccountSwitch(
+        attemptId: 'attempt-b',
+        scope: _scope(uid: 'next-user'),
+        accountGenerationV2: _generationB,
+        accountLifecycleEpochV2: 0,
+        removeOwnerBinding: () async => remoteRegistration = false,
+        rotateInstallationToken: () async =>
+            throw StateError('rotation unavailable'),
+      );
+      expect(remoteRegistration, isFalse);
+      expect(adapter.fcmOwner, isNull);
+      expect(adapter.gate.attempt!.sameAttempt(next), isTrue);
+      expect(adapter.permitsFcmRegistration, isFalse);
+    },
+  );
+
+  test(
+    'account switch is blocked when both remote detach controls fail',
+    () async {
+      final adapter = AccountLifecycleCandidateClientAdapterV2();
+      final attempt = _makeReady(adapter);
+      await adapter.registerFcmToken(
+        attempt: attempt,
+        token: 'token-a',
+        writeRegistration: () async {},
+        removeStaleRegistration: () async {},
+      );
+      await expectLater(
+        adapter.startAccountSwitch(
+          attemptId: 'attempt-b',
+          scope: _scope(uid: 'next-user'),
+          accountGenerationV2: _generationB,
+          accountLifecycleEpochV2: 0,
+          removeOwnerBinding: () async => throw StateError('remove failed'),
+          rotateInstallationToken: () async =>
+              throw StateError('rotation failed'),
+        ),
+        throwsStateError,
+      );
+      expect(adapter.gate.state, AuthIncarnationSessionStateV2.ready);
+      expect(adapter.gate.attempt!.sameAttempt(attempt), isTrue);
+      expect(adapter.fcmOwner?.attempt.sameAttempt(attempt), isTrue);
+      expect(adapter.permitsCapabilities, isTrue);
+    },
+  );
+
+  test('detach latches synchronously before a queued token mutation', () async {
+    final adapter = AccountLifecycleCandidateClientAdapterV2();
+    final attempt = _makeReady(adapter);
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    final registration = adapter.registerFcmToken(
+      attempt: attempt,
+      token: 'token-a',
+      writeRegistration: () async {
+        writeStarted.complete();
+        await releaseWrite.future;
+      },
+      removeStaleRegistration: () async {},
+    );
+    await writeStarted.future;
+    final detach = adapter.detachAndSignOut(
+      removeOwnerBinding: () async {},
+      rotateInstallationToken: () async {},
+      signOut: () async {},
+      restoreRegistration: () async {},
+    );
+
+    await expectLater(
+      adapter.startAccountSwitch(
+        attemptId: 'attempt-b',
+        scope: _scope(uid: 'next-user'),
+        accountGenerationV2: _generationB,
+        accountLifecycleEpochV2: 0,
+        removeOwnerBinding: () async {},
+        rotateInstallationToken: () async {},
+      ),
+      throwsStateError,
+    );
+    releaseWrite.complete();
+    expect(await registration, isFalse);
+    await detach;
+    expect(adapter.gate.state, AuthIncarnationSessionStateV2.signedOut);
+  });
+
+  test('throwing sign-out cannot reopen a provider-changed session', () async {
+    final adapter = AccountLifecycleCandidateClientAdapterV2();
+    _makeReady(adapter);
+    var providerStillMatches = true;
+    var restoreCalls = 0;
+    await expectLater(
+      adapter.detachAndSignOut(
+        removeOwnerBinding: () async {},
+        rotateInstallationToken: () async =>
+            throw StateError('rotation unavailable'),
+        signOut: () async {
+          providerStillMatches = false;
+          throw StateError('sign-out observer failed');
+        },
+        restoreRegistration: () async => restoreCalls += 1,
+        verifyAuthStillCurrent: (_) async => providerStillMatches,
+      ),
+      throwsStateError,
+    );
+    expect(restoreCalls, 0);
+    expect(adapter.gate.state, AuthIncarnationSessionStateV2.signedOut);
+    expect(adapter.permitsCapabilities, isFalse);
+  });
+
+  test('cached gate views cannot preserve a retired ready grant', () {
+    final adapter = AccountLifecycleCandidateClientAdapterV2();
+    final attempt = _makeReady(adapter);
+    final cached = adapter.gate;
+    expect(cached.permitsCapabilities, isTrue);
+    adapter.markDeleting(attempt);
+    expect(cached.state, AuthIncarnationSessionStateV2.deleting);
+    expect(cached.permitsProtectedListeners, isFalse);
+    expect(cached.permitsCapabilities, isFalse);
+    expect(cached.permitsFcmRegistration, isFalse);
   });
 }

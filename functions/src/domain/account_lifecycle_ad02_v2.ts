@@ -153,6 +153,7 @@ const actorStampKeys = [
 ] as const;
 const generationPattern = /^[a-f0-9]{64}$/;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const installationSlotPattern = /^slot[0-7]$/;
 const controlPattern = /[\u0000-\u001f\u007f]/;
 const preferenceKeys = new Set(["ackReminders", "statReminders", "newPosts"]);
 
@@ -250,8 +251,8 @@ export function accountFcmRegistrationPathV2(
   scopeValue: unknown,
   installationId: string,
 ): string {
-  if (!identifierPattern.test(installationId)) {
-    throw new TypeError("Invalid AD02 V2 installation ID.");
+  if (!installationSlotPattern.test(installationId)) {
+    throw new TypeError("Invalid AD02 V2 installation slot.");
   }
   const value = record(scopeValue);
   const scope = parseAuthIncarnationScopeV2({
@@ -329,7 +330,11 @@ export async function evaluateCandidateRequestAuthorityV2(input: {
   configuredProjectId: string;
   attempt: CandidateSessionAttemptV2;
   requiredCapability: string;
+  expectedAssociationId: string;
 }): Promise<AuthIncarnationAuthorizationDecisionV2> {
+  if (!identifierPattern.test(input.expectedAssociationId)) {
+    return {authorized: false, code: "scope_mismatch"};
+  }
   const tokenProof = extractProviderTokenProofV2(input.auth, input.configuredProjectId);
   if (tokenProof === null) return {authorized: false, code: "invalid_token_proof"};
   const expectedScope: AuthIncarnationScopeV2 = {
@@ -341,7 +346,7 @@ export async function evaluateCandidateRequestAuthorityV2(input: {
     input.repository.read(accountLifecycleAuthorityPathV2(expectedScope)),
     input.repository.read(membershipAuthorityPathV2(expectedScope)),
   ]);
-  return evaluateAccountAuthorizationV2({
+  const decision = evaluateAccountAuthorizationV2({
     ...input.attempt,
     expectedScope,
     tokenProof,
@@ -349,6 +354,9 @@ export async function evaluateCandidateRequestAuthorityV2(input: {
     membership,
     requiredCapability: input.requiredCapability,
   });
+  return decision.authorized && decision.binding.associationId !== input.expectedAssociationId
+    ? {authorized: false, code: "scope_mismatch"}
+    : decision;
 }
 
 export function parseAccountProfileAuthorityV2(value: unknown): AccountProfileAuthorityV2 {
@@ -443,14 +451,29 @@ export function evaluatePersistedActiveMemberV2(input: {
   });
 }
 
-export function buildActiveMemberDirectoryV2(
-  members: readonly PersistedActiveMemberV2[],
-  maximumEntries = 200,
-): ActiveMemberDirectoryV2 {
+export function buildActiveMemberDirectoryV2(input: {
+  members: readonly PersistedActiveMemberV2[];
+  authProjectIdV2: string;
+  authTenantIdV2: string | null;
+  associationId: string;
+  maximumEntries?: number;
+}): ActiveMemberDirectoryV2 {
+  const maximumEntries = input.maximumEntries ?? 200;
   if (!Number.isSafeInteger(maximumEntries) || maximumEntries < 1 || maximumEntries > 200) {
     throw new RangeError("Invalid AD02 V2 directory limit.");
   }
-  const ordered = [...members].sort((left, right) =>
+  if (
+    !identifierPattern.test(input.authProjectIdV2) ||
+    !(input.authTenantIdV2 === null || identifierPattern.test(input.authTenantIdV2)) ||
+    !identifierPattern.test(input.associationId) ||
+    input.members.some((member) =>
+      member.scope.authProjectIdV2 !== input.authProjectIdV2 ||
+      member.scope.authTenantIdV2 !== input.authTenantIdV2 ||
+      member.associationId !== input.associationId)
+  ) {
+    throw new TypeError("Mixed-scope AD02 V2 directory members.");
+  }
+  const ordered = [...input.members].sort((left, right) =>
     left.scope.authUidV2.localeCompare(right.scope.authUidV2));
   if (new Set(ordered.map((member) => member.scope.authUidV2)).size !== ordered.length) {
     throw new TypeError("Duplicate AD02 V2 directory member.");
@@ -620,7 +643,14 @@ export async function assertLegacyDerivedWriterFenceV2(
     transaction.read(membershipAuthorityPathV2(expected)),
   ]);
   const current = evaluateLegacyDerivedWriterFenceV2({
-    actorStamp: expected,
+    actorStamp: {
+      authIncarnationSchemaVersionV2: expected.authIncarnationSchemaVersionV2,
+      authProjectIdV2: expected.authProjectIdV2,
+      authTenantIdV2: expected.authTenantIdV2,
+      authUidV2: expected.authUidV2,
+      accountGenerationV2: expected.accountGenerationV2,
+      accountLifecycleEpochV2: expected.accountLifecycleEpochV2,
+    },
     lifecycle,
     membership,
     requiredCapability: expected.capability,

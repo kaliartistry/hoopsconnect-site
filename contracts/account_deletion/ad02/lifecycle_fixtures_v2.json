@@ -32,7 +32,7 @@
       "membership": "membershipsV2Root/shared-user",
       "projection": "storageAuthorizationsV2Root/shared-user",
       "profile": "accountProfilesV2Root/shared-user",
-      "registration": "accountFcmRegistrationsV2Root/shared-user/installations/device_a",
+      "registration": "accountFcmRegistrationsV2Root/shared-user/installations/slot0",
       "suppression": "accountGenerationSuppressionsV2Root/shared-user"
     },
     "tenant": {
@@ -40,7 +40,7 @@
       "membership": "membershipsV2Tenants/league-tenant/users/shared-user",
       "projection": "storageAuthorizationsV2Tenants/league-tenant/users/shared-user",
       "profile": "accountProfilesV2Tenants/league-tenant/users/shared-user",
-      "registration": "accountFcmRegistrationsV2Tenants/league-tenant/users/shared-user/installations/device_a",
+      "registration": "accountFcmRegistrationsV2Tenants/league-tenant/users/shared-user/installations/slot0",
       "suppression": "accountGenerationSuppressionsV2Tenants/league-tenant/users/shared-user"
     }
   },
