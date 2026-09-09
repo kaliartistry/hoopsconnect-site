@@ -58,10 +58,10 @@ jobs:
       - name: Run tests
         run: flutter test
 
-      - name: Run canonical encoding browser regression
-        run: >-
-          flutter test --platform chrome
-          test/models/official_stats/canonical_encoding_web_test.dart
+      - name: Run browser wire-contract regressions
+        run: |
+          flutter test --platform chrome test/models/official_stats/canonical_encoding_web_test.dart
+          flutter test --platform chrome test/models/account_deletion/account_deletion_wire_web_test.dart
 
       - name: Build Functions
         working-directory: functions

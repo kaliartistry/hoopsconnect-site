@@ -1,0 +1,105 @@
+{
+  "contractVersion": "account-deletion-contract-v1",
+  "activationAllowed": false,
+  "gates": [
+    {
+      "id": "G1",
+      "name": "controller_and_retention",
+      "status": "closedPendingAuthoritativeDecision",
+      "owner": null,
+      "requiredEvidence": ["named_controller", "authorized_decision_maker", "approved_per_class_retention_registry", "approved_disclosure_versions"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G2",
+      "name": "player_and_minor_rights",
+      "status": "closedPendingAuthoritativeDecision",
+      "owner": null,
+      "requiredEvidence": ["verified_account_person_claim_policy", "guardian_and_non_account_process", "field_level_publication_policy", "ranking_privacy_treatment"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G3",
+      "name": "recoverable_ownership",
+      "status": "closedPendingOperationalProof",
+      "owner": null,
+      "requiredEvidence": ["named_custody_operator", "named_recovery_operator", "independent_infrastructure_owner", "transfer_rehearsal", "last_owner_suspension_rehearsal"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G4",
+      "name": "legacy_migration_inventory",
+      "status": "closedPendingOperationalProof",
+      "owner": null,
+      "requiredEvidence": ["fresh_authorized_auth_profile_membership_inventory", "generation_metadata", "approved_owner_bootstrap", "source_and_media_classification", "suppression_before_migration"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G5",
+      "name": "complete_fencing",
+      "status": "closedPendingImplementationAndProof",
+      "owner": null,
+      "requiredEvidence": ["rules_fence", "command_and_receipt_fence", "provisioning_fence", "notification_fence", "storage_fence", "legacy_and_public_read_fence", "old_client_denial"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G6",
+      "name": "provider_configuration",
+      "status": "closedPendingOperationalProof",
+      "owner": null,
+      "requiredEvidence": ["pinned_sdk_compatibility", "apple_native_and_web_identifiers", "revocation_material_handling", "provider_event_validation", "app_check", "domains_and_csp", "indexes", "least_privilege_workers"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G7",
+      "name": "deadline_and_operations",
+      "status": "closedPendingAuthoritativeDecision",
+      "owner": null,
+      "requiredEvidence": ["approved_completion_timing", "staffing_and_alerts", "backlog_capacity", "completion_delivery", "processor_request_process", "outage_and_attention_handling"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G8",
+      "name": "restore_and_retained_copies",
+      "status": "closedPendingOperationalProof",
+      "owner": null,
+      "requiredEvidence": ["backup_pitr_object_version_log_and_processor_retention", "durable_suppression_ledger", "key_custody", "restore_before_traffic_rehearsal"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G9",
+      "name": "official_stat_integration",
+      "status": "closedPendingReview",
+      "owner": null,
+      "requiredEvidence": ["approved_identity_evidence_privacy_addendum", "legacy_privacy_adapter", "no_certified_hash_conflict", "no_raw_export_or_public_fallback"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G10",
+      "name": "end_to_end_evidence",
+      "status": "closedPendingOperationalProof",
+      "owner": null,
+      "requiredEvidence": ["applicable_scenario_matrix_pass", "independent_disposition_review", "custody_review", "public_privacy_review", "auth_deletion_scheduled_after_durable_fence_and_minimum_references", "blocked_cleanup_does_not_block_auth_deletion", "verified_auth_absence", "auth_absence_does_not_bypass_cleanup_completion", "zero_unresolved_required_adapters"],
+      "evidenceRefs": [],
+      "passed": false
+    },
+    {
+      "id": "G11",
+      "name": "public_and_store_consistency",
+      "status": "closedPendingOperationalProof",
+      "owner": null,
+      "requiredEvidence": ["live_web_route_readback", "privacy_policy_readback", "mobile_and_pwa_screenshots", "reviewer_test_procedure", "app_store_privacy_consistency", "google_data_safety_and_deletion_url_consistency"],
+      "evidenceRefs": [],
+      "passed": false
+    }
+  ]
+}
