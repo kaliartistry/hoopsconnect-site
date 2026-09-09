@@ -18,6 +18,19 @@ from urllib.parse import urlencode, urlparse
 
 
 EXPECTED_CASES = 61
+_RENDERED_DOM_EXPRESSION = (
+    "(() => {"
+    "const root = typeof document === 'undefined' "
+    "? null : document.documentElement;"
+    "if (root == null) {"
+    "return {documentReady:false,state:null,status:null,html:null};"
+    "}"
+    "return {documentReady:true,"
+    "state:document.body?.dataset.conformance ?? null,"
+    "status:document.querySelector('#status')?.textContent ?? null,"
+    "html:root.outerHTML};"
+    "})()"
+)
 
 
 def expected_status(case_count=EXPECTED_CASES):
@@ -81,28 +94,43 @@ def validate_rendered_dom(
     return required_status
 
 
-def _receive_exact(connection, length):
-    chunks = bytearray()
-    while len(chunks) < length:
-        chunk = connection.recv(length - len(chunks))
-        if not chunk:
-            raise RuntimeError("Chrome DevTools socket closed unexpectedly")
-        chunks.extend(chunk)
-    return bytes(chunks)
+class _WebSocketDeadlineExceeded(RuntimeError):
+    pass
+
+
+def _remaining_budget(deadline, monotonic, timeout_message):
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise _WebSocketDeadlineExceeded(timeout_message)
+    return remaining
 
 
 class _WebSocket:
-    def __init__(self, url, timeout_seconds):
+    def __init__(
+        self,
+        url,
+        timeout_seconds=None,
+        *,
+        deadline=None,
+        monotonic=None,
+    ):
+        self.monotonic = monotonic or time.monotonic
+        if deadline is None:
+            if timeout_seconds is None:
+                raise ValueError("timeout_seconds or deadline is required")
+            deadline = self.monotonic() + timeout_seconds
+        self.deadline = deadline
         parsed = urlparse(url)
-        handshake_deadline = time.monotonic() + timeout_seconds
+        timeout_message = "Chrome DevTools WebSocket upgrade timed out"
         try:
+            remaining = _remaining_budget(
+                self.deadline, self.monotonic, timeout_message
+            )
             self.connection = socket.create_connection(
-                (parsed.hostname, parsed.port), timeout=timeout_seconds
+                (parsed.hostname, parsed.port), timeout=remaining
             )
         except TimeoutError as error:
-            raise RuntimeError(
-                "Chrome DevTools WebSocket upgrade timed out"
-            ) from error
+            raise _WebSocketDeadlineExceeded(timeout_message) from error
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         request_bytes = (
@@ -114,42 +142,35 @@ class _WebSocket:
             "Sec-WebSocket-Version: 13\r\n\r\n"
         ).encode("ascii")
         try:
-            remaining = handshake_deadline - time.monotonic()
-            if remaining <= 0:
-                raise RuntimeError(
-                    "Chrome DevTools WebSocket upgrade timed out"
-                )
+            remaining = _remaining_budget(
+                self.deadline, self.monotonic, timeout_message
+            )
             self.connection.settimeout(remaining)
-            self.connection.sendall(request_bytes)
+            try:
+                self.connection.sendall(request_bytes)
+            except TimeoutError as error:
+                raise _WebSocketDeadlineExceeded(timeout_message) from error
             response = bytearray()
             while b"\r\n\r\n" not in response:
-                remaining = handshake_deadline - time.monotonic()
-                if remaining <= 0:
-                    raise RuntimeError(
-                        "Chrome DevTools WebSocket upgrade timed out"
-                    )
+                remaining = _remaining_budget(
+                    self.deadline, self.monotonic, timeout_message
+                )
                 self.connection.settimeout(remaining)
                 try:
                     chunk = self.connection.recv(4096)
                 except TimeoutError as error:
-                    raise RuntimeError(
-                        "Chrome DevTools WebSocket upgrade timed out"
-                    ) from error
+                    raise _WebSocketDeadlineExceeded(timeout_message) from error
                 if not chunk:
                     raise RuntimeError(
                         "Chrome DevTools WebSocket upgrade closed before "
                         "headers completed"
                     )
                 response.extend(chunk)
+            _remaining_budget(self.deadline, self.monotonic, timeout_message)
             if b" 101 " not in bytes(response).split(b"\r\n", 1)[0]:
                 raise RuntimeError(
                     "Chrome rejected the DevTools WebSocket upgrade"
                 )
-        except TimeoutError as error:
-            self.connection.close()
-            raise RuntimeError(
-                "Chrome DevTools WebSocket upgrade timed out"
-            ) from error
         except BaseException:
             self.connection.close()
             raise
@@ -157,7 +178,33 @@ class _WebSocket:
     def close(self):
         self.connection.close()
 
-    def _send_frame(self, opcode, payload=b""):
+    def _operation_deadline(self, deadline):
+        return self.deadline if deadline is None else deadline
+
+    def _set_io_timeout(self, deadline, operation):
+        timeout_message = f"Chrome DevTools {operation} timed out"
+        remaining = _remaining_budget(
+            self._operation_deadline(deadline),
+            self.monotonic,
+            timeout_message,
+        )
+        self.connection.settimeout(remaining)
+
+    def _require_operation_budget(self, deadline, operation):
+        return _remaining_budget(
+            self._operation_deadline(deadline),
+            self.monotonic,
+            f"Chrome DevTools {operation} timed out",
+        )
+
+    def _send_frame(
+        self,
+        opcode,
+        payload=b"",
+        *,
+        deadline=None,
+        operation="command",
+    ):
         header = bytearray([0x80 | opcode])
         length = len(payload)
         if length < 126:
@@ -171,40 +218,91 @@ class _WebSocket:
         mask = os.urandom(4)
         header.extend(mask)
         header.extend(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-        self.connection.sendall(header)
+        self._set_io_timeout(deadline, operation)
+        try:
+            self.connection.sendall(header)
+        except TimeoutError as error:
+            raise _WebSocketDeadlineExceeded(
+                f"Chrome DevTools {operation} timed out"
+            ) from error
+        self._require_operation_budget(deadline, operation)
 
-    def send_json(self, value):
-        self._send_frame(0x1, json.dumps(value, separators=(",", ":")).encode())
+    def send_json(self, value, *, deadline=None, operation="command"):
+        self._send_frame(
+            0x1,
+            json.dumps(value, separators=(",", ":")).encode(),
+            deadline=deadline,
+            operation=operation,
+        )
 
-    def receive_json(self):
+    def _receive_exact(self, length, deadline, operation):
+        chunks = bytearray()
+        while len(chunks) < length:
+            self._set_io_timeout(deadline, operation)
+            try:
+                chunk = self.connection.recv(length - len(chunks))
+            except TimeoutError as error:
+                raise _WebSocketDeadlineExceeded(
+                    f"Chrome DevTools {operation} timed out"
+                ) from error
+            if not chunk:
+                raise RuntimeError("Chrome DevTools socket closed unexpectedly")
+            chunks.extend(chunk)
+        return bytes(chunks)
+
+    def receive_json(self, *, deadline=None, operation="command"):
         while True:
-            first, second = _receive_exact(self.connection, 2)
+            operation_deadline = self._operation_deadline(deadline)
+            first, second = self._receive_exact(
+                2, operation_deadline, operation
+            )
             opcode = first & 0x0F
             length = second & 0x7F
             if length == 126:
-                length = struct.unpack("!H", _receive_exact(self.connection, 2))[0]
+                length = struct.unpack(
+                    "!H", self._receive_exact(2, operation_deadline, operation)
+                )[0]
             elif length == 127:
-                length = struct.unpack("!Q", _receive_exact(self.connection, 8))[0]
-            mask = _receive_exact(self.connection, 4) if second & 0x80 else None
-            payload = _receive_exact(self.connection, length)
+                length = struct.unpack(
+                    "!Q", self._receive_exact(8, operation_deadline, operation)
+                )[0]
+            mask = (
+                self._receive_exact(4, operation_deadline, operation)
+                if second & 0x80
+                else None
+            )
+            payload = self._receive_exact(length, operation_deadline, operation)
             if mask:
                 payload = bytes(
                     byte ^ mask[index % 4] for index, byte in enumerate(payload)
                 )
+            self._require_operation_budget(operation_deadline, operation)
             if opcode == 0x8:
                 raise RuntimeError("Chrome DevTools socket closed unexpectedly")
             if opcode == 0x9:
-                self._send_frame(0xA, payload)
+                self._send_frame(
+                    0xA,
+                    payload,
+                    deadline=operation_deadline,
+                    operation=operation,
+                )
                 continue
             if opcode == 0x1:
                 return json.loads(payload)
 
-    def command(self, identifier, method, params=None):
+    def command(self, identifier, method, params=None, *, deadline=None):
+        operation_deadline = self._operation_deadline(deadline)
         self.send_json(
-            {"id": identifier, "method": method, "params": params or {}}
+            {"id": identifier, "method": method, "params": params or {}},
+            deadline=operation_deadline,
+            operation=method,
         )
         while True:
-            message = self.receive_json()
+            message = self.receive_json(
+                deadline=operation_deadline,
+                operation=method,
+            )
+            self._require_operation_budget(operation_deadline, method)
             if message.get("id") == identifier:
                 if "error" in message:
                     raise RuntimeError(
@@ -244,44 +342,151 @@ def _wait_for_page_target(port, harness_url, deadline):
     raise RuntimeError("optimized Dart2JS Chrome page startup timed out")
 
 
-def _capture_rendered_dom(websocket_url, deadline):
-    websocket = _WebSocket(websocket_url, max(1, deadline - time.monotonic()))
-    try:
-        identifier = 0
-        while time.monotonic() < deadline:
-            identifier += 1
+def _format_evaluation_exception(details):
+    if not isinstance(details, dict):
+        return repr(details)
+    parts = []
+    text = details.get("text")
+    if text:
+        parts.append(str(text))
+    exception = details.get("exception")
+    if isinstance(exception, dict):
+        description = exception.get("description") or exception.get("value")
+        if description:
+            parts.append(str(description))
+    line = details.get("lineNumber")
+    column = details.get("columnNumber")
+    if isinstance(line, int) and isinstance(column, int):
+        parts.append(f"line={line + 1} column={column + 1}")
+    if not parts:
+        parts.append(json.dumps(details, sort_keys=True, separators=(",", ":")))
+    return "; ".join(parts)[:2000]
+
+
+def _sleep_before_dom_retry(deadline, monotonic, sleep):
+    remaining = deadline - monotonic()
+    if remaining > 0:
+        sleep(min(0.05, remaining))
+
+
+def _completion_timeout(last_evaluation_error):
+    message = "optimized Dart2JS JavaScript completion timed out"
+    if last_evaluation_error is not None:
+        message += f"; last evaluation error: {last_evaluation_error}"
+    return RuntimeError(message)
+
+
+def _poll_rendered_dom(
+    websocket,
+    deadline,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+):
+    identifier = 0
+    last_evaluation_error = None
+    last_reported_error = None
+    while monotonic() < deadline:
+        identifier += 1
+        try:
             response = websocket.command(
                 identifier,
                 "Runtime.evaluate",
                 {
-                    "expression": (
-                        "({state:document.body?.dataset.conformance ?? null,"
-                        "status:document.querySelector('#status')?.textContent ?? null,"
-                        "html:document.documentElement.outerHTML})"
-                    ),
+                    "expression": _RENDERED_DOM_EXPRESSION,
                     "returnByValue": True,
                 },
+                deadline=deadline,
             )
-            evaluation = response["result"]
-            if "exceptionDetails" in evaluation:
-                raise RuntimeError("optimized Dart2JS JavaScript evaluation failed")
-            value = evaluation["result"].get("value", {})
-            if value.get("state") == "failed":
+        except _WebSocketDeadlineExceeded as error:
+            raise _completion_timeout(last_evaluation_error) from error
+        except RuntimeError as error:
+            diagnostic = str(error)
+            if not diagnostic.startswith("Chrome DevTools Runtime.evaluate failed:"):
+                raise
+            last_evaluation_error = diagnostic
+        else:
+            if monotonic() >= deadline:
+                raise _completion_timeout(last_evaluation_error)
+            evaluation = response.get("result")
+            if not isinstance(evaluation, dict):
                 raise RuntimeError(
-                    f"optimized Dart2JS JavaScript failed: {value.get('status')!r}"
+                    "optimized Dart2JS Runtime.evaluate returned no result object"
                 )
-            if value.get("state") == "passed":
-                return value["html"]
-            time.sleep(0.05)
+            exception_details = evaluation.get("exceptionDetails")
+            if exception_details is not None:
+                last_evaluation_error = _format_evaluation_exception(
+                    exception_details
+                )
+            else:
+                remote_result = evaluation.get("result")
+                value = (
+                    remote_result.get("value")
+                    if isinstance(remote_result, dict)
+                    else None
+                )
+                if not isinstance(value, dict):
+                    raise RuntimeError(
+                        "optimized Dart2JS Runtime.evaluate returned no value object"
+                    )
+                if not value.get("documentReady"):
+                    _sleep_before_dom_retry(deadline, monotonic, sleep)
+                    continue
+                if value.get("state") == "failed":
+                    raise RuntimeError(
+                        "optimized Dart2JS JavaScript failed: "
+                        f"{value.get('status')!r}"
+                    )
+                if value.get("state") == "passed":
+                    rendered_html = value.get("html")
+                    if not isinstance(rendered_html, str):
+                        raise RuntimeError(
+                            "optimized Dart2JS passed without rendered HTML"
+                        )
+                    if monotonic() >= deadline:
+                        raise _completion_timeout(last_evaluation_error)
+                    return rendered_html
+                _sleep_before_dom_retry(deadline, monotonic, sleep)
+                continue
+        if last_evaluation_error != last_reported_error:
+            print(
+                "optimized Dart2JS Runtime.evaluate was transiently unavailable; "
+                f"retrying: {last_evaluation_error}",
+                file=sys.stderr,
+            )
+            last_reported_error = last_evaluation_error
+        _sleep_before_dom_retry(deadline, monotonic, sleep)
+    raise _completion_timeout(last_evaluation_error)
+
+
+def _capture_rendered_dom(
+    websocket_url,
+    deadline,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+):
+    websocket = _WebSocket(
+        websocket_url,
+        deadline=deadline,
+        monotonic=monotonic,
+    )
+    try:
+        return _poll_rendered_dom(
+            websocket,
+            deadline,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
     finally:
         websocket.close()
-    raise RuntimeError("optimized Dart2JS JavaScript completion timed out")
 
 
 def _request_browser_close(port, browser_path):
     websocket = _WebSocket(f"ws://127.0.0.1:{port}{browser_path}", 2)
     try:
-        websocket.send_json({"id": 1, "method": "Browser.close", "params": {}})
+        websocket.send_json(
+            {"id": 1, "method": "Browser.close", "params": {}},
+            operation="Browser.close",
+        )
     finally:
         websocket.close()
 
