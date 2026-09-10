@@ -83,6 +83,79 @@ test('all private AD05 manifest, item receipt, and continuation records deny cli
   }
 });
 
+test('real Firestore transaction race seals one canonical manifest and rejects conflicting contents', async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    const repository = new EmulatorRepository(db);
+    const manifestIdV1 = inventory.deterministicAd05SourceManifestIdV1({
+      internalJobId: 'job_manifest_race',
+      taskEffectIdV1: 'effect_manifest_race',
+      adapterIdV1: 'user_profile',
+      inventorySourceIdV1: 'trusted_profile_inventory',
+      inventorySourceVersionV1: 'inventory_v1',
+    });
+    const binding = records.createCandidateAd05ExecutionBindingV1({
+      authProjectIdV2: 'demo-hoopsconnect', authTenantIdV2: null,
+      authUidV2: 'owner-a', generationHash: 'a'.repeat(64),
+      acceptedLifecycleEpochV2: 8, lifecycleStateV1: 'deleting',
+      internalJobId: 'job_manifest_race',
+      taskEffectIdV1: 'effect_manifest_race',
+      taskEffectFingerprintV1: 'b'.repeat(64),
+      adapterIdV1: 'user_profile',
+      adapterVersionV1: 'account-deletion-adapter-v1',
+      effectVersionV1: 'transactional-document-v1',
+      policyDecisionIdV1: 'retention.user_profile',
+      policyVersionV1: 'synthetic_policy_v1', actionV1: 'erase',
+      sourceManifestIdV1: manifestIdV1,
+      sourceManifestVersionV1: 'inventory_v1',
+    });
+    const sourceFor = (sourceDocumentPathV1) => ({
+      adapterIdV1: 'user_profile',
+      enumerateBoundRecordsV1: async () => ({
+        schemaVersion: 1,
+        inventorySourceIdV1: 'trusted_profile_inventory',
+        inventorySourceVersionV1: 'inventory_v1',
+        completeV1: true,
+        continuationTokenV1: null,
+        referenceCoverageVerifiedV1: true,
+        referenceCoverageEvidenceIdV1: 'independent_reference_scan_v1',
+        recordsV1: [{
+          schemaVersion: 1, adapterIdV1: 'user_profile',
+          sourceSchemaIdV1: 'profile_v1', sourceSchemaVersionV1: 'schema_v1',
+          sourceDocumentPathV1, sourceRecordVersionV1: 'record_v1',
+          provenanceIdV1: 'verified_claim_v1',
+          associationScopeHashV1: official.canonicalSha256('association-a'),
+          classificationV1: 'applicable',
+        }],
+      }),
+    });
+
+    const results = await Promise.allSettled([
+      inventory.sealCandidateAd05TrustedInventoryManifestV1({
+        repository, binding, source: sourceFor('users/owner-a'),
+      }),
+      inventory.sealCandidateAd05TrustedInventoryManifestV1({
+        repository, binding, source: sourceFor('users/conflicting-owner-a'),
+      }),
+    ]);
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter((result) => result.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0].reason.codeV1, 'AD05_BINDING_CONFLICT');
+
+    const canonical = records.parseCandidateAd05SealedManifestV1(
+      await repository.read(records.ad05ManifestPathV1(binding)),
+    );
+    assert.equal(canonical.manifestFingerprintV1,
+      fulfilled[0].value.manifestV1.manifestFingerprintV1);
+    assert.equal(canonical.itemsV1.length, 1);
+    assert.ok([
+      'users/owner-a', 'users/conflicting-owner-a',
+    ].includes(canonical.itemsV1[0].sourceDocumentPathV1));
+  });
+});
+
 test('real Firestore transaction race commits one logical source effect and one immutable receipt', async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
