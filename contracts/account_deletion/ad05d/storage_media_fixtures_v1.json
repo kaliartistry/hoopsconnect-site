@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "packetId": "account_deletion_ad05d_storage_media_v1",
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "providerMutationAllowed": false,
+  "syntheticEvidenceOnly": true,
+  "bucketRegistry": {
+    "registryVersion": "synthetic_bucket_registry_v1",
+    "bucketName": "demo-hoopsconnect.appspot.com",
+    "providerProjectId": "demo-hoopsconnect",
+    "hierarchicalNamespace": false,
+    "versioningState": "enabled",
+    "softDeleteState": "disabled",
+    "retentionState": "none"
+  },
+  "candidateAdapters": {
+    "personal_storage_media": {
+      "action": "erase",
+      "classification": "personalExclusive",
+      "candidateOutcome": "personalVersionEraseVerified",
+      "terminalAdapterSupport": false
+    },
+    "shared_association_media": {
+      "action": "detach",
+      "classification": "associationShared",
+      "candidateOutcome": "sharedAccountReferenceDetachVerified",
+      "terminalAdapterSupport": false
+    }
+  },
+  "unsupportedProductionGuarantees": [
+    "authoritative_live_storage_inventory",
+    "provider_object_erasure",
+    "download_token_revocation",
+    "cache_and_cdn_purge",
+    "soft_delete_and_restore_suppression",
+    "shared_media_rights_policy"
+  ]
+}

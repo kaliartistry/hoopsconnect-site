@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// ACCOUNT_DELETION_AD05D_V1_TEST_ONLY_PROJECT=demo-hoopsconnect
+// Candidate-only policy. firebase.json does not reference this file.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /candidate-ad05d/{object=**} {
+      allow read, write: if false;
+    }
+    match /{object=**} {
+      allow read, write: if false;
+    }
+  }
+}
