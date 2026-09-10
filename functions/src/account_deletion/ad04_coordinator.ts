@@ -838,7 +838,9 @@ export async function acceptCandidateAccountDeletionV1(input: {
           statusControl.expiryPolicyDecisionId !== alias.expiryPolicyDecisionId ||
           binding.acceptedLifecycleEpochV2 !== acceptedLifecycleEpochV2 ||
           receipt.acceptedAtSecV1 !== binding.acceptedAtSecV1 ||
-          alias.createdAt.getTime() !== receipt.acceptedAtSecV1 * 1000 ||
+          (receipt.bindingKind === "winningOperation"
+            ? alias.createdAt.getTime() !== receipt.acceptedAtSecV1 * 1000
+            : alias.createdAt.getTime() < receipt.acceptedAtSecV1 * 1000) ||
           (receipt.bindingKind === "winningOperation" &&
            receipt.acceptedSemanticFingerprint !== semanticHash) ||
           (receipt.bindingKind === "winningOperation"

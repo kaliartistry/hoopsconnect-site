@@ -498,6 +498,13 @@ test('exact operation replay is stable, envelope changes conflict, and a second 
   });
   assert.equal(converged.internalJobId, result.accepted.internalJobId);
   assert.equal(converged.bindingKind, 'sameGenerationConvergence');
+  const convergedReplay = await coordinator.acceptCandidateAccountDeletionV1({
+    repository: result.repository,
+    principal: result.principal,
+    request: secondRequest,
+    nowSecV1: NOW + 3,
+  });
+  assert.deepEqual(convergedReplay, converged);
   const binding = result.repository.values.get(records.deletionJobBindingPathV1(
     result.accepted.internalJobId,
   ));
