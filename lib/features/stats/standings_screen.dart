@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/sharing/branded_share_payload.dart';
+import '../../core/sharing/branded_share_sheet.dart';
 import '../../models/standings_model.dart';
+import '../../providers/association_branding_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/standings_providers.dart';
@@ -33,6 +36,12 @@ class _StandingsScreenState extends ConsumerState<StandingsScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Standings'),
+        actions: [
+          _StandingsShareButton(
+            standings: standingsAsync?.valueOrNull?.standings ?? const [],
+            divisionName: selectedDivision?.name,
+          ),
+        ],
       ),
       body: standingsAsync == null
           ? const Center(
@@ -80,6 +89,35 @@ class _StandingsScreenState extends ConsumerState<StandingsScreen>
               ),
               error: (e, _) => Center(child: Text('Error: $e')),
             ),
+    );
+  }
+}
+
+class _StandingsShareButton extends ConsumerWidget {
+  final List<TeamStanding> standings;
+  final String? divisionName;
+
+  const _StandingsShareButton({
+    required this.standings,
+    required this.divisionName,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (standings.isEmpty) return const SizedBox.shrink();
+    final branding = ref.watch(effectiveAssociationBrandingProvider);
+    return IconButton(
+      icon: const Icon(Icons.share_outlined),
+      tooltip: 'Share standings',
+      onPressed: () => showBrandedShareSheet(
+        context: context,
+        branding: branding,
+        payload: BrandedSharePayload.standings(
+          standings: standings,
+          branding: branding,
+          divisionName: divisionName,
+        ),
+      ),
     );
   }
 }
@@ -215,8 +253,10 @@ class _StandingsTable extends StatelessWidget {
               onTap: () => context.push('/team/${team.teamId}'),
               child: Container(
                 color: isEven ? AppColors.surface : Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 12,
+                ),
                 child: Row(
                   children: [
                     // Rank
@@ -306,8 +346,8 @@ class _StandingsTable extends StatelessWidget {
                           color: team.streak.startsWith('W')
                               ? AppColors.success
                               : team.streak.startsWith('L')
-                                  ? AppColors.urgent
-                                  : AppColors.textMuted,
+                              ? AppColors.urgent
+                              : AppColors.textMuted,
                         ),
                       ),
                     ),
@@ -339,10 +379,7 @@ class _StandingsTable extends StatelessWidget {
                 SizedBox(width: 6),
                 Text(
                   'Tap a team for roster & details',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                 ),
               ],
             ),
