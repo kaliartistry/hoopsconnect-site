@@ -52,6 +52,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
       final inviteCode = await ref
           .read(inviteCodeRepositoryProvider)
           .validateCode(code);
+      if (!mounted) return;
       if (inviteCode == null) {
         setState(() {
           _error = 'Invalid or expired invite code';
@@ -67,7 +68,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
         });
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }

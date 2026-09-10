@@ -107,5 +107,5 @@ final currentUserProvider = Provider<AsyncValue<UserModel?>>((ref) {
 });
 
 final currentAssociationIdProvider = Provider<String?>((ref) {
-  return ref.watch(currentUserProvider).value?.associationId;
+  return ref.watch(currentUserProvider).valueOrNull?.associationId;
 });

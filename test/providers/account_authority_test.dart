@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hoops_connect/models/membership_model.dart';
 import 'package:hoops_connect/models/user_model.dart';
 import 'package:hoops_connect/providers/auth_providers.dart';
+import 'package:hoops_connect/providers/role_preview_provider.dart';
 
 void main() {
   const profile = UserModel(
@@ -76,5 +78,22 @@ void main() {
       ),
       AccountAccessStatus.blocked,
     );
+  });
+
+  test('authority provider errors stay fail closed without throwing', () {
+    final container = ProviderContainer(
+      overrides: [
+        currentUserProvider.overrideWithValue(
+          AsyncValue<UserModel?>.error(
+            Exception('permission denied'),
+            StackTrace.empty,
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    expect(container.read(currentAssociationIdProvider), isNull);
+    expect(container.read(effectiveUserProvider), isNull);
   });
 }

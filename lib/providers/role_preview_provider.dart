@@ -11,7 +11,7 @@ final rolePreviewProvider = StateProvider<UserRole?>((ref) => null);
 /// is preserved and real capabilities are never changed. This is presentation
 /// preview only; route and action gates continue to use current membership.
 final effectiveUserProvider = Provider<UserModel?>((ref) {
-  final user = ref.watch(currentUserProvider).value;
+  final user = ref.watch(currentUserProvider).valueOrNull;
   final previewRole = ref.watch(rolePreviewProvider);
 
   if (user == null || previewRole == null || !user.canManageUsers) return user;

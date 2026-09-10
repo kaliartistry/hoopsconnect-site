@@ -60,8 +60,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         return state.matchedLocation == '/loading' ? null : '/loading';
       }
 
-      final isLoggedIn = authState.value != null;
-      final userDoc = currentUser.value;
+      final isLoggedIn = authState.valueOrNull != null;
+      final userDoc = currentUser.valueOrNull;
       final isAuthRoute =
           state.matchedLocation == '/login' || state.matchedLocation == '/join';
       final isPublicRoute =

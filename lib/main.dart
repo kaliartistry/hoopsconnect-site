@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
+import 'app/app_bootstrap.dart';
 import 'firebase_options.dart';
 import 'services/notification_service.dart';
 
@@ -66,8 +67,6 @@ void main() async {
     return true;
   };
 
-  await _activateAppCheckIfConfigured();
-
   // Register background message handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -80,7 +79,10 @@ void main() async {
       overrides: [
         notificationServiceProvider.overrideWithValue(notificationService),
       ],
-      child: const JamaicaHoopsConnectApp(),
+      child: AppBootstrap(
+        initialize: _activateAppCheckIfConfigured,
+        child: const JamaicaHoopsConnectApp(),
+      ),
     ),
   );
 
