@@ -13,7 +13,7 @@ const baselineGitBlobHashes = Object.freeze({
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': '15d8e39b7448efb26d02a60914c0a661ee0e2202',
+  'lib/app/router/app_router.dart': 'abb289e0f8765d2c996798f5acd80eaff03b7151',
   'firebase.json': 'bffa6ccd0f69f3f39d9be8cdc49941adab02f3dc',
 });
 
