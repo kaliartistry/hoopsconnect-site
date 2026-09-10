@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../core/constants/app_constants.dart';
 import '../core/widgets/offline_banner.dart';
 import '../core/widgets/responsive_layout.dart';
+import '../core/widgets/sponsor_banner.dart';
 import '../models/user_model.dart';
 import '../providers/connectivity_providers.dart';
 import '../providers/division_providers.dart';
@@ -153,9 +154,11 @@ class AppShell extends ConsumerWidget {
               labelType: desktop
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.selected,
-              selectedIconTheme: const IconThemeData(color: AppColors.primary),
-              selectedLabelTextStyle: const TextStyle(
-                color: AppColors.primary,
+              selectedIconTheme: IconThemeData(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              selectedLabelTextStyle: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,
                 fontSize: 13,
               ),
@@ -166,7 +169,7 @@ class AppShell extends ConsumerWidget {
                 color: AppColors.textSecondary,
                 fontSize: 13,
               ),
-              indicatorColor: AppColors.primaryLight,
+              indicatorColor: Theme.of(context).colorScheme.primaryContainer,
               destinations: tabs
                   .map(
                     (tab) => NavigationRailDestination(
@@ -190,6 +193,7 @@ class AppShell extends ConsumerWidget {
                         if (isPreviewActive)
                           _RolePreviewBanner(role: previewRole, ref: ref),
                         if (showLeagueScope) const _LeagueScopeBar(),
+                        const SponsorBanner(),
                       ],
                     ),
                   ),
@@ -219,6 +223,7 @@ class AppShell extends ConsumerWidget {
               children: [
                 OfflineBanner(isOffline: !isOnline),
                 if (showLeagueScope) const _LeagueScopeBar(),
+                const SponsorBanner(),
               ],
             ),
           ),

@@ -24,6 +24,7 @@ import '../../features/admin/add_game_screen.dart';
 import '../../features/admin/schedule_hub_screen.dart';
 import '../../features/admin/schedule_generator_screen.dart';
 import '../../features/admin/invite_code_management_screen.dart';
+import '../../features/admin/association_branding_screen.dart';
 import '../../features/board/edit_post_screen.dart';
 import '../../features/ack/ack_tracker_screen.dart';
 import '../../features/ack/ack_detail_screen.dart';
@@ -103,6 +104,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           return '/admin';
         }
         if (loc == '/admin/divisions' && !userDoc.canManageDivisions) {
+          return '/admin';
+        }
+        if (loc == '/admin/branding' && !userDoc.canManageAssociation) {
           return '/admin';
         }
         if (loc == '/admin/invite-codes' && !userDoc.canManageInviteCodes) {
@@ -305,6 +309,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/invite-codes',
         builder: (context, state) => const InviteCodeManagementScreen(),
+      ),
+      GoRoute(
+        path: '/admin/branding',
+        builder: (context, state) => const AssociationBrandingScreen(),
       ),
 
       // Press sub-screens (pushed on top, no bottom nav)

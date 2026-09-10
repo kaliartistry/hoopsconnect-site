@@ -21,6 +21,8 @@ class AdminPanelScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUser = ref.watch(currentUserProvider).value;
     final hasLeagueManagement = currentUser?.canManageUsers ?? false;
+    final canManageAssociation =
+        currentUser?.canManageAssociation ?? false;
     final teamsAsync = ref.watch(teamsStreamProvider);
     final ackPostsAsync = ref.watch(postsRequiringAckProvider);
     final gamesAsync = ref.watch(gamesNeedingStatsProvider);
@@ -115,6 +117,13 @@ class AdminPanelScreen extends ConsumerWidget {
     ];
 
     final superAdminItems = <_AdminMenuItem>[
+      if (canManageAssociation)
+        _AdminMenuItem(
+          icon: Icons.palette_outlined,
+          title: 'Branding & Sponsor',
+          subtitle: 'League identity and title sponsor',
+          onTap: () => context.push('/admin/branding'),
+        ),
       _AdminMenuItem(
         icon: Icons.groups,
         title: 'Teams & Rosters',
