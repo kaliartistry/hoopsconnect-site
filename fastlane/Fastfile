@@ -26,6 +26,16 @@ def google_play_json_key_path
 end
 
 platform :ios do
+  desc "Prepare App Store signing without uploading a build"
+  lane :prepare_signing do
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: "com.hoopsconnect.hoopsConnect",
+      output_path: "#{PROJECT_ROOT}/build/ios/profiles",
+      filename: "AppStore_com.hoopsconnect.hoopsConnect.mobileprovision",
+    )
+  end
+
   desc "Build and distribute to Firebase App Distribution"
   lane :distribute do
     # Build Flutter iOS release
