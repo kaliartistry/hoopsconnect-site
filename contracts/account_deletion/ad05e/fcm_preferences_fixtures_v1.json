@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "packetId": "account_deletion_ad05e_fcm_preferences_v1",
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "terminalAdapterAllowed": false,
+  "providerRevocationAllowed": false,
+  "deliveryRecallAllowed": false,
+  "liveSuppressionAllowed": false,
+  "deviceClearingAllowed": false,
+  "syntheticEvidenceOnly": true,
+  "adapterId": "device_fcm_preferences",
+  "referenceClasses": [
+    "registeredInstallation",
+    "notificationPreference",
+    "legacyProfileSurface",
+    "queuedRecipient",
+    "deliveryAttempt",
+    "deletionBarrier",
+    "retryReplaySource"
+  ],
+  "uncertainDeliveryStates": [
+    "reserved",
+    "dispatchCommitted",
+    "submitted"
+  ],
+  "knownPreferences": [
+    "ackReminders",
+    "statReminders",
+    "newPosts"
+  ],
+  "unsupportedProductionGuarantees": [
+    "provider_token_revocation",
+    "submitted_delivery_recall",
+    "uncertain_attempt_reconciliation",
+    "deletion_barrier_release",
+    "live_registration_targeting_suppression",
+    "global_device_cache_or_journal_clearing"
+  ]
+}
