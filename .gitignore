@@ -70,6 +70,8 @@ service-account*.json
 # Owner-readable production readiness evidence and pseudonym keys
 .local/production-readiness/
 .local/stat-migration/
+.local/authorization-migration/
+.playwright-cli/
 
 # Firebase service configs (contain API keys / project IDs)
 # Uncomment below if you want to keep these out of version control.
