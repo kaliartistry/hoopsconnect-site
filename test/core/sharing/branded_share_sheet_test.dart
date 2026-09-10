@@ -35,6 +35,7 @@ void main() {
     expect(find.text('JAMAICA BASKETBALL ASSOCIATION'), findsOneWidget);
     expect(find.text('Presented by KFC'), findsOneWidget);
     expect(find.text('HOOPSCONNECT'), findsOneWidget);
+    expect(find.text('FINAL'), findsOneWidget);
     expect(find.textContaining('87-72'), findsOneWidget);
   });
 }
