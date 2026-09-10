@@ -15,7 +15,7 @@
     "test:notifications": "node --test test/notification_authorization.test.js",
     "test:callable": "node --test test/callable.integration.test.js",
     "test:contracts": "npm run build && npm run test:contracts:no-build",
-    "test:contracts:no-build": "node --test test/official_stats_contract.test.js test/account_deletion_contract.test.js test/scoped_authority.test.js test/assigned_game_bootstrap.test.js test/normalized_box_score_calculator.test.js test/auth_incarnation_v2.test.js test/auth_incarnation_v2_dormancy.test.js test/association_ownership_ad03_v2.test.js test/association_ownership_ad03_v2_dormancy.test.js test/account_deletion_ad04_v1.test.js test/account_deletion_ad04_v1_dormancy.test.js test/account_deletion_ad05_v1.test.js test/account_deletion_ad05_v1_dormancy.test.js test/account_deletion_ad05b_identity_suppression_v1.test.js test/account_deletion_ad05b_identity_suppression_v1_dormancy.test.js test/account_deletion_ad05c_account_shared_workflow_v1.test.js test/account_deletion_ad05c_account_shared_workflow_v1_dormancy.test.js test/account_deletion_ad05d.test.js test/account_deletion_ad05d_dormancy.test.js",
+    "test:contracts:no-build": "node --test test/official_stats_contract.test.js test/account_deletion_contract.test.js test/scoped_authority.test.js test/assigned_game_bootstrap.test.js test/normalized_box_score_calculator.test.js test/auth_incarnation_v2.test.js test/auth_incarnation_v2_dormancy.test.js test/association_ownership_ad03_v2.test.js test/association_ownership_ad03_v2_dormancy.test.js test/account_deletion_ad04_v1.test.js test/account_deletion_ad04_v1_dormancy.test.js test/account_deletion_ad05_v1.test.js test/account_deletion_ad05_v1_dormancy.test.js test/account_deletion_ad05b_identity_suppression_v1.test.js test/account_deletion_ad05b_identity_suppression_v1_dormancy.test.js test/account_deletion_ad05c_account_shared_workflow_v1.test.js test/account_deletion_ad05c_account_shared_workflow_v1_dormancy.test.js test/account_deletion_ad05d.test.js test/account_deletion_ad05d_dormancy.test.js test/account_deletion_ad05e.test.js test/account_deletion_ad05e_dormancy.test.js",
     "test:auth-incarnation-v2": "npm run build && npm run test:auth-incarnation-v2:no-build",
     "test:auth-incarnation-v2:no-build": "node --test test/auth_incarnation_v2.test.js test/auth_incarnation_v2_dormancy.test.js",
     "test:auth-incarnation-v2:rules": "node --test test/auth_incarnation_v2.rules.test.js",
@@ -40,11 +40,14 @@
     "test:account-deletion-ad05d-v1": "npm run build && npm run test:account-deletion-ad05d-v1:no-build",
     "test:account-deletion-ad05d-v1:no-build": "node --test --test-concurrency=1 test/account_deletion_ad05d.test.js test/account_deletion_ad05d_dormancy.test.js",
     "test:account-deletion-ad05d-v1:rules": "node --test --test-concurrency=1 test/account_deletion_ad05d_rules.test.js",
+    "test:account-deletion-ad05e-v1": "npm run build && npm run test:account-deletion-ad05e-v1:no-build",
+    "test:account-deletion-ad05e-v1:no-build": "node --test --test-concurrency=1 test/account_deletion_ad05e.test.js test/account_deletion_ad05e_dormancy.test.js",
+    "test:account-deletion-ad05e-v1:rules": "node --test --test-concurrency=1 test/account_deletion_ad05e_rules.test.js",
     "test:stat-calculators": "npm run build && node --test test/normalized_box_score_calculator.test.js",
     "test:rules": "node --test test/firestore.rules.test.js",
     "test:storage": "node --test test/storage.rules.test.js",
     "test:security": "npm run build && npm run test:security:no-build",
-    "test:security:no-build": "npm run test:contracts:no-build && npm run test:functions:no-build && npm run test:notifications && npm run test:callable && npm run test:rules && npm run test:storage && npm run test:auth-incarnation-v2:rules && npm run test:account-lifecycle-ad02-v2:no-build && npm run test:account-lifecycle-ad02-v2:rules && npm run test:association-custody-ad03-v2:rules && npm run test:account-deletion-ad04-v1:rules && npm run test:account-deletion-ad05-v1:rules && npm run test:account-deletion-ad05b-v1:rules && npm run test:account-deletion-ad05c-v1:rules && npm run test:account-deletion-ad05d-v1:rules"
+    "test:security:no-build": "npm run test:contracts:no-build && npm run test:functions:no-build && npm run test:notifications && npm run test:callable && npm run test:rules && npm run test:storage && npm run test:auth-incarnation-v2:rules && npm run test:account-lifecycle-ad02-v2:no-build && npm run test:account-lifecycle-ad02-v2:rules && npm run test:association-custody-ad03-v2:rules && npm run test:account-deletion-ad04-v1:rules && npm run test:account-deletion-ad05-v1:rules && npm run test:account-deletion-ad05b-v1:rules && npm run test:account-deletion-ad05c-v1:rules && npm run test:account-deletion-ad05d-v1:rules && npm run test:account-deletion-ad05e-v1:rules"
   },
   "engines": {
     "node": "22"
