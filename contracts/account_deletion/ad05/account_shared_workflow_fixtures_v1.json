@@ -56,6 +56,9 @@
   "notificationInboxSchemaPresentV1": false,
   "authoritativeGenerationProvenanceRequiredV1": true,
   "ad03CustodyRequiredBeforeAuthorityRemovalV1": true,
+  "persistedAd03ReceiptRequiredV1": true,
+  "canonicalManifestRequiredForEvidenceV1": true,
+  "sourcePathAndProvenanceBindingRequiredV1": true,
   "normativePolicy": {
     "policyVersion": null,
     "activationApproved": false,

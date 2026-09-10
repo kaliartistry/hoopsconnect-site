@@ -6,6 +6,7 @@ const test = require('node:test');
 const official = require('../lib/domain/official_stats_contract');
 const ad05 = require('../lib/account_deletion/ad05_records');
 const inventory = require('../lib/account_deletion/ad05_inventory');
+const ad03 = require('../lib/domain/association_ownership_ad03_v2');
 const records = require('../lib/account_deletion/ad05_account_shared_workflow_records');
 const mechanics = require('../lib/account_deletion/ad05_account_shared_workflow');
 const fixture = require(
@@ -70,7 +71,7 @@ const schemas = {
   event_attribution: 'event_attribution_evidence_v1',
 };
 
-function binding(adapterIdV1) {
+function binding(adapterIdV1, variant = '') {
   return ad05.createCandidateAd05ExecutionBindingV1({
     authProjectIdV2: 'demo-hoopsconnect',
     authTenantIdV2: 'tenant-a',
@@ -79,8 +80,9 @@ function binding(adapterIdV1) {
     acceptedLifecycleEpochV2: 9,
     lifecycleStateV1: 'deleting',
     internalJobId: 'job-ad05c',
-    taskEffectIdV1: `effect-${adapterIdV1}`,
-    taskEffectFingerprintV1: official.canonicalSha256(`effect-${adapterIdV1}`),
+    taskEffectIdV1: `effect-${adapterIdV1}${variant}`,
+    taskEffectFingerprintV1:
+      official.canonicalSha256(`effect-${adapterIdV1}${variant}`),
     adapterIdV1,
     adapterVersionV1: 'account-deletion-adapter-v1',
     effectVersionV1: 'account-shared-workflow-v1',
@@ -148,6 +150,8 @@ function itemAndManifest(adapterIdV1, classificationV1 = 'applicable') {
 function fieldRecord(effectBinding, associationIdV1, patch = {}) {
   const custodyRequired = effectBinding.adapterIdV1 === 'memberships_capabilities' ||
     effectBinding.adapterIdV1 === 'team_assignments';
+  const receipt = custodyRequired ? custodyReceipt(effectBinding,
+    associationIdV1) : null;
   const core = {
     schemaVersion: 1,
     adapterIdV1: effectBinding.adapterIdV1,
@@ -160,10 +164,16 @@ function fieldRecord(effectBinding, associationIdV1, patch = {}) {
     lifecycleStateV1: 'deleting',
     internalJobId: effectBinding.internalJobId,
     associationIdV1,
+    sourceDocumentPathHashV1: official.canonicalSha256(
+      `candidateAd05cSources/${effectBinding.adapterIdV1}`),
+    provenanceIdV1: `provenance-${effectBinding.adapterIdV1}`,
     generationProvenanceVerifiedV1: true,
     liveMixedDocumentV1: false,
     custodyStateV1: custodyRequired ? 'ownerDepartureComplete' : 'notRequired',
-    custodyProofFingerprintV1: custodyRequired ? 'b'.repeat(64) : null,
+    custodyDepartureOperationIdV2: custodyRequired ?
+      'departure-operation-1' : null,
+    custodyProofFingerprintV1: receipt === null ? null :
+      official.canonicalSha256(receipt),
     accountBindingPresentV1: true,
     grantingAuthorityV1: effectBinding.adapterIdV1 !== 'user_profile' &&
       effectBinding.adapterIdV1 !== 'personal_ugc',
@@ -176,6 +186,30 @@ function fieldRecord(effectBinding, associationIdV1, patch = {}) {
   return records.parseCandidateAd05cFieldOwnedRecordV1({
     ...core,
     recordFingerprintV1: records.ad05cFieldOwnedRecordFingerprintV1(core),
+  });
+}
+
+function custodyReceipt(effectBinding, associationIdV1, patch = {}) {
+  return ad03.parseOwnerDepartureReceiptV2({
+    ownerDepartureReceiptSchemaVersionV2: 2,
+    authProjectIdV2: effectBinding.authProjectIdV2,
+    authTenantIdV2: effectBinding.authTenantIdV2,
+    authUidV2: effectBinding.authUidV2,
+    associationId: associationIdV1,
+    accountGenerationV2: effectBinding.generationHash,
+    accountLifecycleEpochV2: effectBinding.acceptedLifecycleEpochV2,
+    departureOperationIdV2: 'departure-operation-1',
+    requestFingerprintV2: 'd'.repeat(64),
+    outcomeV2: 'ordinary',
+    custodyStateV2: 'operating',
+    controlVersionBeforeV2: 1,
+    controlVersionAfterV2: 2,
+    transferIntentIdV2: null,
+    custodyCaseIdV2: null,
+    requiresOperationalAttentionV2: false,
+    personalDeletionMayContinueV2: true,
+    recordedAtSecV2: 10,
+    ...patch,
   });
 }
 
@@ -192,6 +226,9 @@ function evidenceRecord(effectBinding, associationIdV1, patch = {}) {
     lifecycleStateV1: 'deleting',
     internalJobId: effectBinding.internalJobId,
     associationIdV1,
+    sourceDocumentPathHashV1: official.canonicalSha256(
+      `candidateAd05cSources/${effectBinding.adapterIdV1}`),
+    provenanceIdV1: `provenance-${effectBinding.adapterIdV1}`,
     generationProvenanceVerifiedV1: true,
     evidenceStateV1: evidenceStates[effectBinding.adapterIdV1],
     mutationAllowedV1: false,
@@ -216,6 +253,9 @@ test('fixture freezes the exact 12-row AD05-C boundary and support split', () =>
     records.ad05cEvidenceOnlyAdapterIdsV1);
   assert.equal(fixture.activationAllowed, false);
   assert.equal(fixture.productionExportAllowed, false);
+  assert.equal(fixture.persistedAd03ReceiptRequiredV1, true);
+  assert.equal(fixture.canonicalManifestRequiredForEvidenceV1, true);
+  assert.equal(fixture.sourcePathAndProvenanceBindingRequiredV1, true);
 });
 
 test('all five field-owned effects preserve shared facts and replay exactly once', async () => {
@@ -229,10 +269,20 @@ test('all five field-owned effects preserve shared facts and replay exactly once
   for (const adapterIdV1 of fixture.transactionalAdapterIdsV1) {
     const packet = itemAndManifest(adapterIdV1);
     const source = fieldRecord(packet.effectBinding, packet.associationIdV1);
-    const repository = new MemoryRepository({
+    const entries = {
       [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
       [packet.sourceDocumentPathV1]: source,
-    });
+    };
+    if (adapterIdV1 === 'memberships_capabilities' ||
+        adapterIdV1 === 'team_assignments') {
+      const receipt = custodyReceipt(packet.effectBinding, packet.associationIdV1);
+      entries[ad03.ownerDepartureReceiptPathV2({
+        authProjectIdV2: packet.effectBinding.authProjectIdV2,
+        authTenantIdV2: packet.effectBinding.authTenantIdV2,
+        associationId: packet.associationIdV1,
+      }, source.custodyDepartureOperationIdV2)] = receipt;
+    }
+    const repository = new MemoryRepository(entries);
     const first = await mechanics.applyTestOnlySyntheticCandidateAd05cItemV1({
       repository,
       bindingV1: packet.effectBinding,
@@ -263,15 +313,20 @@ test('all five field-owned effects preserve shared facts and replay exactly once
   }
 });
 
-test('evidence-only rows and missing inbox never request mutation or grant authority', () => {
+test('evidence-only rows and missing inbox never request mutation or grant authority', async () => {
   for (const adapterIdV1 of [
     ...fixture.evidenceOnlyAdapterIdsV1,
     'notification_inbox',
   ]) {
     const packet = itemAndManifest(adapterIdV1,
       adapterIdV1 === 'notification_inbox' ? 'notApplicable' : 'applicable');
-    const result = mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+    const repository = new MemoryRepository({
+      [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+    });
+    const result = await mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+      repository,
       bindingV1: packet.effectBinding,
+      manifestV1: packet.manifest,
       itemV1: packet.item,
       evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
     });
@@ -294,13 +349,10 @@ test('cross-generation and live mixed-document records fail closed', () => {
   /AD05_INVALID_RECORD/);
 });
 
-test('membership and assignment mutation require completed AD03 custody proof', async () => {
+test('membership and assignment mutation require a persisted bound AD03 receipt', async () => {
   for (const adapterIdV1 of ['memberships_capabilities', 'team_assignments']) {
     const packet = itemAndManifest(adapterIdV1);
-    const source = fieldRecord(packet.effectBinding, packet.associationIdV1, {
-      custodyStateV1: 'notRequired',
-      custodyProofFingerprintV1: null,
-    });
+    const source = fieldRecord(packet.effectBinding, packet.associationIdV1);
     const repository = new MemoryRepository({
       [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
       [packet.sourceDocumentPathV1]: source,
@@ -320,13 +372,72 @@ test('membership and assignment mutation require completed AD03 custody proof', 
   }
 });
 
-test('notification inbox cannot be represented as an applicable source', () => {
+test('custody receipt must match exact account generation and fingerprint', async () => {
+  const packet = itemAndManifest('memberships_capabilities');
+  const source = fieldRecord(packet.effectBinding, packet.associationIdV1);
+  const wrongReceipt = custodyReceipt(packet.effectBinding,
+    packet.associationIdV1, {accountGenerationV2: 'e'.repeat(64)});
+  const receiptPath = ad03.ownerDepartureReceiptPathV2({
+    authProjectIdV2: packet.effectBinding.authProjectIdV2,
+    authTenantIdV2: packet.effectBinding.authTenantIdV2,
+    associationId: packet.associationIdV1,
+  }, source.custodyDepartureOperationIdV2);
+  const repository = new MemoryRepository({
+    [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+    [packet.sourceDocumentPathV1]: source,
+    [receiptPath]: wrongReceipt,
+  });
+  await assert.rejects(
+    mechanics.applyTestOnlySyntheticCandidateAd05cItemV1({
+      repository,
+      bindingV1: packet.effectBinding,
+      manifestV1: packet.manifest,
+      itemV1: packet.item,
+      sourceRecordVersionAfterV1: 'record-v2',
+      committedAtSecV1: 30,
+    }), /AD05_BINDING_CONFLICT/);
+  assert.equal(repository.writeCount, 0);
+});
+
+test('evidence verification binds canonical manifest, full effect, path, and provenance', async () => {
+  const packet = itemAndManifest('acknowledgements');
+  const repository = new MemoryRepository({
+    [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+  });
+  const changedEffectBinding = binding('acknowledgements', '-changed');
+  await assert.rejects(
+    mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+      repository,
+      bindingV1: changedEffectBinding,
+      manifestV1: packet.manifest,
+      itemV1: packet.item,
+      evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
+    }), /AD05_BINDING_CONFLICT/);
+  const wrongProvenance = evidenceRecord(packet.effectBinding,
+    packet.associationIdV1, {provenanceIdV1: 'different-provenance'});
+  await assert.rejects(
+    mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+      repository,
+      bindingV1: packet.effectBinding,
+      manifestV1: packet.manifest,
+      itemV1: packet.item,
+      evidenceV1: wrongProvenance,
+    }), /AD05_BINDING_CONFLICT/);
+});
+
+test('notification inbox cannot be represented as an applicable source', async () => {
   const packet = itemAndManifest('notification_inbox', 'applicable');
-  assert.throws(() => mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
-    bindingV1: packet.effectBinding,
-    itemV1: packet.item,
-    evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
-  }), /AD05_BINDING_CONFLICT/);
+  const repository = new MemoryRepository({
+    [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+  });
+  await assert.rejects(
+    mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+      repository,
+      bindingV1: packet.effectBinding,
+      manifestV1: packet.manifest,
+      itemV1: packet.item,
+      evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
+    }), /AD05_BINDING_CONFLICT/);
 });
 
 test('normative posture stays blocked and support never claims Auth mutation', () => {

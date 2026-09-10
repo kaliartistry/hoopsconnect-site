@@ -44,7 +44,13 @@ be represented as positively verified not applicable.
 - Completed acknowledgements and redeemed invites are never erased.
 - Historical or audit material never grants current authority.
 - Membership and team-assignment removal fails closed without completed AD03
-  owner-departure or custody-suspension proof.
+  owner-departure or custody-suspension proof. The proof must be a persisted,
+  parseable AD03 departure receipt read in the same transaction and bound to
+  the exact account, generation, epoch, association, operation, and receipt
+  fingerprint; a caller-supplied status or hash alone is insufficient.
+- Evidence-only verification requires the persisted canonical sealed manifest
+  and binds its exact effect, item membership, source path hash, schema,
+  version, and provenance before reporting success.
 - Cross-generation, cross-tenant, cross-project, cross-job, cross-association,
   stale-version, and unproven-provenance records fail closed before writes.
 - The live `users/{uid}` document remains outside this packet because it mixes

@@ -123,9 +123,12 @@ export interface CandidateAd05cFieldOwnedRecordV1 {
   lifecycleStateV1: "deleting";
   internalJobId: string;
   associationIdV1: string | null;
+  sourceDocumentPathHashV1: string;
+  provenanceIdV1: string;
   generationProvenanceVerifiedV1: true;
   liveMixedDocumentV1: false;
   custodyStateV1: Ad05cCustodyStateV1;
+  custodyDepartureOperationIdV2: string | null;
   custodyProofFingerprintV1: string | null;
   accountBindingPresentV1: boolean;
   grantingAuthorityV1: boolean;
@@ -164,8 +167,9 @@ export function parseCandidateAd05cFieldOwnedRecordV1(
     "schemaVersion", "adapterIdV1", "authProjectIdV2", "authTenantIdV2",
     "authUidV2", "authUidUtf16LeBase64UrlV1", "generationHash",
     "acceptedLifecycleEpochV2", "lifecycleStateV1", "internalJobId",
-    "associationIdV1", "generationProvenanceVerifiedV1",
-    "liveMixedDocumentV1", "custodyStateV1", "custodyProofFingerprintV1",
+    "associationIdV1", "sourceDocumentPathHashV1", "provenanceIdV1",
+    "generationProvenanceVerifiedV1", "liveMixedDocumentV1", "custodyStateV1",
+    "custodyDepartureOperationIdV2", "custodyProofFingerprintV1",
     "accountBindingPresentV1", "grantingAuthorityV1",
     "sharedFactsPreservedV1", "completedOutcomesPreservedV1",
     "dispositionStateV1", "recordVersionV1", "recordFingerprintV1",
@@ -202,9 +206,14 @@ export function parseCandidateAd05cFieldOwnedRecordV1(
     internalJobId: ad04OpaqueIdV1(data.internalJobId),
     associationIdV1: data.associationIdV1 === null ? null :
       ad04OpaqueIdV1(data.associationIdV1),
+    sourceDocumentPathHashV1: ad04HashV1(data.sourceDocumentPathHashV1),
+    provenanceIdV1: ad04OpaqueIdV1(data.provenanceIdV1),
     generationProvenanceVerifiedV1: true,
     liveMixedDocumentV1: false,
     custodyStateV1: custody,
+    custodyDepartureOperationIdV2:
+      data.custodyDepartureOperationIdV2 === null ? null :
+        ad04OpaqueIdV1(data.custodyDepartureOperationIdV2),
     custodyProofFingerprintV1: custodyProof,
     accountBindingPresentV1: data.accountBindingPresentV1,
     grantingAuthorityV1: data.grantingAuthorityV1,
@@ -214,8 +223,12 @@ export function parseCandidateAd05cFieldOwnedRecordV1(
     recordVersionV1: ad04OpaqueIdV1(data.recordVersionV1),
     recordFingerprintV1: ad04HashV1(data.recordFingerprintV1),
   });
+  const custodyMaterialAbsent = candidate.custodyStateV1 === "notRequired";
   if (candidate.authUidUtf16LeBase64UrlV1 !==
       firebaseUidUtf16LeBase64Url(candidate.authUidV2) ||
+      custodyMaterialAbsent !==
+        (candidate.custodyDepartureOperationIdV2 === null) ||
+      custodyMaterialAbsent !== (candidate.custodyProofFingerprintV1 === null) ||
       (candidate.dispositionStateV1 === "active") !==
         candidate.accountBindingPresentV1 ||
       (candidate.dispositionStateV1 !== "active" &&
@@ -247,6 +260,8 @@ export interface CandidateAd05cEvidenceRecordV1 {
   lifecycleStateV1: "deleting";
   internalJobId: string;
   associationIdV1: string | null;
+  sourceDocumentPathHashV1: string;
+  provenanceIdV1: string;
   generationProvenanceVerifiedV1: true;
   evidenceStateV1: Ad05cEvidenceStateV1;
   mutationAllowedV1: false;
@@ -283,7 +298,8 @@ export function parseCandidateAd05cEvidenceRecordV1(
     "schemaVersion", "adapterIdV1", "authProjectIdV2", "authTenantIdV2",
     "authUidV2", "authUidUtf16LeBase64UrlV1", "generationHash",
     "acceptedLifecycleEpochV2", "lifecycleStateV1", "internalJobId",
-    "associationIdV1", "generationProvenanceVerifiedV1", "evidenceStateV1",
+    "associationIdV1", "sourceDocumentPathHashV1", "provenanceIdV1",
+    "generationProvenanceVerifiedV1", "evidenceStateV1",
     "mutationAllowedV1", "grantingAuthorityV1", "sharedFactsPreservedV1",
     "evidenceIdV1", "verifiedAtSecV1", "recordVersionV1",
     "evidenceFingerprintV1",
@@ -313,6 +329,8 @@ export function parseCandidateAd05cEvidenceRecordV1(
     internalJobId: ad04OpaqueIdV1(data.internalJobId),
     associationIdV1: data.associationIdV1 === null ? null :
       ad04OpaqueIdV1(data.associationIdV1),
+    sourceDocumentPathHashV1: ad04HashV1(data.sourceDocumentPathHashV1),
+    provenanceIdV1: ad04OpaqueIdV1(data.provenanceIdV1),
     generationProvenanceVerifiedV1: true,
     evidenceStateV1: state,
     mutationAllowedV1: false,
