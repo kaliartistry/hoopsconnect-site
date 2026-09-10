@@ -56,7 +56,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             );
       }
     } catch (e) {
-      setState(() => _error = _friendlyError(e.toString()));
+      if (mounted) {
+        setState(() => _error = _friendlyError(e.toString()));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -70,7 +72,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(authRepositoryProvider).signInWithGoogle();
     } catch (e) {
-      setState(() => _error = _friendlyError(e.toString()));
+      if (mounted) {
+        setState(() => _error = _friendlyError(e.toString()));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -84,7 +88,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(authRepositoryProvider).signInWithApple();
     } catch (e) {
-      setState(() => _error = _friendlyError(e.toString()));
+      if (mounted) {
+        setState(() => _error = _friendlyError(e.toString()));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
