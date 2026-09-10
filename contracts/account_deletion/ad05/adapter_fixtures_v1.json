@@ -6,9 +6,17 @@
   "receiptOutcomesV1": ["mutated", "notApplicableVerified"],
   "completionEvidenceV1": {
     "manifestExactBound": true,
+    "canonicalManifestCreateOnceRequired": true,
+    "receiptManifestBound": true,
     "receiptSetBound": true,
     "independentSourceRequired": true,
     "postCommitFreshnessRequired": true
+  },
+  "activationObligationsV1": {
+    "concreteSchemaClassifiersApproved": false,
+    "registeredIndependentVerifiersApproved": false,
+    "authoritativeCommitVersionEvidenceApproved": false,
+    "postCommitScanCausalityApproved": false
   },
   "normativePolicy": {
     "policyVersion": null,

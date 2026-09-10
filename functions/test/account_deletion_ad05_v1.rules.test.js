@@ -111,6 +111,18 @@ test('real Firestore transaction race commits one logical source effect and one 
       sourceDocumentPathHashV1: official.canonicalSha256('users/owner-a')};
     const item = records.parseCandidateAd05ManifestItemV1({...itemCore,
       itemFingerprintV1: records.ad05ManifestItemFingerprintV1(itemCore)});
+    const manifestCore = {schemaVersion: 1,
+      manifestIdV1: binding.sourceManifestIdV1,
+      manifestVersionV1: binding.sourceManifestVersionV1,
+      bindingFingerprintV1: binding.bindingFingerprintV1,
+      adapterIdV1: binding.adapterIdV1,
+      inventorySourceIdV1: 'trusted_profile_inventory',
+      inventorySourceVersionV1: binding.sourceManifestVersionV1,
+      referenceCoverageEvidenceIdV1: 'independent_reference_scan_v1',
+      completeV1: true, sealedV1: true, itemCountV1: 1, itemsV1: [item]};
+    const manifest = records.parseCandidateAd05SealedManifestV1({...manifestCore,
+      manifestFingerprintV1: records.ad05ManifestFingerprintV1(manifestCore)});
+    await setDoc(doc(db, records.ad05ManifestPathV1(binding)), manifest);
     await setDoc(doc(db, item.sourceDocumentPathV1), {
       schemaVersion: 1, recordVersionV1: 'record_v1', mutationCountV1: 0,
     });
@@ -124,8 +136,8 @@ test('real Firestore transaction race commits one logical source effect and one 
       },
     };
     const outcomes = await Promise.all([1, 2].map(() =>
-      effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding, item,
-        effect, committedAtSecV1: 1_800_000_000})));
+      effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding,
+        manifest, item, effect, committedAtSecV1: 1_800_000_000})));
     assert.equal(outcomes.filter((outcome) => outcome.stateV1 === 'committed').length, 1);
     assert.equal(outcomes.filter((outcome) => outcome.stateV1 === 'replayed').length, 1);
     assert.equal((await repository.read(item.sourceDocumentPathV1)).mutationCountV1, 1);

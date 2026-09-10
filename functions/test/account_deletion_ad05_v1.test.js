@@ -99,30 +99,43 @@ function trustedRecords(count = 2) {
   }));
 }
 
+function trustedSourceFor(currentBinding, recordValues) {
+  return {
+    adapterIdV1: 'user_profile',
+    enumerateBoundRecordsV1: async ({binding: bound, limitV1}) => {
+      assert.equal(bound.bindingFingerprintV1, currentBinding.bindingFingerprintV1);
+      assert.equal(limitV1, 100);
+      return {
+        schemaVersion: 1,
+        inventorySourceIdV1: 'trusted_profile_inventory',
+        inventorySourceVersionV1: 'inventory_v1',
+        completeV1: true,
+        continuationTokenV1: null,
+        referenceCoverageVerifiedV1: true,
+        referenceCoverageEvidenceIdV1: 'independent_reference_scan_v1',
+        recordsV1: recordValues,
+      };
+    },
+  };
+}
+
 async function manifestFor(currentBinding = binding(), recordValues = trustedRecords()) {
   return inventory.buildCandidateAd05SealedManifestV1({
     binding: currentBinding,
-    source: {
-      adapterIdV1: 'user_profile',
-      enumerateBoundRecordsV1: async ({binding: bound, limitV1}) => {
-        assert.equal(bound.bindingFingerprintV1, currentBinding.bindingFingerprintV1);
-        assert.equal(limitV1, 100);
-        return {
-          schemaVersion: 1,
-          inventorySourceIdV1: 'trusted_profile_inventory',
-          inventorySourceVersionV1: 'inventory_v1',
-          completeV1: true,
-          continuationTokenV1: null,
-          referenceCoverageVerifiedV1: true,
-          referenceCoverageEvidenceIdV1: 'independent_reference_scan_v1',
-          recordsV1: recordValues,
-        };
-      },
-    },
+    source: trustedSourceFor(currentBinding, recordValues),
   });
 }
 
-function seedRepository(manifest, another = true) {
+function manifestWithItems(manifest, itemsV1) {
+  const core = {...manifest, itemCountV1: itemsV1.length, itemsV1};
+  delete core.manifestFingerprintV1;
+  return records.parseCandidateAd05SealedManifestV1({
+    ...core,
+    manifestFingerprintV1: records.ad05ManifestFingerprintV1(core),
+  });
+}
+
+function seedRepository(manifest, another = true, currentBinding = binding()) {
   const entries = Object.fromEntries(manifest.itemsV1.map((item) => [
     item.sourceDocumentPathV1,
     {schemaVersion: 1, recordVersionV1: 'record_v1', ownerUid: 'owner-a', deleted: false},
@@ -132,6 +145,7 @@ function seedRepository(manifest, another = true) {
       schemaVersion: 1, recordVersionV1: 'record_v1', ownerUid: 'owner-b', deleted: false,
     };
   }
+  entries[records.ad05ManifestPathV1(currentBinding)] = manifest;
   return new MemoryRepository(entries);
 }
 
@@ -262,6 +276,136 @@ test('trusted inventory seals deterministically and rejects missing provenance, 
   assertAd05Code('AD05_INVALID_RECORD'));
 });
 
+test('trusted inventory seal is create-once, exact-replay stable, and rejects changed contents', async () => {
+  const current = binding();
+  const repository = new MemoryRepository();
+  const source = trustedSourceFor(current, trustedRecords(1));
+  const first = await inventory.sealCandidateAd05TrustedInventoryManifestV1({
+    repository, binding: current, source,
+  });
+  const second = await inventory.sealCandidateAd05TrustedInventoryManifestV1({
+    repository, binding: current, source,
+  });
+  assert.equal(first.stateV1, 'sealed');
+  assert.equal(second.stateV1, 'replayed');
+  assert.equal(repository.mutationCount, 1);
+  assert.equal((await repository.read(records.ad05ManifestPathV1(current)))
+    .manifestFingerprintV1, first.manifestV1.manifestFingerprintV1);
+  const changedRecords = trustedRecords(1);
+  changedRecords[0] = {...changedRecords[0],
+    sourceDocumentPathV1: 'users/private-substitute'};
+  await assert.rejects(() => inventory.sealCandidateAd05TrustedInventoryManifestV1({
+    repository, binding: current,
+    source: trustedSourceFor(current, changedRecords),
+  }), assertAd05Code('AD05_BINDING_CONFLICT'));
+  assert.equal(repository.mutationCount, 1);
+});
+
+test('side-effect consumers require a persisted canonical manifest, including empty completion', async () => {
+  const current = binding();
+  const manifest = await manifestFor(current, trustedRecords(1));
+  const repository = seedRepository(manifest);
+  repository.values.delete(records.ad05ManifestPathV1(current));
+  const counter = {calls: 0};
+  await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
+    repository, binding: current, manifest, item: manifest.itemsV1[0],
+    effect: documentEffect(counter), committedAtSecV1: NOW,
+  }), assertAd05Code('AD05_INCOMPLETE_INVENTORY'));
+  assert.equal(counter.calls, 0);
+  const continuation = effects.initialCandidateAd05ContinuationV1({
+    binding: current, manifest,
+  });
+  await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentPageV1({
+    repository, binding: current, manifest, continuation,
+    effect: documentEffect(counter), committedAtSecV1: NOW,
+  }), assertAd05Code('AD05_INCOMPLETE_INVENTORY'));
+  const receiptSet = {schemaVersion: 1,
+    bindingFingerprintV1: current.bindingFingerprintV1,
+    manifestFingerprintV1: manifest.manifestFingerprintV1,
+    itemCountV1: manifest.itemCountV1,
+    receiptSetFingerprintV1: 'c'.repeat(64), latestReceiptCommittedAtSecV1: 0};
+  let verifierCalls = 0;
+  await assert.rejects(() => inventory.verifyCandidateAd05RemainingReferencesV1({
+    repository, binding: current, manifest, receiptSet,
+    verifier: {verifyRemainingReferencesV1: async () => {
+      verifierCalls += 1;
+      throw new Error('must not run');
+    }},
+  }), assertAd05Code('AD05_INCOMPLETE_INVENTORY'));
+  await assert.rejects(() => effects.finalizeCandidateAd05TransactionalAdapterV1({
+    repository, binding: current, manifest,
+    remainingReferenceVerifier: {verifyRemainingReferencesV1: async () => {
+      verifierCalls += 1;
+      throw new Error('must not run');
+    }},
+    finalVerifier: {verifyFinalStateV1: async () => {
+      verifierCalls += 1;
+      throw new Error('must not run');
+    }},
+  }), assertAd05Code('AD05_INCOMPLETE_INVENTORY'));
+  assert.equal(verifierCalls, 0);
+
+  const emptyManifest = await manifestFor(current, []);
+  const emptyRepository = seedRepository(emptyManifest);
+  emptyRepository.values.delete(records.ad05ManifestPathV1(current));
+  const complete = effects.initialCandidateAd05ContinuationV1({
+    binding: current, manifest: emptyManifest,
+  });
+  assert.equal(complete.completeV1, true);
+  await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentPageV1({
+    repository: emptyRepository, binding: current, manifest: emptyManifest,
+    continuation: complete, effect: documentEffect(counter), committedAtSecV1: NOW,
+  }), assertAd05Code('AD05_INCOMPLETE_INVENTORY'));
+});
+
+test('exact ordinal membership and canonical contents fence substitutions and shorter manifests', async () => {
+  const current = binding();
+  const manifest = await manifestFor(current, trustedRecords(2));
+  const repository = seedRepository(manifest);
+  const changedRecords = trustedRecords(2);
+  changedRecords[0] = {...changedRecords[0],
+    sourceDocumentPathV1: 'users/private-substitute'};
+  const alternate = await manifestFor(current, changedRecords);
+  assert.equal(alternate.manifestIdV1, manifest.manifestIdV1);
+  assert.equal(alternate.manifestVersionV1, manifest.manifestVersionV1);
+  assert.notEqual(alternate.manifestFingerprintV1, manifest.manifestFingerprintV1);
+  const absentItem = alternate.itemsV1.find((candidate) =>
+    !manifest.itemsV1.some((member) =>
+      member.itemFingerprintV1 === candidate.itemFingerprintV1));
+  const counter = {calls: 0};
+  await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
+    repository, binding: current, manifest, item: absentItem,
+    effect: documentEffect(counter), committedAtSecV1: NOW,
+  }), assertAd05Code('AD05_BINDING_CONFLICT'));
+  assert.equal(counter.calls, 0);
+  await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentPageV1({
+    repository, binding: current, manifest: alternate,
+    continuation: effects.initialCandidateAd05ContinuationV1({
+      binding: current, manifest: alternate,
+    }), effect: documentEffect(counter), committedAtSecV1: NOW,
+  }), assertAd05Code('AD05_BINDING_CONFLICT'));
+  assert.equal(counter.calls, 0);
+
+  await effects.applyCandidateAd05TransactionalDocumentPageV1({
+    repository, binding: current, manifest,
+    continuation: effects.initialCandidateAd05ContinuationV1({
+      binding: current, manifest,
+    }), effect: documentEffect(counter), committedAtSecV1: NOW,
+  });
+  const shorter = manifestWithItems(manifest, [manifest.itemsV1[0]]);
+  assert.equal(shorter.manifestIdV1, manifest.manifestIdV1);
+  assert.equal(shorter.manifestVersionV1, manifest.manifestVersionV1);
+  await assert.rejects(() => effects.finalizeCandidateAd05TransactionalAdapterV1({
+    repository, binding: current, manifest: shorter,
+    remainingReferenceVerifier: {verifyRemainingReferencesV1: async () => {
+      throw new Error('must not run');
+    }},
+    finalVerifier: {verifyFinalStateV1: async () => {
+      throw new Error('must not run');
+    }},
+  }), assertAd05Code('AD05_BINDING_CONFLICT'));
+});
+
 test('every manifest consumer rejects adversarially re-fingerprinted ID and version drift', async () => {
   const current = binding();
   const manifest = await manifestFor(current, trustedRecords(1));
@@ -291,7 +435,8 @@ test('every manifest consumer rejects adversarially re-fingerprinted ID and vers
       itemCountV1: candidate.itemCountV1,
       receiptSetFingerprintV1: 'c'.repeat(64), latestReceiptCommittedAtSecV1: 0};
     await assert.rejects(() => inventory.verifyCandidateAd05RemainingReferencesV1({
-      binding: current, manifest: candidate, receiptSet,
+      repository: seedRepository(manifest), binding: current,
+      manifest: candidate, receiptSet,
       verifier: {verifyRemainingReferencesV1: async () => {
         throw new Error('must not run');
       }},
@@ -316,7 +461,7 @@ test('transactional effect commits source mutation and immutable receipt exactly
   const manifest = await manifestFor(current, trustedRecords(1));
   const repository = seedRepository(manifest);
   const counter = {calls: 0};
-  const input = {repository, binding: current, item: manifest.itemsV1[0],
+  const input = {repository, binding: current, manifest, item: manifest.itemsV1[0],
     effect: documentEffect(counter), committedAtSecV1: NOW};
   const first = await effects.applyCandidateAd05TransactionalDocumentItemV1(input);
   const second = await effects.applyCandidateAd05TransactionalDocumentItemV1(
@@ -380,9 +525,11 @@ test('notApplicable policy rejects applicable items before mutation and applicab
     },
   });
   const policyMismatchCounter = {calls: 0};
+  const mismatchedManifest = await manifestFor();
   await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
     repository: policyMismatchRepository, binding: notApplicableBinding,
-    item: applicableItem, effect: documentEffect(policyMismatchCounter),
+    manifest: mismatchedManifest, item: applicableItem,
+    effect: documentEffect(policyMismatchCounter),
     committedAtSecV1: NOW,
   }), assertAd05Code('AD05_BINDING_CONFLICT'));
   assert.equal(policyMismatchCounter.calls, 0);
@@ -391,7 +538,8 @@ test('notApplicable policy rejects applicable items before mutation and applicab
   const repository = seedRepository(manifest);
   let calls = 0;
   await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
-    repository, binding: current, item: manifest.itemsV1[0], committedAtSecV1: NOW,
+    repository, binding: current, manifest, item: manifest.itemsV1[0],
+    committedAtSecV1: NOW,
     effect: {sourceRecordVersionV1: (value) => value.recordVersionV1,
       mutateBoundSourceV1: ({transaction}) => {
         calls += 1;
@@ -413,7 +561,8 @@ test('same receipt key with changed binding, action, version, policy, payload, o
   const repository = seedRepository(manifest);
   const counter = {calls: 0};
   await effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding: current,
-    item: manifest.itemsV1[0], effect: documentEffect(counter), committedAtSecV1: NOW});
+    manifest, item: manifest.itemsV1[0], effect: documentEffect(counter),
+    committedAtSecV1: NOW});
   const receiptPath = records.ad05ItemReceiptPathV1({binding: current,
     itemIdV1: manifest.itemsV1[0].itemIdV1});
   const originalReceipt = await repository.read(receiptPath);
@@ -424,13 +573,14 @@ test('same receipt key with changed binding, action, version, policy, payload, o
     binding({policyVersionV1: 'synthetic_policy_v2'}),
   ]) {
     await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
-      repository, binding: changed, item: manifest.itemsV1[0], effect: documentEffect(counter),
-      committedAtSecV1: NOW + 1,
+      repository, binding: changed, manifest, item: manifest.itemsV1[0],
+      effect: documentEffect(counter), committedAtSecV1: NOW + 1,
     }), assertAd05Code('AD05_BINDING_CONFLICT'));
   }
   const changedItem = {...manifest.itemsV1[0], sourceRecordVersionV1: 'record_changed'};
   await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
-    repository, binding: current, item: changedItem, effect: documentEffect(counter),
+    repository, binding: current, manifest, item: changedItem,
+    effect: documentEffect(counter),
     committedAtSecV1: NOW + 1,
   }), assertAd05Code('AD05_BINDING_CONFLICT'));
   assert.deepEqual(await repository.read(receiptPath), originalReceipt);
@@ -516,7 +666,8 @@ test('empty reverse index is not absence proof and terminal result requires all 
     binding: current, manifest, remainingReferenceVerifier: verifierWith(0), finalVerifier}), null,
   'private chunk progress is null before item receipt');
   await effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding: current,
-    item: manifest.itemsV1[0], effect: documentEffect({calls: 0}), committedAtSecV1: NOW});
+    manifest, item: manifest.itemsV1[0], effect: documentEffect({calls: 0}),
+    committedAtSecV1: NOW});
   assert.equal(await effects.finalizeCandidateAd05TransactionalAdapterV1({repository,
     binding: current, manifest, remainingReferenceVerifier: verifierWith(1), finalVerifier}), null,
   'an empty reverse index cannot replace an independent scan that finds a reference');
@@ -533,7 +684,8 @@ test('independent and final evidence bind the exact receipt set and must postdat
   const manifest = await manifestFor(current, trustedRecords(1));
   const repository = seedRepository(manifest);
   await effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding: current,
-    item: manifest.itemsV1[0], effect: documentEffect({calls: 0}), committedAtSecV1: NOW});
+    manifest, item: manifest.itemsV1[0], effect: documentEffect({calls: 0}),
+    committedAtSecV1: NOW});
   const remainingVerifier = (overrides = {}) => ({
     verifyRemainingReferencesV1: async ({receiptSet}) => {
       const core = {schemaVersion: 1,
@@ -587,7 +739,8 @@ test('finalization rejects a validly fingerprinted receipt whose outcome contrad
   const manifest = await manifestFor(current, trustedRecords(1));
   const repository = seedRepository(manifest);
   await effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding: current,
-    item: manifest.itemsV1[0], effect: documentEffect({calls: 0}), committedAtSecV1: NOW});
+    manifest, item: manifest.itemsV1[0], effect: documentEffect({calls: 0}),
+    committedAtSecV1: NOW});
   const receiptPath = records.ad05ItemReceiptPathV1({binding: current,
     itemIdV1: manifest.itemsV1[0].itemIdV1});
   const forgedCore = {...await repository.read(receiptPath),
@@ -605,16 +758,47 @@ test('finalization rejects a validly fingerprinted receipt whose outcome contrad
   }), assertAd05Code('AD05_BINDING_CONFLICT'));
 });
 
+test('receipt replay and finalization reject a validly fingerprinted manifest mismatch', async () => {
+  const current = binding();
+  const manifest = await manifestFor(current, trustedRecords(1));
+  const repository = seedRepository(manifest);
+  const input = {repository, binding: current, manifest,
+    item: manifest.itemsV1[0], effect: documentEffect({calls: 0}),
+    committedAtSecV1: NOW};
+  await effects.applyCandidateAd05TransactionalDocumentItemV1(input);
+  const receiptPath = records.ad05ItemReceiptPathV1({
+    binding: current, itemIdV1: manifest.itemsV1[0].itemIdV1,
+  });
+  const forgedCore = {...await repository.read(receiptPath),
+    manifestFingerprintV1: 'f'.repeat(64)};
+  delete forgedCore.receiptFingerprintV1;
+  repository.values.set(receiptPath, {...forgedCore,
+    receiptFingerprintV1: records.ad05ItemReceiptFingerprintV1(forgedCore)});
+  await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
+    ...input, committedAtSecV1: NOW + 1,
+  }), assertAd05Code('AD05_BINDING_CONFLICT'));
+  await assert.rejects(() => effects.finalizeCandidateAd05TransactionalAdapterV1({
+    repository, binding: current, manifest,
+    remainingReferenceVerifier: {verifyRemainingReferencesV1: async () => {
+      throw new Error('must not run');
+    }},
+    finalVerifier: {verifyFinalStateV1: async () => {
+      throw new Error('must not run');
+    }},
+  }), assertAd05Code('AD05_BINDING_CONFLICT'));
+});
+
 test('completed receipt is immutable and future hold release requires a new versioned effect', async () => {
   const current = binding();
   const manifest = await manifestFor(current, trustedRecords(1));
   const repository = seedRepository(manifest);
   await effects.applyCandidateAd05TransactionalDocumentItemV1({repository, binding: current,
-    item: manifest.itemsV1[0], effect: documentEffect({calls: 0}), committedAtSecV1: NOW});
+    manifest, item: manifest.itemsV1[0], effect: documentEffect({calls: 0}),
+    committedAtSecV1: NOW});
   const release = binding({actionV1: 'erase', effectVersionV1: 'hold-release-v2'});
   await assert.rejects(() => effects.applyCandidateAd05TransactionalDocumentItemV1({
-    repository, binding: release, item: manifest.itemsV1[0], effect: documentEffect({calls: 0}),
-    committedAtSecV1: NOW + 1,
+    repository, binding: release, manifest, item: manifest.itemsV1[0],
+    effect: documentEffect({calls: 0}), committedAtSecV1: NOW + 1,
   }), assertAd05Code('AD05_BINDING_CONFLICT'));
 });
 

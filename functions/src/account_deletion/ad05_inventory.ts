@@ -8,6 +8,7 @@ import {
   ad05FailV1,
   ad05ManifestFingerprintV1,
   ad05ManifestItemFingerprintV1,
+  ad05ManifestPathV1,
   parseCandidateAd05ExecutionBindingV1,
   parseCandidateAd05ManifestItemV1,
   parseCandidateAd05SealedManifestV1,
@@ -62,6 +63,45 @@ export interface CandidateAd05TrustedInventorySourceV1 {
     binding: CandidateAd05ExecutionBindingV1;
     limitV1: number;
   }): Promise<unknown>;
+}
+
+export interface CandidateAd05ManifestSealTransactionV1 {
+  read(path: string): Promise<unknown | null>;
+  write(path: string, value: Readonly<Record<string, unknown>>): void;
+}
+
+export interface CandidateAd05ManifestReaderV1 {
+  read(path: string): Promise<unknown | null>;
+}
+
+export interface CandidateAd05ManifestSealRepositoryV1 {
+  runTransaction<T>(operation: (
+    transaction: CandidateAd05ManifestSealTransactionV1,
+  ) => Promise<T>): Promise<T>;
+}
+
+export interface CandidateAd05ManifestSealResultV1 {
+  stateV1: "sealed" | "replayed";
+  manifestV1: CandidateAd05SealedManifestV1;
+}
+
+export async function requireCandidateAd05CanonicalManifestV1(input: {
+  repository: CandidateAd05ManifestReaderV1;
+  binding: CandidateAd05ExecutionBindingV1;
+  manifest: CandidateAd05SealedManifestV1;
+}): Promise<CandidateAd05SealedManifestV1> {
+  const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
+  const supplied = parseCandidateAd05SealedManifestV1(input.manifest);
+  assertCandidateAd05ManifestBindingV1({binding, manifest: supplied});
+  const persistedRaw = await input.repository.read(ad05ManifestPathV1(binding));
+  if (persistedRaw === null) ad05FailV1("AD05_INCOMPLETE_INVENTORY");
+  const persisted = parseCandidateAd05SealedManifestV1(persistedRaw);
+  assertCandidateAd05ManifestBindingV1({binding, manifest: persisted});
+  if (persisted.manifestFingerprintV1 !== supplied.manifestFingerprintV1 ||
+      canonicalSha256(persisted) !== canonicalSha256(supplied)) {
+    ad05FailV1("AD05_BINDING_CONFLICT");
+  }
+  return persisted;
 }
 
 export interface CandidateAd05RemainingReferenceVerifierV1 {
@@ -317,6 +357,40 @@ export async function buildCandidateAd05SealedManifestV1(input: {
   return manifest;
 }
 
+/**
+ * Trusted inventory is sealed create-once before execution. Execution paths
+ * never register a caller-supplied manifest on demand.
+ */
+export async function sealCandidateAd05TrustedInventoryManifestV1(input: {
+  repository: CandidateAd05ManifestSealRepositoryV1;
+  binding: CandidateAd05ExecutionBindingV1;
+  source: CandidateAd05TrustedInventorySourceV1;
+}): Promise<CandidateAd05ManifestSealResultV1> {
+  const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
+  const manifest = await buildCandidateAd05SealedManifestV1({
+    binding,
+    source: input.source,
+  });
+  const manifestPathV1 = ad05ManifestPathV1(binding);
+  return input.repository.runTransaction(async (transaction) => {
+    const existingRaw = await transaction.read(manifestPathV1);
+    if (existingRaw === null) {
+      transaction.write(
+        manifestPathV1,
+        manifest as unknown as Readonly<Record<string, unknown>>,
+      );
+      return Object.freeze({stateV1: "sealed" as const, manifestV1: manifest});
+    }
+    const existing = parseCandidateAd05SealedManifestV1(existingRaw);
+    assertCandidateAd05ManifestBindingV1({binding, manifest: existing});
+    if (existing.manifestFingerprintV1 !== manifest.manifestFingerprintV1 ||
+        canonicalSha256(existing) !== canonicalSha256(manifest)) {
+      ad05FailV1("AD05_BINDING_CONFLICT");
+    }
+    return Object.freeze({stateV1: "replayed" as const, manifestV1: existing});
+  });
+}
+
 export function ad05RemainingReferenceEvidenceFingerprintV1(
   evidence: Omit<CandidateAd05RemainingReferenceEvidenceV1,
     "evidenceFingerprintV1">,
@@ -369,6 +443,7 @@ export function parseCandidateAd05RemainingReferenceEvidenceV1(
 }
 
 export async function verifyCandidateAd05RemainingReferencesV1(input: {
+  repository: CandidateAd05ManifestReaderV1;
   binding: CandidateAd05ExecutionBindingV1;
   manifest: CandidateAd05SealedManifestV1;
   receiptSet: CandidateAd05ReceiptSetSummaryV1;
@@ -377,6 +452,11 @@ export async function verifyCandidateAd05RemainingReferencesV1(input: {
   const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
   const manifest = parseCandidateAd05SealedManifestV1(input.manifest);
   assertCandidateAd05ManifestBindingV1({binding, manifest});
+  await requireCandidateAd05CanonicalManifestV1({
+    repository: input.repository,
+    binding,
+    manifest,
+  });
   const receiptSet = parseCandidateAd05ReceiptSetSummaryV1(input.receiptSet);
   if (receiptSet.bindingFingerprintV1 !== binding.bindingFingerprintV1 ||
       receiptSet.manifestFingerprintV1 !== manifest.manifestFingerprintV1 ||

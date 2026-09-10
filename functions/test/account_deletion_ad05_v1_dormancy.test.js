@@ -136,8 +136,15 @@ test('AD01 through AD05 flags and the checked-in normative policy all remain clo
   assert.deepEqual(fixture.receiptOutcomesV1,
     ['mutated', 'notApplicableVerified']);
   assert.deepEqual(fixture.completionEvidenceV1, {
-    manifestExactBound: true, receiptSetBound: true,
+    manifestExactBound: true, canonicalManifestCreateOnceRequired: true,
+    receiptManifestBound: true, receiptSetBound: true,
     independentSourceRequired: true, postCommitFreshnessRequired: true,
+  });
+  assert.deepEqual(fixture.activationObligationsV1, {
+    concreteSchemaClassifiersApproved: false,
+    registeredIndependentVerifiersApproved: false,
+    authoritativeCommitVersionEvidenceApproved: false,
+    postCommitScanCausalityApproved: false,
   });
   assert.equal(fixture.testOnlySyntheticApprovedPolicy.testOnlySyntheticV1, true);
 });

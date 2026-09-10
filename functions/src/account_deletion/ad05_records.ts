@@ -333,6 +333,7 @@ export interface CandidateAd05ItemReceiptV1 extends AuthIncarnationScopeV2 {
   taskEffectIdV1: string;
   itemIdV1: string;
   bindingFingerprintV1: string;
+  manifestFingerprintV1: string;
   itemFingerprintV1: string;
   adapterIdV1: AccountDeletionAdapterId;
   effectVersionV1: string;
@@ -360,7 +361,8 @@ export function parseCandidateAd05ItemReceiptV1(
   const data = exactRecord(value, [
     "schemaVersion", "authProjectIdV2", "authTenantIdV2", "authUidV2",
     "internalJobId", "taskEffectIdV1", "itemIdV1", "bindingFingerprintV1",
-    "itemFingerprintV1", "adapterIdV1", "effectVersionV1",
+    "manifestFingerprintV1", "itemFingerprintV1", "adapterIdV1",
+    "effectVersionV1",
     "policyDecisionIdV1", "policyVersionV1", "actionV1", "classificationV1",
     "outcomeV1",
     "sourceRecordVersionBeforeV1", "sourceRecordVersionAfterV1",
@@ -380,6 +382,7 @@ export function parseCandidateAd05ItemReceiptV1(
     taskEffectIdV1: ad04OpaqueIdV1(data.taskEffectIdV1),
     itemIdV1: ad04OpaqueIdV1(data.itemIdV1),
     bindingFingerprintV1: ad04HashV1(data.bindingFingerprintV1),
+    manifestFingerprintV1: ad04HashV1(data.manifestFingerprintV1),
     itemFingerprintV1: ad04HashV1(data.itemFingerprintV1),
     adapterIdV1: adapterId(data.adapterIdV1),
     effectVersionV1: ad04OpaqueIdV1(data.effectVersionV1),

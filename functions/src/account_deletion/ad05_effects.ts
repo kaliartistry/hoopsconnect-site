@@ -25,6 +25,7 @@ import {
   CandidateAd05RemainingReferenceVerifierV1,
   CandidateAd05ReceiptSetSummaryV1,
   deterministicAd05ManifestItemIdV1,
+  requireCandidateAd05CanonicalManifestV1,
   verifyCandidateAd05RemainingReferencesV1,
 } from "./ad05_inventory";
 import {
@@ -93,14 +94,16 @@ function mutationEvidenceV1(value: unknown): CandidateAd05MutationEvidenceV1 {
 function receiptMatchesV1(input: {
   receipt: CandidateAd05ItemReceiptV1;
   binding: CandidateAd05ExecutionBindingV1;
+  manifestFingerprintV1: string;
   item: CandidateAd05ManifestItemV1;
 }): boolean {
-  const {receipt, binding, item} = input;
+  const {receipt, binding, manifestFingerprintV1, item} = input;
   return sameAd04ScopeV1(receipt, binding) &&
     receipt.internalJobId === binding.internalJobId &&
     receipt.taskEffectIdV1 === binding.taskEffectIdV1 &&
     receipt.itemIdV1 === item.itemIdV1 &&
     receipt.bindingFingerprintV1 === binding.bindingFingerprintV1 &&
+    receipt.manifestFingerprintV1 === manifestFingerprintV1 &&
     receipt.itemFingerprintV1 === item.itemFingerprintV1 &&
     receipt.adapterIdV1 === binding.adapterIdV1 &&
     receipt.effectVersionV1 === binding.effectVersionV1 &&
@@ -113,16 +116,32 @@ function receiptMatchesV1(input: {
     receipt.sourceRecordVersionBeforeV1 === item.sourceRecordVersionV1;
 }
 
+function assertExactManifestMemberV1(
+  manifest: CandidateAd05SealedManifestV1,
+  item: CandidateAd05ManifestItemV1,
+): void {
+  const member = manifest.itemsV1[item.ordinalV1];
+  if (member === undefined || member.itemIdV1 !== item.itemIdV1 ||
+      member.itemFingerprintV1 !== item.itemFingerprintV1 ||
+      canonicalSha256(member) !== canonicalSha256(item)) {
+    ad05FailV1("AD05_BINDING_CONFLICT");
+  }
+}
+
 export async function applyCandidateAd05TransactionalDocumentItemV1(input: {
   repository: CandidateAd05TransactionRepositoryV1;
   binding: CandidateAd05ExecutionBindingV1;
+  manifest: CandidateAd05SealedManifestV1;
   item: CandidateAd05ManifestItemV1;
   effect: CandidateAd05TransactionalDocumentEffectV1;
   committedAtSecV1: number;
 }): Promise<CandidateAd05ItemEffectResultV1> {
   const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
+  const manifest = parseCandidateAd05SealedManifestV1(input.manifest);
   const item = parseCandidateAd05ManifestItemV1(input.item);
   const committedAtSecV1 = ad04CounterV1(input.committedAtSecV1);
+  assertCandidateAd05ManifestBindingV1({binding, manifest});
+  assertExactManifestMemberV1(manifest, item);
   const expectedItemIdV1 = deterministicAd05ManifestItemIdV1({
     binding,
     record: {
@@ -143,13 +162,24 @@ export async function applyCandidateAd05TransactionalDocumentItemV1(input: {
   }
   const receiptPath = ad05ItemReceiptPathV1({binding, itemIdV1: item.itemIdV1});
   return input.repository.runTransaction(async (transaction) => {
+    const canonicalManifest = await requireCandidateAd05CanonicalManifestV1({
+      repository: transaction,
+      binding,
+      manifest,
+    });
+    assertExactManifestMemberV1(canonicalManifest, item);
     const [receiptRaw, sourceRaw] = await Promise.all([
       transaction.read(receiptPath),
       transaction.read(item.sourceDocumentPathV1),
     ]);
     if (receiptRaw !== null) {
       const receipt = parseCandidateAd05ItemReceiptV1(receiptRaw);
-      if (!receiptMatchesV1({receipt, binding, item})) {
+      if (!receiptMatchesV1({
+        receipt,
+        binding,
+        manifestFingerprintV1: canonicalManifest.manifestFingerprintV1,
+        item,
+      })) {
         ad05FailV1("AD05_BINDING_CONFLICT");
       }
       return Object.freeze({stateV1: "replayed" as const, receiptV1: receipt});
@@ -174,6 +204,7 @@ export async function applyCandidateAd05TransactionalDocumentItemV1(input: {
         taskEffectIdV1: binding.taskEffectIdV1,
         itemIdV1: item.itemIdV1,
         bindingFingerprintV1: binding.bindingFingerprintV1,
+        manifestFingerprintV1: canonicalManifest.manifestFingerprintV1,
         itemFingerprintV1: item.itemFingerprintV1,
         adapterIdV1: binding.adapterIdV1,
         effectVersionV1: binding.effectVersionV1,
@@ -227,6 +258,7 @@ export async function applyCandidateAd05TransactionalDocumentItemV1(input: {
       taskEffectIdV1: binding.taskEffectIdV1,
       itemIdV1: item.itemIdV1,
       bindingFingerprintV1: binding.bindingFingerprintV1,
+      manifestFingerprintV1: canonicalManifest.manifestFingerprintV1,
       itemFingerprintV1: item.itemFingerprintV1,
       adapterIdV1: binding.adapterIdV1,
       effectVersionV1: binding.effectVersionV1,
@@ -299,6 +331,11 @@ export async function applyCandidateAd05TransactionalDocumentPageV1(input: {
   const pageLimitV1 = input.pageLimitV1 === undefined ?
     ACCOUNT_DELETION_AD05_MAX_PAGE_ITEMS_V1 : ad04CounterV1(input.pageLimitV1);
   assertCandidateAd05ManifestBindingV1({binding, manifest});
+  await requireCandidateAd05CanonicalManifestV1({
+    repository: input.repository,
+    binding,
+    manifest,
+  });
   if (pageLimitV1 < 1 || pageLimitV1 > ACCOUNT_DELETION_AD05_MAX_PAGE_ITEMS_V1 ||
       continuation.bindingFingerprintV1 !== binding.bindingFingerprintV1 ||
       continuation.manifestFingerprintV1 !== manifest.manifestFingerprintV1 ||
@@ -316,6 +353,7 @@ export async function applyCandidateAd05TransactionalDocumentPageV1(input: {
     if (raw === null || !receiptMatchesV1({
       receipt: parseCandidateAd05ItemReceiptV1(raw),
       binding,
+      manifestFingerprintV1: manifest.manifestFingerprintV1,
       item: committedItem,
     })) ad05FailV1("AD05_BINDING_CONFLICT");
   }
@@ -326,6 +364,7 @@ export async function applyCandidateAd05TransactionalDocumentPageV1(input: {
     await applyCandidateAd05TransactionalDocumentItemV1({
       repository: input.repository,
       binding,
+      manifest,
       item,
       effect: input.effect,
       committedAtSecV1: input.committedAtSecV1,
@@ -459,6 +498,11 @@ export async function finalizeCandidateAd05TransactionalAdapterV1(input: {
   const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
   const manifest = parseCandidateAd05SealedManifestV1(input.manifest);
   assertCandidateAd05ManifestBindingV1({binding, manifest});
+  await requireCandidateAd05CanonicalManifestV1({
+    repository: input.repository,
+    binding,
+    manifest,
+  });
   const receipts: CandidateAd05ItemReceiptV1[] = [];
   for (const item of manifest.itemsV1) {
     const raw = await input.repository.read(ad05ItemReceiptPathV1({
@@ -466,13 +510,19 @@ export async function finalizeCandidateAd05TransactionalAdapterV1(input: {
     }));
     if (raw === null) return null;
     const receipt = parseCandidateAd05ItemReceiptV1(raw);
-    if (!receiptMatchesV1({receipt, binding, item})) {
+    if (!receiptMatchesV1({
+      receipt,
+      binding,
+      manifestFingerprintV1: manifest.manifestFingerprintV1,
+      item,
+    })) {
       ad05FailV1("AD05_BINDING_CONFLICT");
     }
     receipts.push(receipt);
   }
   const receiptSet = receiptSetSummaryV1({binding, manifest, receipts});
   const remaining = await verifyCandidateAd05RemainingReferencesV1({
+    repository: input.repository,
     binding,
     manifest,
     receiptSet,

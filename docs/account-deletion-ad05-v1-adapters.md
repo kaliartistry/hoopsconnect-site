@@ -42,6 +42,15 @@ the binding's source-manifest ID, and both the manifest version and inventory
 source version must equal the binding's source-manifest version. The manifest
 parser also requires its two version fields to agree. Re-signing a changed
 manifest with the public SHA-256 function cannot bypass these comparisons.
+
+Trusted inventory sealing creates the canonical manifest once at its private
+manifest path. Exact retries are read-only replays; the same manifest ID and
+version with different contents conflicts. Execution never auto-registers a
+missing manifest. Before prefix-receipt checks, external verification, or
+finalization, the supplied manifest must exactly match that stored canonical
+record. Each item transaction repeats this check before reading a receipt or
+source record and proves that the item is the exact member at its ordinal.
+
 - `ad05_adapters.ts` declares exactly the 27 AD01/AD04 adapter IDs and their
   `retention.<adapterId>` decisions. Protection families are `T`
   (transactional document), `V` (versioned/object material), `E` (external or
@@ -68,6 +77,9 @@ next ordinal and next item ID to the sealed manifest, so it cannot skip an
 uncommitted item. Pages are capped at 25 items and manifests at 100.
 
 Receipts are completion evidence for one versioned effect and are immutable.
+A receipt also binds the exact canonical manifest fingerprint. Receipt replay,
+cursor-prefix validation, and finalization reject a receipt from any alternate
+manifest while retaining the stable receipt path that fences re-execution.
 A later hold release or changed disposition requires a new effect/version; it
 cannot rewrite an old receipt.
 
@@ -114,6 +126,15 @@ independence proof, and must be verified no earlier than the latest receipt.
 Final evidence binds both the receipt-set fingerprint and the fingerprinted
 remaining-reference evidence, and its verification time must be no earlier
 than either. Cached pre-mutation evidence therefore cannot close an adapter.
+
+These fields are structural AD05-A fences, not activation proof. The sealed
+classification and source version are still trusted assertions. Distinct
+source IDs and an independence-proof ID do not themselves authenticate
+operational independence, and caller-provided timestamps establish ordering
+but not causal post-commit freshness. Activation remains blocked until concrete
+schema-version classifiers, registered independent verifier implementations,
+authoritative commit-version evidence, and causally post-commit scan evidence
+are reviewed and approved. The fixture keeps all four obligations false.
 
 ## Test and release posture
 
