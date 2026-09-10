@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/sharing/branded_share_payload.dart';
+import '../../core/sharing/branded_share_sheet.dart';
 import '../../models/game_stats_model.dart';
+import '../../providers/association_branding_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../services/game_summary_generator.dart';
 
@@ -41,13 +44,18 @@ class GameSummaryScreen extends ConsumerWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.article_outlined,
-                      size: 48, color: AppColors.textMuted),
+                  Icon(
+                    Icons.article_outlined,
+                    size: 48,
+                    color: AppColors.textMuted,
+                  ),
                   SizedBox(height: 12),
                   Text(
                     'Game summary not available',
                     style: TextStyle(
-                        color: AppColors.textSecondary, fontSize: 16),
+                      color: AppColors.textSecondary,
+                      fontSize: 16,
+                    ),
                   ),
                 ],
               ),
@@ -84,7 +92,9 @@ class _SummaryBody extends StatelessWidget {
     final headline = GameSummaryGenerator.generateHeadline(stats);
     final narrative = GameSummaryGenerator.generateNarrative(stats);
     final quarterLine = GameSummaryGenerator.generateQuarterScoreLine(stats);
-    final quarterNarrative = GameSummaryGenerator.generateQuarterNarrative(stats);
+    final quarterNarrative = GameSummaryGenerator.generateQuarterNarrative(
+      stats,
+    );
     final performers = GameSummaryGenerator.getTopPerformers(stats);
     final milestones = GameSummaryGenerator.detectGameMilestones(stats);
 
@@ -177,10 +187,12 @@ class _SummaryBody extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: milestones.entries.expand((entry) {
-              return entry.value.map((milestone) => _MilestoneBadge(
-                    playerName: entry.key,
-                    milestone: milestone,
-                  ));
+              return entry.value.map(
+                (milestone) => _MilestoneBadge(
+                  playerName: entry.key,
+                  milestone: milestone,
+                ),
+              );
             }).toList(),
           ),
           const SizedBox(height: 20),
@@ -381,8 +393,7 @@ class _PerformerRow extends StatelessWidget {
 class _MilestoneBadge extends StatelessWidget {
   final String playerName;
   final String milestone;
-  const _MilestoneBadge(
-      {required this.playerName, required this.milestone});
+  const _MilestoneBadge({required this.playerName, required this.milestone});
 
   @override
   Widget build(BuildContext context) {
@@ -430,12 +441,13 @@ class _MilestoneBadge extends StatelessWidget {
 // Action buttons
 // ---------------------------------------------------------------------------
 
-class _ActionButtons extends StatelessWidget {
+class _ActionButtons extends ConsumerWidget {
   final GameStatsModel stats;
   const _ActionButtons({required this.stats});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final branding = ref.watch(effectiveAssociationBrandingProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -464,23 +476,17 @@ class _ActionButtons extends StatelessWidget {
         ),
         const SizedBox(height: 10),
 
-        // Share button (copies to clipboard with share-style message)
         OutlinedButton.icon(
-          onPressed: () {
-            final headline =
-                GameSummaryGenerator.generateHeadline(stats);
-            final text =
-                '$headline\n\n${GameSummaryGenerator.generateNarrative(stats)}';
-            Clipboard.setData(ClipboardData(text: text));
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Summary copied — ready to share'),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          },
+          onPressed: () => showBrandedShareSheet(
+            context: context,
+            branding: branding,
+            payload: BrandedSharePayload.gameSummary(
+              stats: stats,
+              branding: branding,
+            ),
+          ),
           icon: const Icon(Icons.share, size: 18),
-          label: const Text('Share'),
+          label: const Text('Share Result'),
           style: OutlinedButton.styleFrom(
             foregroundColor: AppColors.textSecondary,
             side: const BorderSide(color: AppColors.border),
