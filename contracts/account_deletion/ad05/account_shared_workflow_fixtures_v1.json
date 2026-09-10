@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "packet": "AD05-C",
+  "exactBaseCommit": "38a0f371afc7a2f24728172c8b522ed4ce8dd980",
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "adapterIdsV1": [
+    "firebase_auth_identity",
+    "user_profile",
+    "memberships_capabilities",
+    "notification_inbox",
+    "team_assignments",
+    "pending_invites",
+    "historical_invites",
+    "authorization_evidence",
+    "personal_ugc",
+    "official_notices",
+    "acknowledgements",
+    "event_attribution"
+  ],
+  "transactionalAdapterIdsV1": [
+    "user_profile",
+    "memberships_capabilities",
+    "team_assignments",
+    "pending_invites",
+    "personal_ugc"
+  ],
+  "evidenceOnlyAdapterIdsV1": [
+    "firebase_auth_identity",
+    "historical_invites",
+    "authorization_evidence",
+    "official_notices",
+    "acknowledgements",
+    "event_attribution"
+  ],
+  "notApplicableOnlyAdapterIdsV1": ["notification_inbox"],
+  "actionsV1": {
+    "firebase_auth_identity": "erase",
+    "user_profile": "erase",
+    "memberships_capabilities": "erase",
+    "notification_inbox": "erase",
+    "team_assignments": "detach",
+    "pending_invites": "erase",
+    "historical_invites": "restrictedRetention",
+    "authorization_evidence": "restrictedRetention",
+    "personal_ugc": "erase",
+    "official_notices": "detach",
+    "acknowledgements": "detach",
+    "event_attribution": "detach"
+  },
+  "sharedFactsNeverErasedV1": true,
+  "completedAcknowledgementsNeverErasedV1": true,
+  "redeemedInvitesNeverErasedV1": true,
+  "auditHistoryNeverGrantsAuthorityV1": true,
+  "liveMixedDocumentsDirectlyMutableV1": false,
+  "notificationInboxSchemaPresentV1": false,
+  "authoritativeGenerationProvenanceRequiredV1": true,
+  "ad03CustodyRequiredBeforeAuthorityRemovalV1": true,
+  "normativePolicy": {
+    "policyVersion": null,
+    "activationApproved": false,
+    "mutationsAllowed": false
+  }
+}
