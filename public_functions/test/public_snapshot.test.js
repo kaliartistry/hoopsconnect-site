@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {Timestamp} = require('firebase-admin/firestore');
-const {buildPublicSnapshot} = require('../lib/public_snapshot');
+const {buildPublicSnapshot} = require('../lib/index');
 
 test('public snapshot exposes approved scores and strips private source fields', () => {
   const snapshot = buildPublicSnapshot({

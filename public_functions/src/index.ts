@@ -1,9 +1,11 @@
 import * as admin from "firebase-admin";
 import {Timestamp} from "firebase-admin/firestore";
 import {onDocumentWritten} from "firebase-functions/v2/firestore";
-import {PUBLIC_ASSOCIATION_ID} from "./authorization";
+
+admin.initializeApp();
 
 const PUBLIC_SCHEMA_VERSION = 1;
+const PUBLIC_ASSOCIATION_ID = "jba";
 const PUBLIC_SOURCE_COLLECTIONS = new Set([
   "events",
   "gameStats",

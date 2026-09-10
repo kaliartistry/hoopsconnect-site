@@ -1,0 +1,10 @@
+{
+  "functions": [
+    {
+      "source": "public_functions",
+      "codebase": "public",
+      "ignore": ["node_modules", ".git"],
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
+    }
+  ]
+}
