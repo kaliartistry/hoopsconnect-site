@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "authGenerationConditionalMutationProven": false,
+  "sharedAd02UidPathCodecIntegrationProven": false,
+  "authOnDeleteExportAllowed": false,
+  "scheduledSweeperExportAllowed": false,
+  "architectureSha256": "9a9d0150244fc124bbc8ab1697fba177a3c862de8b7099c5c684d02ed8537832",
+  "exactBaseCommit": "fc46cecb4243acc248606cc2d83081843befa030",
+  "projectId": "demo-hoopsconnect",
+  "authCreatedAtIsoV1": "2026-01-02T03:04:05.678Z",
+  "nowSecV1": 1767324000,
+  "rootScope": {
+    "authProjectIdV2": "demo-hoopsconnect",
+    "authTenantIdV2": null,
+    "authUidV2": "owner-a"
+  },
+  "providerOwnedUidPath": {
+    "uid": "valid.uid@example.com",
+    "encodedSegment": "~ad04uid1~dgBhAGwAaQBkAC4AdQBpAGQAQABlAHgAYQBtAHAAbABlAC4AYwBvAG0A"
+  },
+  "generations": {
+    "ownerA": "19a44ca8c2f39dcb35a44be3c5057154988f40e0637e333ae6bb078eda6bb2ba",
+    "authOnly": "37a9647cbcdc496497815dca2520cb0866dd35e2caffb55f5c703411043dfcf2",
+    "legacyUser": "41965d2f6ad73bc9140416954c80ebd20de142697de7db690cb09081a1acf957",
+    "appleUser": "27a1f96caf9956bbf1af8b6a1c672da1ae5c447e607231d0a4456194614fc7a4"
+  },
+  "status": {
+    "secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "secretHash": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
+    "expiryPolicyDecisionId": "retention.deletion_operational_residue"
+  },
+  "counts": {
+    "requiredCleanupAdapters": 27,
+    "authTasks": 4,
+    "providerTasks": 1,
+    "reconcileTasks": 1,
+    "totalTasks": 33,
+    "maxAttempts": 20,
+    "maxStatusAliases": 8,
+    "maxSweepItems": 100
+  },
+  "timing": {
+    "freshAuthMaxAgeSecV1": 300,
+    "intentTtlSecV1": 600,
+    "leaseSecV1": 60,
+    "initialRetrySecV1": 60,
+    "maxRetrySecV1": 1800
+  },
+  "requiredScenarios": [9, 10, 11, 12, 32, 33, 34, 35, 36, 40, 41],
+  "paths": {
+    "intent": "accountDeletionIntentsV1/intent_owner_a",
+    "jobRoot": "accountDeletionJobsV1",
+    "statusAlias": "accountDeletionStatusV1/request_owner_a",
+    "statusControl": "accountDeletionStatusControlsV1/request_owner_a",
+    "operationReceiptRoot": "accountDeletionReceiptsV1",
+    "revocationMaterialRoot": "accountDeletionRevocationMaterialV1",
+    "providerEventRoot": "accountDeletionProviderEventsV1",
+    "alertRoot": "accountDeletionAlertsV1"
+  },
+  "completionRule": {
+    "requiredAdaptersTerminal": true,
+    "providerDispositionTerminal": true,
+    "authAbsentRequired": true,
+    "unknownRequiredStateBlocksCompletion": true,
+    "authDeletionDependsOnAdapterCompletion": false,
+    "unfinishedWorkHasTtl": false
+  }
+}
