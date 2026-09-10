@@ -299,7 +299,8 @@ export function parseCandidateAd05SealedManifestV1(
     itemsV1: Object.freeze(items),
     manifestFingerprintV1: ad04HashV1(data.manifestFingerprintV1),
   });
-  if (items.some((item) => item.adapterIdV1 !== candidate.adapterIdV1)) {
+  if (candidate.manifestVersionV1 !== candidate.inventorySourceVersionV1 ||
+      items.some((item) => item.adapterIdV1 !== candidate.adapterIdV1)) {
     ad05FailV1("AD05_BINDING_CONFLICT");
   }
   const {manifestFingerprintV1, ...fingerprintInput} = candidate;
@@ -307,6 +308,23 @@ export function parseCandidateAd05SealedManifestV1(
     ad05FailV1("AD05_BINDING_CONFLICT");
   }
   return candidate;
+}
+
+export function assertCandidateAd05ManifestBindingV1(input: {
+  binding: CandidateAd05ExecutionBindingV1;
+  manifest: CandidateAd05SealedManifestV1;
+}): void {
+  const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
+  const manifest = parseCandidateAd05SealedManifestV1(input.manifest);
+  if (manifest.bindingFingerprintV1 !== binding.bindingFingerprintV1 ||
+      manifest.adapterIdV1 !== binding.adapterIdV1 ||
+      manifest.manifestIdV1 !== binding.sourceManifestIdV1 ||
+      manifest.manifestVersionV1 !== binding.sourceManifestVersionV1 ||
+      manifest.inventorySourceVersionV1 !== binding.sourceManifestVersionV1 ||
+      (binding.actionV1 === "notApplicable" &&
+       manifest.itemsV1.some((item) => item.classificationV1 === "applicable"))) {
+    ad05FailV1("AD05_BINDING_CONFLICT");
+  }
 }
 
 export interface CandidateAd05ItemReceiptV1 extends AuthIncarnationScopeV2 {
@@ -321,6 +339,8 @@ export interface CandidateAd05ItemReceiptV1 extends AuthIncarnationScopeV2 {
   policyDecisionIdV1: string;
   policyVersionV1: string;
   actionV1: Ad05DispositionActionV1;
+  classificationV1: "applicable" | "notApplicable";
+  outcomeV1: "mutated" | "notApplicableVerified";
   sourceRecordVersionBeforeV1: string;
   sourceRecordVersionAfterV1: string;
   evidenceCodeV1: string;
@@ -341,11 +361,18 @@ export function parseCandidateAd05ItemReceiptV1(
     "schemaVersion", "authProjectIdV2", "authTenantIdV2", "authUidV2",
     "internalJobId", "taskEffectIdV1", "itemIdV1", "bindingFingerprintV1",
     "itemFingerprintV1", "adapterIdV1", "effectVersionV1",
-    "policyDecisionIdV1", "policyVersionV1", "actionV1",
+    "policyDecisionIdV1", "policyVersionV1", "actionV1", "classificationV1",
+    "outcomeV1",
     "sourceRecordVersionBeforeV1", "sourceRecordVersionAfterV1",
     "evidenceCodeV1", "committedAtSecV1", "receiptFingerprintV1",
   ]);
-  if (data.schemaVersion !== 1) ad05FailV1("AD05_INVALID_RECORD");
+  if (data.schemaVersion !== 1 ||
+      (data.classificationV1 !== "applicable" &&
+       data.classificationV1 !== "notApplicable") ||
+      (data.outcomeV1 !== "mutated" &&
+       data.outcomeV1 !== "notApplicableVerified")) {
+    ad05FailV1("AD05_INVALID_RECORD");
+  }
   const candidate: CandidateAd05ItemReceiptV1 = Object.freeze({
     schemaVersion: 1,
     ...ad04ScopeV1(data),
@@ -359,13 +386,24 @@ export function parseCandidateAd05ItemReceiptV1(
     policyDecisionIdV1: ad04NamespaceV1(data.policyDecisionIdV1),
     policyVersionV1: ad04OpaqueIdV1(data.policyVersionV1),
     actionV1: action(data.actionV1),
+    classificationV1: data.classificationV1,
+    outcomeV1: data.outcomeV1,
     sourceRecordVersionBeforeV1: ad04OpaqueIdV1(data.sourceRecordVersionBeforeV1),
     sourceRecordVersionAfterV1: ad04OpaqueIdV1(data.sourceRecordVersionAfterV1),
     evidenceCodeV1: ad04OpaqueIdV1(data.evidenceCodeV1),
     committedAtSecV1: ad04CounterV1(data.committedAtSecV1),
     receiptFingerprintV1: ad04HashV1(data.receiptFingerprintV1),
   });
-  if (candidate.policyDecisionIdV1 !== `retention.${candidate.adapterIdV1}`) {
+  if (candidate.policyDecisionIdV1 !== `retention.${candidate.adapterIdV1}` ||
+      (candidate.classificationV1 === "applicable" &&
+       (candidate.outcomeV1 !== "mutated" ||
+        candidate.actionV1 === "notApplicable" ||
+        candidate.sourceRecordVersionAfterV1 ===
+          candidate.sourceRecordVersionBeforeV1)) ||
+      (candidate.classificationV1 === "notApplicable" &&
+       (candidate.outcomeV1 !== "notApplicableVerified" ||
+        candidate.sourceRecordVersionAfterV1 !==
+          candidate.sourceRecordVersionBeforeV1))) {
     ad05FailV1("AD05_BINDING_CONFLICT");
   }
   const {receiptFingerprintV1, ...fingerprintInput} = candidate;

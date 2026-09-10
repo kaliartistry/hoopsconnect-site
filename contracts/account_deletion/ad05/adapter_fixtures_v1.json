@@ -3,6 +3,13 @@
   "exactBaseCommit": "08b1522a7ddc26d64d8fa7e3572af6764d1a8888",
   "activationAllowed": false,
   "productionExportAllowed": false,
+  "receiptOutcomesV1": ["mutated", "notApplicableVerified"],
+  "completionEvidenceV1": {
+    "manifestExactBound": true,
+    "receiptSetBound": true,
+    "independentSourceRequired": true,
+    "postCommitFreshnessRequired": true
+  },
   "normativePolicy": {
     "policyVersion": null,
     "activationApproved": false

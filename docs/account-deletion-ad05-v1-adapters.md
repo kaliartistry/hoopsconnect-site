@@ -36,6 +36,12 @@ AD05 test fixture and the explicitly named test-only factory.
   immutable receipt commit together. Exact replay returns the receipt; any
   changed scope, generation, lifecycle, job, task, effect, adapter, version,
   policy, action, manifest item, or source version conflicts.
+
+Every manifest consumer uses one binding assertion. The manifest ID must equal
+the binding's source-manifest ID, and both the manifest version and inventory
+source version must equal the binding's source-manifest version. The manifest
+parser also requires its two version fields to agree. Re-signing a changed
+manifest with the public SHA-256 function cannot bypass these comparisons.
 - `ad05_adapters.ts` declares exactly the 27 AD01/AD04 adapter IDs and their
   `retention.<adapterId>` decisions. Protection families are `T`
   (transactional document), `V` (versioned/object material), `E` (external or
@@ -65,6 +71,15 @@ Receipts are completion evidence for one versioned effect and are immutable.
 A later hold release or changed disposition requires a new effect/version; it
 cannot rewrite an old receipt.
 
+Item classification controls execution. An `applicable` item requires a policy
+action other than `notApplicable`, invokes the transaction-owned callback, and
+must advance the source record version. A `notApplicable` item never invokes
+the mutation callback or writes its source. It atomically records a
+`notApplicableVerified` receipt with equal before/after versions. Receipts bind
+the classification and the explicit `mutated` or `notApplicableVerified`
+outcome. A `notApplicable` adapter binding containing any applicable item fails
+before execution. No implicit already-satisfied mutation outcome exists.
+
 ## Completion and AD04 wire compatibility
 
 AD05 manifests, receipts, cursor state, source paths, versions, and provenance
@@ -92,15 +107,25 @@ same project, tenant, UID, generation, lifecycle epoch, job, task effect, and
 policy version. It has no Auth mutation capability and cannot disable, revoke,
 delete, or otherwise change an Auth user.
 
+Completion evidence binds the deterministic ordered set of item-receipt
+fingerprints and its latest commit time. Remaining-reference evidence names and
+binds the inventory source, requires a distinct independent source plus an
+independence proof, and must be verified no earlier than the latest receipt.
+Final evidence binds both the receipt-set fingerprint and the fingerprinted
+remaining-reference evidence, and its verification time must be no earlier
+than either. Cached pre-mutation evidence therefore cannot close an adapter.
+
 ## Test and release posture
 
 The focused Node suite covers registry exactness, duplicate/missing/extra/future
 schema rejection, dormancy, strict binding, trusted provenance, source-version
 conflicts, atomic replay, lost response, crash recovery, cursor fencing,
-cross-scope isolation, independent reconciliation, final verification,
-immutable receipts, unsupported protection families, and Auth evidence-only
-behavior. The emulator-only Rules file denies every client, including a claimed
-super-admin, access to private AD05 manifests, receipts, and continuations.
+cross-scope isolation, adversarially re-signed manifest drift, classification
+and outcome consistency, receipt-set freshness, independent reconciliation,
+final verification, immutable receipts, unsupported protection families, and
+Auth evidence-only behavior. The emulator-only Rules file denies every client,
+including a claimed super-admin, access to private AD05 manifests, receipts,
+and continuations.
 
 The dormancy suite pins production entrypoints, `firebase.json`, deployed Rules,
 AD01 through AD04 sources, the retention registry, and all activation/export

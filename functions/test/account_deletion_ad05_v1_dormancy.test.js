@@ -133,6 +133,12 @@ test('AD01 through AD05 flags and the checked-in normative policy all remain clo
   const fixture = JSON.parse(read(fixturePath));
   assert.equal(fixture.activationAllowed, false);
   assert.equal(fixture.productionExportAllowed, false);
+  assert.deepEqual(fixture.receiptOutcomesV1,
+    ['mutated', 'notApplicableVerified']);
+  assert.deepEqual(fixture.completionEvidenceV1, {
+    manifestExactBound: true, receiptSetBound: true,
+    independentSourceRequired: true, postCommitFreshnessRequired: true,
+  });
   assert.equal(fixture.testOnlySyntheticApprovedPolicy.testOnlySyntheticV1, true);
 });
 

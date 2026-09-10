@@ -14,6 +14,7 @@ const {runTransaction} = require('firebase/firestore');
 const official = require('../lib/domain/official_stats_contract');
 const records = require('../lib/account_deletion/ad05_records');
 const effects = require('../lib/account_deletion/ad05_effects');
+const inventory = require('../lib/account_deletion/ad05_inventory');
 
 const rules = fs.readFileSync(path.resolve(
   __dirname, 'fixtures/account_deletion_ad05_v1/firestore.rules',
@@ -98,13 +99,16 @@ test('real Firestore transaction race commits one logical source effect and one 
       sourceManifestVersionV1: 'inventory_v1',
     };
     const binding = records.createCandidateAd05ExecutionBindingV1(bindingCore);
-    const itemCore = {schemaVersion: 1, itemIdV1: 'item_race', ordinalV1: 0,
+    const trustedRecord = {schemaVersion: 1,
       adapterIdV1: 'user_profile', sourceSchemaIdV1: 'profile_v1',
       sourceSchemaVersionV1: 'schema_v1', sourceDocumentPathV1: 'users/owner-a',
-      sourceDocumentPathHashV1: official.canonicalSha256('users/owner-a'),
       sourceRecordVersionV1: 'record_v1', provenanceIdV1: 'verified_claim_v1',
       associationScopeHashV1: official.canonicalSha256('association-a'),
       classificationV1: 'applicable'};
+    const itemCore = {...trustedRecord,
+      itemIdV1: inventory.deterministicAd05ManifestItemIdV1({binding,
+        record: trustedRecord}), ordinalV1: 0,
+      sourceDocumentPathHashV1: official.canonicalSha256('users/owner-a')};
     const item = records.parseCandidateAd05ManifestItemV1({...itemCore,
       itemFingerprintV1: records.ad05ManifestItemFingerprintV1(itemCore)});
     await setDoc(doc(db, item.sourceDocumentPathV1), {

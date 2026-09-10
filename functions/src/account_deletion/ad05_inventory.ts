@@ -11,6 +11,7 @@ import {
   parseCandidateAd05ExecutionBindingV1,
   parseCandidateAd05ManifestItemV1,
   parseCandidateAd05SealedManifestV1,
+  assertCandidateAd05ManifestBindingV1,
 } from "./ad05_records";
 import {
   ad04CounterV1,
@@ -67,17 +68,54 @@ export interface CandidateAd05RemainingReferenceVerifierV1 {
   verifyRemainingReferencesV1(input: {
     binding: CandidateAd05ExecutionBindingV1;
     manifest: CandidateAd05SealedManifestV1;
+    receiptSet: CandidateAd05ReceiptSetSummaryV1;
   }): Promise<unknown>;
+}
+
+export interface CandidateAd05ReceiptSetSummaryV1 {
+  schemaVersion: 1;
+  bindingFingerprintV1: string;
+  manifestFingerprintV1: string;
+  itemCountV1: number;
+  receiptSetFingerprintV1: string;
+  latestReceiptCommittedAtSecV1: number;
 }
 
 export interface CandidateAd05RemainingReferenceEvidenceV1 {
   schemaVersion: 1;
   manifestFingerprintV1: string;
+  receiptSetFingerprintV1: string;
+  latestReceiptCommittedAtSecV1: number;
+  inventorySourceIdV1: string;
+  inventorySourceVersionV1: string;
   independentSourceIdV1: string;
   independentSourceVersionV1: string;
+  independenceProofIdV1: string;
   completeV1: true;
   remainingReferenceCountV1: number;
+  verifiedAtSecV1: number;
   evidenceIdV1: string;
+  evidenceFingerprintV1: string;
+}
+
+export function parseCandidateAd05ReceiptSetSummaryV1(
+  value: unknown,
+): CandidateAd05ReceiptSetSummaryV1 {
+  const data = exact(value, [
+    "schemaVersion", "bindingFingerprintV1", "manifestFingerprintV1",
+    "itemCountV1", "receiptSetFingerprintV1", "latestReceiptCommittedAtSecV1",
+  ]);
+  if (data.schemaVersion !== 1) ad05FailV1("AD05_INVALID_RECORD");
+  return Object.freeze({
+    schemaVersion: 1,
+    bindingFingerprintV1: ad04HashV1(data.bindingFingerprintV1),
+    manifestFingerprintV1: ad04HashV1(data.manifestFingerprintV1),
+    itemCountV1: ad04CounterV1(data.itemCountV1),
+    receiptSetFingerprintV1: ad04HashV1(data.receiptSetFingerprintV1),
+    latestReceiptCommittedAtSecV1: ad04CounterV1(
+      data.latestReceiptCommittedAtSecV1,
+    ),
+  });
 }
 
 function exact(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -271,9 +309,21 @@ export async function buildCandidateAd05SealedManifestV1(input: {
     itemCountV1: items.length,
     itemsV1: Object.freeze(items),
   };
-  return parseCandidateAd05SealedManifestV1({
+  const manifest = parseCandidateAd05SealedManifestV1({
     ...withoutFingerprint,
     manifestFingerprintV1: ad05ManifestFingerprintV1(withoutFingerprint),
+  });
+  assertCandidateAd05ManifestBindingV1({binding, manifest});
+  return manifest;
+}
+
+export function ad05RemainingReferenceEvidenceFingerprintV1(
+  evidence: Omit<CandidateAd05RemainingReferenceEvidenceV1,
+    "evidenceFingerprintV1">,
+): string {
+  return canonicalSha256({
+    contract: "account-deletion-ad05-remaining-reference-evidence-v1",
+    ...evidence,
   });
 }
 
@@ -281,39 +331,70 @@ export function parseCandidateAd05RemainingReferenceEvidenceV1(
   value: unknown,
 ): CandidateAd05RemainingReferenceEvidenceV1 {
   const data = exact(value, [
-    "schemaVersion", "manifestFingerprintV1", "independentSourceIdV1",
-    "independentSourceVersionV1", "completeV1", "remainingReferenceCountV1",
-    "evidenceIdV1",
+    "schemaVersion", "manifestFingerprintV1", "receiptSetFingerprintV1",
+    "latestReceiptCommittedAtSecV1", "inventorySourceIdV1",
+    "inventorySourceVersionV1", "independentSourceIdV1",
+    "independentSourceVersionV1", "independenceProofIdV1", "completeV1",
+    "remainingReferenceCountV1", "verifiedAtSecV1", "evidenceIdV1",
+    "evidenceFingerprintV1",
   ]);
   if (data.schemaVersion !== 1 || data.completeV1 !== true) {
     ad05FailV1("AD05_INCOMPLETE_INVENTORY");
   }
-  return Object.freeze({
+  const candidate: CandidateAd05RemainingReferenceEvidenceV1 = Object.freeze({
     schemaVersion: 1,
     manifestFingerprintV1: ad04HashV1(data.manifestFingerprintV1),
+    receiptSetFingerprintV1: ad04HashV1(data.receiptSetFingerprintV1),
+    latestReceiptCommittedAtSecV1: ad04CounterV1(
+      data.latestReceiptCommittedAtSecV1,
+    ),
+    inventorySourceIdV1: ad04OpaqueIdV1(data.inventorySourceIdV1),
+    inventorySourceVersionV1: ad04OpaqueIdV1(data.inventorySourceVersionV1),
     independentSourceIdV1: ad04OpaqueIdV1(data.independentSourceIdV1),
     independentSourceVersionV1: ad04OpaqueIdV1(data.independentSourceVersionV1),
+    independenceProofIdV1: ad04OpaqueIdV1(data.independenceProofIdV1),
     completeV1: true,
     remainingReferenceCountV1: ad04CounterV1(data.remainingReferenceCountV1),
+    verifiedAtSecV1: ad04CounterV1(data.verifiedAtSecV1),
     evidenceIdV1: ad04OpaqueIdV1(data.evidenceIdV1),
+    evidenceFingerprintV1: ad04HashV1(data.evidenceFingerprintV1),
   });
+  if (candidate.independentSourceIdV1 === candidate.inventorySourceIdV1) {
+    ad05FailV1("AD05_INCOMPLETE_INVENTORY");
+  }
+  const {evidenceFingerprintV1, ...fingerprintInput} = candidate;
+  if (ad05RemainingReferenceEvidenceFingerprintV1(fingerprintInput) !==
+      evidenceFingerprintV1) ad05FailV1("AD05_BINDING_CONFLICT");
+  return candidate;
 }
 
 export async function verifyCandidateAd05RemainingReferencesV1(input: {
   binding: CandidateAd05ExecutionBindingV1;
   manifest: CandidateAd05SealedManifestV1;
+  receiptSet: CandidateAd05ReceiptSetSummaryV1;
   verifier: CandidateAd05RemainingReferenceVerifierV1;
 }): Promise<CandidateAd05RemainingReferenceEvidenceV1> {
   const binding = parseCandidateAd05ExecutionBindingV1(input.binding);
   const manifest = parseCandidateAd05SealedManifestV1(input.manifest);
-  if (manifest.bindingFingerprintV1 !== binding.bindingFingerprintV1 ||
-      manifest.adapterIdV1 !== binding.adapterIdV1) {
+  assertCandidateAd05ManifestBindingV1({binding, manifest});
+  const receiptSet = parseCandidateAd05ReceiptSetSummaryV1(input.receiptSet);
+  if (receiptSet.bindingFingerprintV1 !== binding.bindingFingerprintV1 ||
+      receiptSet.manifestFingerprintV1 !== manifest.manifestFingerprintV1 ||
+      receiptSet.itemCountV1 !== manifest.itemCountV1) {
     ad05FailV1("AD05_BINDING_CONFLICT");
   }
   const evidence = parseCandidateAd05RemainingReferenceEvidenceV1(
-    await input.verifier.verifyRemainingReferencesV1({binding, manifest}),
+    await input.verifier.verifyRemainingReferencesV1({
+      binding, manifest, receiptSet,
+    }),
   );
-  if (evidence.manifestFingerprintV1 !== manifest.manifestFingerprintV1) {
+  if (evidence.manifestFingerprintV1 !== manifest.manifestFingerprintV1 ||
+      evidence.receiptSetFingerprintV1 !== receiptSet.receiptSetFingerprintV1 ||
+      evidence.latestReceiptCommittedAtSecV1 !==
+        receiptSet.latestReceiptCommittedAtSecV1 ||
+      evidence.inventorySourceIdV1 !== manifest.inventorySourceIdV1 ||
+      evidence.inventorySourceVersionV1 !== manifest.inventorySourceVersionV1 ||
+      evidence.verifiedAtSecV1 < receiptSet.latestReceiptCommittedAtSecV1) {
     ad05FailV1("AD05_BINDING_CONFLICT");
   }
   return evidence;
