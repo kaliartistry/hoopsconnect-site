@@ -220,6 +220,7 @@ void main() {
         expect(user.isAdmin, true);
         expect(user.canAccessAdminPanel, true);
         expect(user.canManageUsers, true);
+        expect(user.canManageAssociation, true);
         expect(user.canManageDivisions, true);
         expect(user.canManageSchedule, true);
         expect(user.canManageInviteCodes, true);
@@ -235,6 +236,7 @@ void main() {
         expect(user.isAdmin, true);
         expect(user.canAccessAdminPanel, true);
         expect(user.canManageUsers, false);
+        expect(user.canManageAssociation, false);
         expect(user.canManageDivisions, false);
         expect(user.canManageSchedule, false);
         expect(user.canManageInviteCodes, false);

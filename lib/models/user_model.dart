@@ -154,6 +154,7 @@ class UserModel {
       hasCapability('posts.manage') ||
       hasCapability('stats.approve');
   bool get canManageUsers => hasCapability('members.manage');
+  bool get canManageAssociation => hasCapability('association.manage');
   bool get canManageDivisions => hasCapability('association.manage');
   bool get canManageSchedule => hasCapability('schedule.manage');
   bool get canManageInviteCodes => hasCapability('invites.manage');
