@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "packet": "AD05-B",
+  "exactBaseCommit": "d133416157be5cfbf35cd2f4d00e03c2840bf2b2",
+  "activationAllowed": false,
+  "productionExportAllowed": false,
+  "scopeAuthorityV1": "verifiedAccountAssociationOnly",
+  "personErasureAuthorityV1": false,
+  "identityAdapterIdsV1": [
+    "account_person_claims",
+    "person_identity_evidence",
+    "public_projections_exports"
+  ],
+  "identityReferenceClassesV1": [
+    "accountPersonClaim",
+    "personIdentityEvidenceCapsule",
+    "personIdentityEvidenceMaterial",
+    "publicProfile",
+    "publicProjection",
+    "leaderboard",
+    "ranking",
+    "pressView",
+    "rawCompatibilityPath",
+    "exportArtifact",
+    "downloadableFile",
+    "searchIndex",
+    "shareAsset",
+    "cacheDerivative",
+    "restoreReplayInput",
+    "rebuildInput"
+  ],
+  "mechanicalSupportV1": {
+    "account_person_claims": "transactionalDocument",
+    "person_identity_evidence": "unsupportedVersionedMaterial",
+    "public_projections_exports": "suppressionPrerequisiteOnlyExternalStillUnsupported"
+  },
+  "requiredPreMutationProofV1": {
+    "canonicalAd05SourceManifestPersisted": true,
+    "privateIdentityReferenceManifestSealed": true,
+    "privateIdentitySuppressionPersisted": true,
+    "verifiedClaimProvenanceRequired": true,
+    "identityEvidenceProvenanceRequired": true,
+    "rawPathCoverageRequired": true,
+    "restoreSuppressionCoverageRequired": true,
+    "projectTenantUidBytesGenerationEpochJobEffectsRequired": true
+  },
+  "integrityMutationAllowedV1": {
+    "officialStatGlobalIdentity": false,
+    "snapshotEpoch": false,
+    "releaseHead": false,
+    "publicEpoch": false,
+    "canonicalBytes": false,
+    "certifiedHashes": false,
+    "actorProvenance": false,
+    "correctionLineage": false
+  },
+  "normativePolicy": {
+    "policyVersion": null,
+    "activationApproved": false,
+    "mutationsAllowed": false
+  },
+  "syntheticPolicy": {
+    "allowedOnlyInExplicitTests": true,
+    "policyVersionV1": "synthetic_policy_v1"
+  },
+  "remainingActivationObligationsV1": {
+    "authoritativeClaimProvenanceProviderApproved": false,
+    "identityEvidenceObjectVersionAndCustodyApproved": false,
+    "fieldLevelPublicationPolicyApproved": false,
+    "rawPublicExportPathInventoryApproved": false,
+    "restoreAndRebuildSuppressionRehearsed": false,
+    "publicPrivacyEpochIntegrationApproved": false,
+    "providerAndObjectGuaranteesApproved": false
+  }
+}

@@ -1,0 +1,17 @@
+rules_version = '2';
+
+// ACCOUNT_DELETION_AD05B_V1_TEST_ONLY_PROJECT=demo-hoopsconnect
+// Server-private dormant candidate. firebase.json does not reference this file.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /accountDeletionJobsV1/{jobId}/ad05IdentityReferenceManifestsV1/{document=**} {
+      allow read, write: if false;
+    }
+    match /accountDeletionJobsV1/{jobId}/ad05IdentitySuppressionsV1/{document=**} {
+      allow read, write: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
