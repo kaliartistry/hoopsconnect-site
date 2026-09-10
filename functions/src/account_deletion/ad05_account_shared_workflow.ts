@@ -146,7 +146,7 @@ async function assertPersistedCustodyV1(input: {
       receipt.authUidV2 !== record.authUidV2 ||
       receipt.associationId !== record.associationIdV1 ||
       receipt.accountGenerationV2 !== record.generationHash ||
-      receipt.accountLifecycleEpochV2 !== record.acceptedLifecycleEpochV2 ||
+      receipt.accountLifecycleEpochV2 + 1 !== record.acceptedLifecycleEpochV2 ||
       receipt.departureOperationIdV2 !==
         record.custodyDepartureOperationIdV2 ||
       canonicalSha256(receipt) !== record.custodyProofFingerprintV1 ||

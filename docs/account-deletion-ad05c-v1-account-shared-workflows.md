@@ -47,7 +47,9 @@ be represented as positively verified not applicable.
   owner-departure or custody-suspension proof. The proof must be a persisted,
   parseable AD03 departure receipt read in the same transaction and bound to
   the exact account, generation, epoch, association, operation, and receipt
-  fingerprint; a caller-supplied status or hash alone is insufficient.
+  fingerprint; a caller-supplied status or hash alone is insufficient. AD03
+  records the departing active epoch, so it must be exactly one less than the
+  AD04 deletion-acceptance epoch.
 - Evidence-only verification requires the persisted canonical sealed manifest
   and binds its exact effect, item membership, source path hash, schema,
   version, and provenance before reporting success.
