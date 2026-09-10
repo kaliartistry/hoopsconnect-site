@@ -35,6 +35,7 @@ import '../../features/settings/settings_screen.dart';
 import '../../features/press/press_dashboard_screen.dart';
 import '../../features/press/game_summary_screen.dart';
 import '../../features/press/head_to_head_screen.dart';
+import '../../features/public/public_league_screen.dart';
 import '../../core/widgets/navigation_loading.dart';
 import '../app_shell.dart';
 
@@ -56,9 +57,12 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/board',
     redirect: (context, state) {
+      final isGuestRoute = state.matchedLocation == '/guest';
       // While auth is still loading, show the branded loading screen
       if (accessStatus == AccountAccessStatus.loading) {
-        return state.matchedLocation == '/loading' ? null : '/loading';
+        return (state.matchedLocation == '/loading' || isGuestRoute)
+            ? null
+            : '/loading';
       }
 
       final isLoggedIn = authState.valueOrNull != null;
@@ -66,6 +70,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isAuthRoute =
           state.matchedLocation == '/login' || state.matchedLocation == '/join';
       final isPublicRoute =
+          isGuestRoute ||
           state.matchedLocation.startsWith('/legal') ||
           state.matchedLocation == '/about';
       final isLoadingRoute = state.matchedLocation == '/loading';
@@ -75,6 +80,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!isLoggedIn) {
         return (isAuthRoute || isPublicRoute) ? null : '/login';
       }
+
+      // Public league information remains reachable even when an authenticated
+      // account is awaiting provisioning or needs administrator recovery.
+      if (isGuestRoute) return null;
 
       // An authenticated invitee may not have a profile until the callable
       // redemption transaction succeeds. Keep that recovery path reachable.
@@ -149,6 +158,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Auth routes (no shell)
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(path: '/join', builder: (context, state) => const JoinScreen()),
+      GoRoute(
+        path: '/guest',
+        builder: (context, state) => const PublicLeagueScreen(),
+      ),
       GoRoute(
         path: '/access-blocked',
         builder: (context, state) => const AccessBlockedScreen(),

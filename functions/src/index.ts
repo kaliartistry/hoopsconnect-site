@@ -6,6 +6,9 @@ admin.initializeApp();
 // ── Stats & Leaderboard ─────────────────────────────────────────────
 export { onGameStatsApproved } from "./stats";
 
+// ── Certified public guest data ────────────────────────────────────
+export {onPublicLeagueSourceWritten} from "./public_snapshot";
+
 // ── Notifications ───────────────────────────────────────────────────
 export {
   onPostCreatedWithAck,

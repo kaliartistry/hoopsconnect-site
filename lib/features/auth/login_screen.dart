@@ -286,6 +286,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           : Text(_isSignUp ? 'Create Account' : 'Sign In'),
                     ),
                   ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _loading ? null : () => context.go('/guest'),
+                      icon: const Icon(Icons.visibility_outlined),
+                      label: const Text('Browse scores & schedule as a guest'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 20),
 
                   // Divider
