@@ -59,6 +59,7 @@
   "persistedAd03ReceiptRequiredV1": true,
   "ad03ReceiptEpochPrecedesAcceptedLifecycleEpochV1": true,
   "canonicalManifestRequiredForEvidenceV1": true,
+  "persistedEvidenceRecordRequiredV1": true,
   "sourcePathAndProvenanceBindingRequiredV1": true,
   "normativePolicy": {
     "policyVersion": null,

@@ -333,41 +333,51 @@ export async function verifyTestOnlySyntheticCandidateAd05cEvidenceV1(input: {
   const binding = assertCandidateAd05cBindingV1(input.bindingV1);
   const manifest = parseCandidateAd05SealedManifestV1(input.manifestV1);
   const item = parseCandidateAd05ManifestItemV1(input.itemV1);
-  const canonicalManifest = await requireCandidateAd05CanonicalManifestV1({
-    repository: input.repository,
-    binding,
-    manifest,
-  });
-  assertExactManifestMemberV1({
-    bindingV1: binding,
-    manifestV1: canonicalManifest,
-    itemV1: item,
-  });
-  const evidence = parseCandidateAd05cEvidenceRecordV1(input.evidenceV1);
-  assertCandidateAd05cRecordMatchesBindingV1({
-    bindingV1: binding,
-    recordV1: evidence,
-  });
-  assertItemBindsRecordV1({
-    itemV1: item,
-    recordV1: evidence,
-    schemaIdV1: evidenceSchemaByAdapterV1[evidence.adapterIdV1],
-  });
-  const notificationAbsence = evidence.adapterIdV1 === "notification_inbox";
-  if (notificationAbsence !== (item.classificationV1 === "notApplicable") ||
-      (!notificationAbsence && !ad05cEvidenceOnlyAdapterIdsV1.includes(
-        evidence.adapterIdV1 as Ad05cEvidenceOnlyAdapterIdV1,
-      ))) {
-    ad05FailV1("AD05_BINDING_CONFLICT");
-  }
-  return Object.freeze({
-    stateV1: "verified",
-    adapterIdV1: evidence.adapterIdV1,
-    evidenceIdV1: evidence.evidenceIdV1,
-    evidenceFingerprintV1: evidence.evidenceFingerprintV1,
-    mutationRequestedV1: false,
-    grantingAuthorityV1: false,
-    sharedFactsPreservedV1: true,
+  const suppliedEvidence = parseCandidateAd05cEvidenceRecordV1(input.evidenceV1);
+  return input.repository.runTransaction(async (transaction) => {
+    const canonicalManifest = await requireCandidateAd05CanonicalManifestV1({
+      repository: transaction,
+      binding,
+      manifest,
+    });
+    assertExactManifestMemberV1({
+      bindingV1: binding,
+      manifestV1: canonicalManifest,
+      itemV1: item,
+    });
+    const persistedEvidenceRaw = await transaction.read(
+      item.sourceDocumentPathV1,
+    );
+    if (persistedEvidenceRaw === null) ad05FailV1("AD05_BINDING_CONFLICT");
+    const evidence = parseCandidateAd05cEvidenceRecordV1(persistedEvidenceRaw);
+    if (canonicalSha256(evidence) !== canonicalSha256(suppliedEvidence)) {
+      ad05FailV1("AD05_BINDING_CONFLICT");
+    }
+    assertCandidateAd05cRecordMatchesBindingV1({
+      bindingV1: binding,
+      recordV1: evidence,
+    });
+    assertItemBindsRecordV1({
+      itemV1: item,
+      recordV1: evidence,
+      schemaIdV1: evidenceSchemaByAdapterV1[evidence.adapterIdV1],
+    });
+    const notificationAbsence = evidence.adapterIdV1 === "notification_inbox";
+    if (notificationAbsence !== (item.classificationV1 === "notApplicable") ||
+        (!notificationAbsence && !ad05cEvidenceOnlyAdapterIdsV1.includes(
+          evidence.adapterIdV1 as Ad05cEvidenceOnlyAdapterIdV1,
+        ))) {
+      ad05FailV1("AD05_BINDING_CONFLICT");
+    }
+    return Object.freeze({
+      stateV1: "verified" as const,
+      adapterIdV1: evidence.adapterIdV1,
+      evidenceIdV1: evidence.evidenceIdV1,
+      evidenceFingerprintV1: evidence.evidenceFingerprintV1,
+      mutationRequestedV1: false as const,
+      grantingAuthorityV1: false as const,
+      sharedFactsPreservedV1: true as const,
+    });
   });
 }
 

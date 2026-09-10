@@ -339,6 +339,7 @@ test('fixture freezes the exact 12-row AD05-C boundary and support split', () =>
   assert.equal(fixture.persistedAd03ReceiptRequiredV1, true);
   assert.equal(fixture.ad03ReceiptEpochPrecedesAcceptedLifecycleEpochV1, true);
   assert.equal(fixture.canonicalManifestRequiredForEvidenceV1, true);
+  assert.equal(fixture.persistedEvidenceRecordRequiredV1, true);
   assert.equal(fixture.sourcePathAndProvenanceBindingRequiredV1, true);
 });
 
@@ -410,15 +411,17 @@ test('evidence-only rows and missing inbox never request mutation or grant autho
   ]) {
     const packet = itemAndManifest(adapterIdV1,
       adapterIdV1 === 'notification_inbox' ? 'notApplicable' : 'applicable');
+    const evidence = evidenceRecord(packet.effectBinding, packet.associationIdV1);
     const repository = new MemoryRepository({
       [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+      [packet.sourceDocumentPathV1]: evidence,
     });
     const result = await mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
       repository,
       bindingV1: packet.effectBinding,
       manifestV1: packet.manifest,
       itemV1: packet.item,
-      evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
+      evidenceV1: evidence,
     });
     assert.equal(result.mutationRequestedV1, false);
     assert.equal(result.grantingAuthorityV1, false);
@@ -531,8 +534,10 @@ test('custody receipt must be from the lifecycle epoch before deletion acceptanc
 
 test('evidence verification binds canonical manifest, full effect, path, and provenance', async () => {
   const packet = itemAndManifest('acknowledgements');
+  const evidence = evidenceRecord(packet.effectBinding, packet.associationIdV1);
   const repository = new MemoryRepository({
     [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+    [packet.sourceDocumentPathV1]: evidence,
   });
   const changedEffectBinding = binding('acknowledgements', '-changed');
   await assert.rejects(
@@ -541,7 +546,7 @@ test('evidence verification binds canonical manifest, full effect, path, and pro
       bindingV1: changedEffectBinding,
       manifestV1: packet.manifest,
       itemV1: packet.item,
-      evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
+      evidenceV1: evidence,
     }), /AD05_BINDING_CONFLICT/);
   const wrongProvenance = evidenceRecord(packet.effectBinding,
     packet.associationIdV1, {provenanceIdV1: 'different-provenance'});
@@ -555,8 +560,9 @@ test('evidence verification binds canonical manifest, full effect, path, and pro
     }), /AD05_BINDING_CONFLICT/);
 });
 
-test('notification inbox cannot be represented as an applicable source', async () => {
-  const packet = itemAndManifest('notification_inbox', 'applicable');
+test('evidence verification requires the exact persisted source record', async () => {
+  const packet = itemAndManifest('official_notices');
+  const evidence = evidenceRecord(packet.effectBinding, packet.associationIdV1);
   const repository = new MemoryRepository({
     [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
   });
@@ -566,7 +572,33 @@ test('notification inbox cannot be represented as an applicable source', async (
       bindingV1: packet.effectBinding,
       manifestV1: packet.manifest,
       itemV1: packet.item,
-      evidenceV1: evidenceRecord(packet.effectBinding, packet.associationIdV1),
+      evidenceV1: evidence,
+    }), /AD05_BINDING_CONFLICT/);
+  repository.values.set(packet.sourceDocumentPathV1, evidence);
+  const verified = await mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+    repository,
+    bindingV1: packet.effectBinding,
+    manifestV1: packet.manifest,
+    itemV1: packet.item,
+    evidenceV1: evidence,
+  });
+  assert.equal(verified.stateV1, 'verified');
+});
+
+test('notification inbox cannot be represented as an applicable source', async () => {
+  const packet = itemAndManifest('notification_inbox', 'applicable');
+  const evidence = evidenceRecord(packet.effectBinding, packet.associationIdV1);
+  const repository = new MemoryRepository({
+    [ad05.ad05ManifestPathV1(packet.effectBinding)]: packet.manifest,
+    [packet.sourceDocumentPathV1]: evidence,
+  });
+  await assert.rejects(
+    mechanics.verifyTestOnlySyntheticCandidateAd05cEvidenceV1({
+      repository,
+      bindingV1: packet.effectBinding,
+      manifestV1: packet.manifest,
+      itemV1: packet.item,
+      evidenceV1: evidence,
     }), /AD05_BINDING_CONFLICT/);
 });
 

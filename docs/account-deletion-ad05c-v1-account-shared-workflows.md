@@ -51,8 +51,10 @@ be represented as positively verified not applicable.
   records the departing active epoch, so it must be exactly one less than the
   AD04 deletion-acceptance epoch.
 - Evidence-only verification requires the persisted canonical sealed manifest
-  and binds its exact effect, item membership, source path hash, schema,
-  version, and provenance before reporting success.
+  and the persisted evidence record read from the manifest-bound source path in
+  one read-only transaction. It binds the exact effect, item membership, source
+  path hash, schema, version, provenance, and supplied evidence fingerprint
+  before reporting success.
 - Cross-generation, cross-tenant, cross-project, cross-job, cross-association,
   stale-version, and unproven-provenance records fail closed before writes.
 - The live `users/{uid}` document remains outside this packet because it mixes
