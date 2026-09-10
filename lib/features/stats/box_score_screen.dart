@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/sharing/branded_share_payload.dart';
+import '../../core/sharing/branded_share_sheet.dart';
 import '../../models/game_stats_model.dart';
+import '../../providers/association_branding_providers.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../services/milestone_detector.dart';
@@ -51,7 +54,7 @@ class _BoxScoreScreenState extends ConsumerState<BoxScoreScreen> {
       appBar: AppBar(
         leading: const BackButton(),
         title: const Text('Box Score'),
-        actions: [_ExportBoxScoreButton(eventId: widget.eventId)],
+        actions: [_ShareBoxScoreButton(eventId: widget.eventId)],
       ),
       body: statsAsync.when(
         data: (stats) {
@@ -998,26 +1001,42 @@ class _ViewToggleChip extends StatelessWidget {
 // Export button
 // ---------------------------------------------------------------------------
 
-class _ExportBoxScoreButton extends ConsumerWidget {
+class _ShareBoxScoreButton extends ConsumerWidget {
   final String eventId;
-  const _ExportBoxScoreButton({required this.eventId});
+  const _ShareBoxScoreButton({required this.eventId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(currentUserProvider).value;
-    if (user == null || !user.canExportStats) return const SizedBox.shrink();
-
     final statsAsync = ref.watch(gameStatsProvider(eventId));
     return statsAsync.when(
       data: (stats) {
         if (stats == null) return const SizedBox.shrink();
+        if (stats.status != GameStatsStatus.approved) {
+          final user = ref.watch(currentUserProvider).value;
+          if (user == null || !user.canExportStats) {
+            return const SizedBox.shrink();
+          }
+          return IconButton(
+            icon: const Icon(Icons.copy_all_outlined),
+            tooltip: 'Copy draft box score',
+            onPressed: () {
+              final text = StatExportService.formatBoxScore(stats);
+              StatExportService.copyToClipboard(text, context);
+            },
+          );
+        }
+        final branding = ref.watch(effectiveAssociationBrandingProvider);
         return IconButton(
           icon: const Icon(Icons.share_outlined),
-          tooltip: 'Export box score',
-          onPressed: () {
-            final text = StatExportService.formatBoxScore(stats);
-            StatExportService.copyToClipboard(text, context);
-          },
+          tooltip: 'Share final result',
+          onPressed: () => showBrandedShareSheet(
+            context: context,
+            branding: branding,
+            payload: BrandedSharePayload.gameSummary(
+              stats: stats,
+              branding: branding,
+            ),
+          ),
         );
       },
       loading: () => const SizedBox.shrink(),

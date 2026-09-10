@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/sharing/branded_share_payload.dart';
+import '../../core/sharing/branded_share_sheet.dart';
 import '../../models/leaderboard_model.dart';
-import '../../providers/auth_providers.dart';
+import '../../providers/association_branding_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../core/widgets/skeleton_loader.dart';
 import '../../core/widgets/error_display.dart';
 import '../../core/widgets/empty_state.dart';
-import '../../services/stat_export_service.dart';
 
 class LeaderboardScreen extends ConsumerStatefulWidget {
   const LeaderboardScreen({super.key});
@@ -62,17 +63,13 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Season Leaderboard'),
-        actions: [
-          _buildExportAction(context, category, leaderboardAsync),
-        ],
+        actions: [_buildShareAction(context, category, leaderboardAsync)],
         bottom: TabBar(
           controller: _tabController,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           indicatorColor: Colors.white,
-          tabs: _categoryLabels
-              .map((label) => Tab(text: label))
-              .toList(),
+          tabs: _categoryLabels.map((label) => Tab(text: label)).toList(),
         ),
       ),
       body: leaderboardAsync == null
@@ -103,11 +100,13 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
                 error: e,
                 onRetry: () {
                   if (seasonId != null) {
-                    ref.invalidate(leaderboardProvider((
-                      seasonId: seasonId,
-                      divisionId: selectedDivisionId,
-                      category: category,
-                    )));
+                    ref.invalidate(
+                      leaderboardProvider((
+                        seasonId: seasonId,
+                        divisionId: selectedDivisionId,
+                        category: category,
+                      )),
+                    );
                   }
                 },
               ),
@@ -115,25 +114,27 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
     );
   }
 
-  Widget _buildExportAction(
+  Widget _buildShareAction(
     BuildContext context,
     String category,
     AsyncValue<LeaderboardModel?>? leaderboardAsync,
   ) {
-    final user = ref.watch(currentUserProvider).value;
-    if (user == null || !user.canExportStats) return const SizedBox.shrink();
-
     return IconButton(
       icon: const Icon(Icons.share_outlined),
-      tooltip: 'Export leaderboard',
+      tooltip: 'Share leaderboard',
       onPressed: () {
         final leaderboard = leaderboardAsync?.valueOrNull;
         if (leaderboard == null || leaderboard.rankings.isEmpty) return;
-        final text = StatExportService.formatLeaderboard(
-          leaderboard.rankings,
-          category,
+        final branding = ref.read(effectiveAssociationBrandingProvider);
+        showBrandedShareSheet(
+          context: context,
+          branding: branding,
+          payload: BrandedSharePayload.leaderboard(
+            rankings: leaderboard.rankings,
+            category: category,
+            branding: branding,
+          ),
         );
-        StatExportService.copyToClipboard(text, context);
       },
     );
   }
@@ -208,10 +209,7 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
                 ),
                 const Text(
                   'per game',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: AppColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 10, color: AppColors.textMuted),
                 ),
               ],
             ),

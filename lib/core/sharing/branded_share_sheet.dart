@@ -271,9 +271,9 @@ class BrandedShareCard extends StatelessWidget {
                       ),
                     ),
                     const Spacer(),
-                    const Text(
-                      'FINAL',
-                      style: TextStyle(
+                    Text(
+                      payload.eyebrow,
+                      style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
