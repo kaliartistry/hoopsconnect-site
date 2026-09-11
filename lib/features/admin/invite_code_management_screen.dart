@@ -8,9 +8,12 @@ import '../../core/constants/app_constants.dart';
 import '../../core/utils/error_mapper.dart';
 import '../../core/widgets/app_constrained_content.dart';
 import '../../core/widgets/app_state_message.dart';
+import '../../models/division_model.dart';
 import '../../models/invite_code_model.dart';
 import '../../models/team_model.dart';
 import '../../providers/auth_providers.dart';
+import '../../providers/division_providers.dart';
+import '../../providers/season_providers.dart';
 import '../../providers/team_providers.dart';
 import '../../services/repositories/invite_code_repository.dart';
 
@@ -246,16 +249,18 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
   String? _teamId;
   int _daysValid = AppDefaults.inviteCodeDefaultDaysValid;
   InviteCreationAttempt? _attempt;
+  IssuedInviteCode? _pendingVerification;
   IssuedInviteCode? _issued;
   bool _submitting = false;
   bool _ambiguous = false;
   bool _copying = false;
   bool _copied = false;
   bool _restoring = true;
-  bool _finishing = false;
+  bool _verifying = false;
   String? _error;
   String? _copyError;
-  String? _finishError;
+  String? _verificationError;
+  String? _nonSendableOutcome;
 
   bool get _requestLocked => _attempt != null;
 
@@ -281,7 +286,7 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
           _daysValid = attempt.daysValid;
           _ambiguous = true;
           _error =
-              'An unfinished invite request was found. Recover it to get the original code safely.';
+              'An unfinished invite request was found. Recover the same request to reconcile it safely. Its current status will be checked before any code is shown.';
         }
       });
     } catch (_) {
@@ -333,14 +338,12 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
     }
 
     try {
-      final issued = await attempt.submit(widget.repository);
+      final issued = await attempt.submit(
+        widget.repository,
+        expectedAssociationId: widget.associationId,
+      );
       if (!mounted) return;
-      setState(() {
-        _issued = issued;
-        _ambiguous = false;
-        _submitting = false;
-      });
-      await _copy();
+      await _clearRecoveryAndVerify(issued);
     } catch (error) {
       if (!mounted) return;
       final ambiguous =
@@ -377,6 +380,81 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
     }
   }
 
+  Future<void> _clearRecoveryAndVerify(IssuedInviteCode issued) async {
+    setState(() {
+      _pendingVerification = issued;
+      _submitting = false;
+      _verifying = true;
+      _verificationError = null;
+    });
+    try {
+      await widget.attemptStore.clear(
+        actorId: widget.actorId,
+        associationId: widget.associationId,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _verifying = false;
+        _verificationError =
+            'The invite was created, but local recovery material could not be cleared. Keep this window open and retry secure cleanup.';
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _attempt = null;
+      _ambiguous = false;
+      _verifying = false;
+    });
+    await _verifyPendingInvite();
+  }
+
+  Future<void> _verifyPendingInvite() async {
+    final pending = _pendingVerification;
+    if (pending == null || _verifying) return;
+    setState(() {
+      _verifying = true;
+      _verificationError = null;
+    });
+    try {
+      final usability = await widget.repository.verifyIssuedCode(pending);
+      if (!mounted) return;
+      if (usability == IssuedInviteUsability.inactive) {
+        setState(() {
+          _pendingVerification = null;
+          _verifying = false;
+          _nonSendableOutcome =
+              'This recovered invite is no longer active. It may have been revoked, redeemed, or expired, so no sendable code will be shown.';
+        });
+        return;
+      }
+      setState(() {
+        _pendingVerification = null;
+        _issued = pending;
+        _verifying = false;
+      });
+      await _copy();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _verifying = false;
+        _verificationError =
+            'The invite was created, but its current status could not be verified. Check again before sending it.';
+      });
+    }
+  }
+
+  Future<void> _retryPendingSafetyCheck() async {
+    final pending = _pendingVerification;
+    if (pending == null || _verifying) return;
+    if (_attempt != null) {
+      await _clearRecoveryAndVerify(pending);
+    } else {
+      await _verifyPendingInvite();
+    }
+  }
+
   Future<void> _copy() async {
     final issued = _issued;
     if (issued == null || _copying) return;
@@ -400,53 +478,82 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
     }
   }
 
-  Future<void> _finish() async {
-    if (_finishing) return;
-    setState(() {
-      _finishing = true;
-      _finishError = null;
-    });
-    try {
-      await widget.attemptStore.clear(
-        actorId: widget.actorId,
-        associationId: widget.associationId,
-      );
-      if (mounted) Navigator.pop(context, true);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _finishing = false;
-        _finishError =
-            'The recovery record could not be cleared. Keep this window open and try Done again.';
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final teamsAsync = ref.watch(teamsStreamProvider);
-    final teams = [...teamsAsync.valueOrNull ?? const <TeamModel>[]]
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final divisionsAsync = ref.watch(divisionsStreamProvider);
+    final activeSeasonAsync = ref.watch(activeSeasonIdProvider);
+    final activeSeasonId = activeSeasonAsync.valueOrNull;
+    final activeDivisionIds = {
+      for (final division
+          in divisionsAsync.valueOrNull ?? const <DivisionModel>[])
+        if (!division.isArchived &&
+            (division.seasonId == null || division.seasonId == activeSeasonId))
+          division.id,
+    };
+    final activeDivisionNames = {
+      for (final division
+          in divisionsAsync.valueOrNull ?? const <DivisionModel>[])
+        if (activeDivisionIds.contains(division.id)) division.id: division.name,
+    };
+    final teams = [
+      ...?teamsAsync.valueOrNull?.where(
+        (team) =>
+            team.seasonId == activeSeasonId &&
+            activeDivisionIds.contains(team.divisionId),
+      ),
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final selectedTeamUnavailable =
         _teamId != null && teams.every((team) => team.id != _teamId);
-    final teamsReady = teamsAsync.hasValue;
+    final teamsReady =
+        teamsAsync.hasValue &&
+        divisionsAsync.hasValue &&
+        activeSeasonAsync.hasValue &&
+        activeSeasonId != null;
     final canSubmit =
         teamsReady &&
         !_restoring &&
         !_submitting &&
         (_role != 'rep' || _teamId != null) &&
+        _pendingVerification == null &&
         _issued == null;
 
     return PopScope(
-      canPop: !_restoring && _attempt == null,
+      canPop: !_restoring && _attempt == null && _pendingVerification == null,
       child: AlertDialog(
-        title: Text(_issued == null ? 'Generate invite code' : 'Invite ready'),
+        title: Text(
+          _issued != null
+              ? 'Invite ready'
+              : _nonSendableOutcome != null
+              ? 'Invite unavailable'
+              : 'Generate invite code',
+        ),
         content: SizedBox(
           width: 440,
           child: SingleChildScrollView(
             child: _restoring
                 ? const AppLoadingState(
                     label: 'Checking for an unfinished invite',
+                  )
+                : _pendingVerification != null
+                ? AppStateMessage(
+                    title: _verifying
+                        ? 'Checking invite status'
+                        : 'Invite not ready to send',
+                    message:
+                        _verificationError ??
+                        'Confirming that this invite is still active.',
+                    tone: _verificationError == null
+                        ? AppStateTone.info
+                        : AppStateTone.warning,
+                    icon: _verifying ? Icons.sync : Icons.warning_amber_rounded,
+                  )
+                : _nonSendableOutcome != null
+                ? AppStateMessage(
+                    title: 'No code shown',
+                    message: _nonSendableOutcome!,
+                    tone: AppStateTone.warning,
+                    icon: Icons.block_outlined,
                   )
                 : _issued == null
                 ? Column(
@@ -480,16 +587,33 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                               }),
                       ),
                       const SizedBox(height: 12),
-                      if (teamsAsync.isLoading)
-                        const AppLoadingState(label: 'Loading teams')
-                      else if (teamsAsync.hasError)
+                      if (teamsAsync.isLoading ||
+                          divisionsAsync.isLoading ||
+                          activeSeasonAsync.isLoading)
+                        const AppLoadingState(
+                          label: 'Loading active-season teams',
+                        )
+                      else if (teamsAsync.hasError ||
+                          divisionsAsync.hasError ||
+                          activeSeasonAsync.hasError)
                         AppStateMessage(
-                          title: 'Teams could not be loaded',
+                          title: 'Active-season teams could not be loaded',
                           message:
                               'Refresh the team list before creating an invite.',
                           tone: AppStateTone.error,
                           actionLabel: 'Try again',
-                          onAction: () => ref.invalidate(teamsStreamProvider),
+                          onAction: () {
+                            ref.invalidate(teamsStreamProvider);
+                            ref.invalidate(divisionsStreamProvider);
+                            ref.invalidate(activeSeasonIdProvider);
+                          },
+                        )
+                      else if (activeSeasonId == null)
+                        AppStateMessage(
+                          title: 'No active season',
+                          message:
+                              'Set the active season before creating a team-scoped invite.',
+                          tone: AppStateTone.warning,
                         )
                       else
                         DropdownButtonFormField<String>(
@@ -501,8 +625,8 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                                 ? 'Team (required)'
                                 : 'Team (optional)',
                             helperText: _role == 'rep'
-                                ? 'The representative will be limited to this team.'
-                                : 'Choose a team only when this access should be team-specific.',
+                                ? 'Only teams in the active season are available.'
+                                : 'Optional teams are limited to the active season.',
                           ),
                           hint: const Text('Select a team'),
                           items: [
@@ -522,7 +646,8 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                               (team) => DropdownMenuItem(
                                 value: team.id,
                                 child: Text(
-                                  '${team.name} • Season ${team.seasonId}',
+                                  '${team.name} • '
+                                  '${activeDivisionNames[team.divisionId] ?? 'Active division'}',
                                 ),
                               ),
                             ),
@@ -591,18 +716,34 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                     copied: _copied,
                     copying: _copying,
                     copyError: _copyError,
-                    finishError: _finishError,
                     onCopy: _copy,
                   ),
           ),
         ),
-        actions: _restoring
+        actions: _restoring || _verifying
             ? const <Widget>[]
+            : _pendingVerification != null
+            ? [
+                FilledButton.icon(
+                  onPressed: _retryPendingSafetyCheck,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(
+                    _attempt == null ? 'Check again' : 'Retry secure cleanup',
+                  ),
+                ),
+              ]
+            : _nonSendableOutcome != null
+            ? [
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Close'),
+                ),
+              ]
             : _issued != null
             ? [
                 FilledButton(
-                  onPressed: _finishing ? null : _finish,
-                  child: Text(_finishing ? 'Finishing…' : 'Done'),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Done'),
                 ),
               ]
             : [
@@ -643,7 +784,6 @@ class _IssuedInviteContent extends StatelessWidget {
   final bool copied;
   final bool copying;
   final String? copyError;
-  final String? finishError;
   final VoidCallback onCopy;
 
   const _IssuedInviteContent({
@@ -651,7 +791,6 @@ class _IssuedInviteContent extends StatelessWidget {
     required this.copied,
     required this.copying,
     required this.copyError,
-    required this.finishError,
     required this.onCopy,
   });
 
@@ -662,7 +801,7 @@ class _IssuedInviteContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          'Send this code now. For security, it cannot be viewed again after you close this window.',
+          'Send this code now. It exists only in this window. Closing this window or the app will not recover or show it again.',
         ),
         const SizedBox(height: 12),
         Container(
@@ -712,16 +851,6 @@ class _IssuedInviteContent extends StatelessWidget {
               'Copied to clipboard.',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppColors.success),
-            ),
-          ),
-        ],
-        if (finishError != null) ...[
-          const SizedBox(height: 8),
-          Semantics(
-            liveRegion: true,
-            child: Text(
-              finishError!,
-              style: const TextStyle(color: AppColors.urgent),
             ),
           ),
         ],

@@ -1,6 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hoops_connect/models/invite_code_model.dart';
 import 'package:hoops_connect/services/repositories/invite_code_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -124,15 +126,16 @@ void main() {
               message: 'response lost after commit',
             );
           }
+          final code = 'C' * 43;
           return {
-            'inviteId': 'v2_${'b' * 64}',
+            'inviteId': _inviteId(code),
             'associationId': 'jba',
             'role': data['role'],
             'teamId': data['teamId'],
             'usesRemaining': 1,
             'status': 'active',
             'expiresAt': '2030-01-01T00:00:00.000Z',
-            'code': 'C' * 43,
+            'code': code,
           };
         },
       );
@@ -144,7 +147,7 @@ void main() {
       );
 
       await expectLater(
-        attempt.submit(repository),
+        attempt.submit(repository, expectedAssociationId: 'jba'),
         throwsA(
           isA<FirebaseFunctionsException>().having(
             (error) => error.code,
@@ -153,7 +156,10 @@ void main() {
           ),
         ),
       );
-      final recovered = await attempt.submit(repository);
+      final recovered = await attempt.submit(
+        repository,
+        expectedAssociationId: 'jba',
+      );
 
       expect(recovered.invite.teamId, 'team-1');
       expect(recovered.code, 'C' * 43);
@@ -162,6 +168,124 @@ void main() {
         'create_operation_client_0001',
       ]);
       expect(logicalIssuances, hasLength(1));
+    },
+  );
+
+  test(
+    'truncated creation response remains receipt-unknown for exact replay',
+    () async {
+      final operationIds = <String>[];
+      var calls = 0;
+      final repository = InviteCodeRepository(
+        callable: (name, data) async {
+          expect(name, 'createPrivilegedInvite');
+          operationIds.add(data['operationId'] as String);
+          calls += 1;
+          final code = calls == 1 ? 'truncated' : 'M' * 43;
+          final response = <Object?, Object?>{
+            'inviteId': calls == 1 ? 'v2_${'c' * 64}' : _inviteId(code),
+            'associationId': 'jba',
+            'role': 'media',
+            'teamId': null,
+            'expiresAt': '2030-01-01T00:00:00.000Z',
+            'code': code,
+          };
+          return response;
+        },
+      );
+      const attempt = InviteCreationAttempt(
+        role: 'media',
+        teamId: null,
+        daysValid: 7,
+        operationId: 'create_operation_malformed_001',
+      );
+
+      final firstError = await attempt
+          .submit(repository, expectedAssociationId: 'jba')
+          .then<Object?>((_) => null, onError: (Object error) => error);
+      expect(firstError, isA<InviteReceiptUnknownException>());
+      expect(
+        inviteFailureDisposition(firstError!),
+        InviteFailureDisposition.ambiguous,
+      );
+      final recovered = await attempt.submit(
+        repository,
+        expectedAssociationId: 'jba',
+      );
+
+      expect(recovered.code, 'M' * 43);
+      expect(operationIds, [
+        'create_operation_malformed_001',
+        'create_operation_malformed_001',
+      ]);
+    },
+  );
+
+  test(
+    'authoritative usability check rejects a stale issued receipt',
+    () async {
+      final repository = InviteCodeRepository(
+        callable: (name, data) async {
+          expect(name, 'inspectPrivilegedInvite');
+          expect(data['code'], 'U' * 43);
+          throw FirebaseFunctionsException(
+            code: 'not-found',
+            message: 'revoked, redeemed, or expired',
+          );
+        },
+      );
+      final issued = IssuedInviteCode(
+        invite: InviteCodeModel(
+          inviteId: 'v2_${'a' * 64}',
+          teamId: null,
+          role: 'media',
+          usesRemaining: 1,
+          status: 'active',
+          expiresAt: DateTime.utc(2030),
+          associationId: 'jba',
+        ),
+        code: 'U' * 43,
+      );
+
+      expect(
+        await repository.verifyIssuedCode(issued),
+        IssuedInviteUsability.inactive,
+      );
+    },
+  );
+
+  test(
+    'usability check fails closed on explicitly inactive metadata',
+    () async {
+      final code = 'V' * 43;
+      final repository = InviteCodeRepository(
+        callable: (name, data) async => {
+          'inviteId': _inviteId(code),
+          'associationId': 'jba',
+          'role': 'media',
+          'teamId': null,
+          'usesRemaining': 0,
+          'status': 'redeemed',
+          'expiresAt': '2030-01-01T00:00:00.000Z',
+        },
+      );
+      final issued = IssuedInviteCode(
+        invite: InviteCodeModel(
+          inviteId: _inviteId(code),
+          teamId: null,
+          role: 'media',
+          usesRemaining: 1,
+          status: 'active',
+          expiresAt: DateTime.utc(2030),
+          associationId: 'jba',
+        ),
+        code: code,
+      );
+
+      expect(
+        await repository.verifyIssuedCode(issued),
+        IssuedInviteUsability.inactive,
+      );
     },
   );
 
@@ -233,3 +357,6 @@ void main() {
     expect(preferences.getKeys(), isEmpty);
   });
 }
+
+String _inviteId(String code) =>
+    'v2_${sha256.convert(code.codeUnits).toString()}';

@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/firestore_paths.dart';
@@ -17,7 +18,22 @@ typedef InviteCallable =
 
 enum InviteFailureDisposition { ambiguous, terminal }
 
+/// The callable may have committed, but its response was not valid enough for
+/// the client to confirm or safely act on. Retrying must reuse the same
+/// operation ID so the server can replay the original receipt.
+class InviteReceiptUnknownException implements Exception {
+  const InviteReceiptUnknownException();
+
+  @override
+  String toString() => 'Invite response could not be confirmed.';
+}
+
+enum IssuedInviteUsability { usable, inactive }
+
 InviteFailureDisposition inviteFailureDisposition(Object error) {
+  if (error is InviteReceiptUnknownException) {
+    return InviteFailureDisposition.ambiguous;
+  }
   if (error is FirebaseFunctionsException) {
     const ambiguousCodes = {
       'aborted',
@@ -62,6 +78,24 @@ String newInviteOperationId() {
   return base64Url.encode(bytes).replaceAll('=', '');
 }
 
+bool _issuedResponseMatchesRequest({
+  required IssuedInviteCode issued,
+  required String expectedAssociationId,
+  required String role,
+  required String? teamId,
+}) {
+  final code = issued.code;
+  final invite = issued.invite;
+  if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(code)) return false;
+  final expectedInviteId = 'v2_${sha256.convert(utf8.encode(code))}';
+  return invite.inviteId == expectedInviteId &&
+      invite.associationId == expectedAssociationId &&
+      invite.role == role &&
+      invite.teamId == teamId &&
+      invite.status == 'active' &&
+      invite.usesRemaining == 1;
+}
+
 /// One logical invite-creation request.
 ///
 /// Keep this object after an ambiguous transport failure and submit it again.
@@ -82,12 +116,16 @@ class InviteCreationAttempt {
     required this.operationId,
   });
 
-  Future<IssuedInviteCode> submit(InviteCodeRepository repository) {
+  Future<IssuedInviteCode> submit(
+    InviteCodeRepository repository, {
+    required String expectedAssociationId,
+  }) {
     return repository.createCode(
       role: role,
       teamId: teamId,
       daysValid: daysValid,
       operationId: operationId,
+      expectedAssociationId: expectedAssociationId,
     );
   }
 
@@ -220,10 +258,23 @@ class SharedPreferencesInviteCreationAttemptStore
     required String associationId,
   }) async {
     final preferences = await SharedPreferences.getInstance();
-    final cleared = await preferences.remove(_key(actorId, associationId));
-    if (!cleared && preferences.containsKey(_key(actorId, associationId))) {
-      throw StateError('The invite recovery request could not be cleared.');
+    final key = _key(actorId, associationId);
+    final tombstoned = await preferences.setString(
+      key,
+      jsonEncode({
+        'schemaVersion': 1,
+        'actorId': actorId,
+        'associationId': associationId,
+        'completed': true,
+      }),
+    );
+    if (!tombstoned) {
+      throw StateError('The invite recovery request could not be completed.');
     }
+    // The overwrite above atomically removes the operation ID. A failed
+    // physical removal therefore leaves only a harmless terminal marker that
+    // load() will discard, never replayable recovery material.
+    await preferences.remove(key);
   }
 }
 
@@ -285,15 +336,58 @@ class InviteCodeRepository {
     String? teamId,
     required int daysValid,
     required String operationId,
+    required String expectedAssociationId,
   }) async {
-    final data = await _invoke('createPrivilegedInvite', {
-      'role': role,
-      'teamId': teamId,
-      'daysValid': daysValid,
-      'operationId': operationId,
-      'authorizationSchemaVersion': authorizationSchemaVersion,
-    });
-    return IssuedInviteCode.fromCallable(data);
+    try {
+      final data = await _invoke('createPrivilegedInvite', {
+        'role': role,
+        'teamId': teamId,
+        'daysValid': daysValid,
+        'operationId': operationId,
+        'authorizationSchemaVersion': authorizationSchemaVersion,
+      });
+      final issued = IssuedInviteCode.fromCallable(data);
+      if (!_issuedResponseMatchesRequest(
+        issued: issued,
+        expectedAssociationId: expectedAssociationId,
+        role: role,
+        teamId: teamId,
+      )) {
+        throw const FormatException('Invite response is inconsistent');
+      }
+      return issued;
+    } on FormatException {
+      throw const InviteReceiptUnknownException();
+    } on TypeError {
+      throw const InviteReceiptUnknownException();
+    }
+  }
+
+  /// Re-checks the bearer through the authoritative inspection callable before
+  /// the UI presents it as sendable. A stale create receipt can outlive an
+  /// invite that was revoked, redeemed, or expired after issuance.
+  Future<IssuedInviteUsability> verifyIssuedCode(
+    IssuedInviteCode issued,
+  ) async {
+    InviteCodeModel? current;
+    try {
+      current = await validateCode(issued.code);
+    } on FormatException {
+      throw const InviteReceiptUnknownException();
+    } on TypeError {
+      throw const InviteReceiptUnknownException();
+    }
+    if (current == null) return IssuedInviteUsability.inactive;
+    if (!current.isValid) return IssuedInviteUsability.inactive;
+    final expected = issued.invite;
+    if (current.inviteId != expected.inviteId ||
+        current.associationId != expected.associationId ||
+        current.role != expected.role ||
+        current.teamId != expected.teamId ||
+        current.expiresAt.toUtc() != expected.expiresAt.toUtc()) {
+      throw const InviteReceiptUnknownException();
+    }
+    return IssuedInviteUsability.usable;
   }
 
   Future<List<InviteCodeModel>> getAllCodes(String associationId) async {

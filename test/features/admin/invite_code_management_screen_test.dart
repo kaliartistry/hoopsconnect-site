@@ -6,10 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
 import 'package:hoops_connect/features/admin/invite_code_management_screen.dart';
+import 'package:hoops_connect/models/division_model.dart';
 import 'package:hoops_connect/models/invite_code_model.dart';
 import 'package:hoops_connect/models/team_model.dart';
 import 'package:hoops_connect/models/user_model.dart';
 import 'package:hoops_connect/providers/auth_providers.dart';
+import 'package:hoops_connect/providers/division_providers.dart';
+import 'package:hoops_connect/providers/season_providers.dart';
 import 'package:hoops_connect/providers/team_providers.dart';
 import 'package:hoops_connect/services/repositories/invite_code_repository.dart';
 
@@ -17,8 +20,10 @@ void main() {
   testWidgets('uses an association-scoped team picker instead of a raw ID', (
     tester,
   ) async {
-    final repository = _FakeInviteCodeRepository();
     final store = _MemoryAttemptStore();
+    final repository = _FakeInviteCodeRepository(
+      beforeVerify: () => expect(store.attempt, isNull),
+    );
     await _pumpScreen(tester, repository: repository, attemptStore: store);
 
     await tester.tap(find.text('Generate invite'));
@@ -30,20 +35,35 @@ void main() {
 
     await tester.tap(find.byKey(const Key('invite-team-rep-null')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Blue Mountains • Season season-1').last);
+    expect(find.textContaining('Archived Bears'), findsNothing);
+    expect(find.textContaining('Archived Division Bears'), findsNothing);
+    expect(find.textContaining('Future Flyers'), findsNothing);
+    await tester.tap(find.text('Blue Mountains • Premier').last);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('generate-invite-submit')));
     await tester.pumpAndSettle();
 
     expect(repository.createCalls, hasLength(1));
     expect(repository.createCalls.single.teamId, 'team-blue');
+    expect(repository.verifiedCodes, [_issuedInvite.code]);
     expect(find.byKey(const Key('issued-invite-secret')), findsOneWidget);
-    expect(store.attempt, isNotNull);
-
-    await tester.tap(find.text('Done'));
-    await tester.pumpAndSettle();
     expect(store.attempt, isNull);
+    expect(
+      find.textContaining('Closing this window or the app will not recover'),
+      findsOneWidget,
+    );
+
+    // Simulate the dialog/app being force-closed instead of tapping Done.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await _pumpScreen(tester, repository: repository, attemptStore: store);
+    await tester.tap(find.text('Generate invite'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recover invite'), findsNothing);
+    expect(find.text('Generate code'), findsOneWidget);
     expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+    expect(find.text(_issuedInvite.code), findsNothing);
   });
 
   testWidgets(
@@ -58,6 +78,7 @@ void main() {
           _issuedInvite,
         ],
       );
+      final store = _MemoryAttemptStore();
       var copyCalls = 0;
       await _pumpScreen(
         tester,
@@ -66,6 +87,7 @@ void main() {
           copyCalls += 1;
           if (copyCalls == 1) throw StateError('clipboard denied');
         },
+        attemptStore: store,
       );
       await _openAndSelectBlueTeam(tester);
 
@@ -84,6 +106,7 @@ void main() {
         'fixed_create_operation_0001',
       });
       expect(find.text(_issuedInvite.code), findsOneWidget);
+      expect(store.attempt, isNull);
       expect(find.byKey(const Key('invite-copy-error')), findsOneWidget);
       expect(find.text('Copy code'), findsOneWidget);
 
@@ -93,6 +116,93 @@ void main() {
       expect(copyCalls, 2);
       expect(find.text('Copied'), findsOneWidget);
       expect(find.byKey(const Key('invite-copy-error')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'malformed callable response retries with the same operation ID',
+    (tester) async {
+      final store = _MemoryAttemptStore();
+      final repository = _FakeInviteCodeRepository(
+        createResults: [const InviteReceiptUnknownException(), _issuedInvite],
+      );
+      await _pumpScreen(tester, repository: repository, attemptStore: store);
+      await _openAndSelectBlueTeam(tester);
+
+      await tester.tap(find.byKey(const Key('generate-invite-submit')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Retry same request'), findsOneWidget);
+      expect(store.attempt?.operationId, 'fixed_create_operation_0001');
+      await tester.tap(find.byKey(const Key('generate-invite-submit')));
+      await tester.pumpAndSettle();
+
+      expect(repository.createCalls, hasLength(2));
+      expect(repository.createCalls.map((call) => call.operationId).toSet(), {
+        'fixed_create_operation_0001',
+      });
+      expect(store.attempt, isNull);
+      expect(find.byKey(const Key('issued-invite-secret')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'secret stays hidden until authoritative usability is confirmed',
+    (tester) async {
+      final pendingVerification = Completer<IssuedInviteUsability>();
+      final store = _MemoryAttemptStore();
+      final repository = _FakeInviteCodeRepository(
+        pendingVerify: pendingVerification,
+      );
+      await _pumpScreen(tester, repository: repository, attemptStore: store);
+      await _openAndSelectBlueTeam(tester);
+
+      await tester.tap(find.byKey(const Key('generate-invite-submit')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(store.attempt, isNull);
+      expect(find.text('Checking invite status'), findsOneWidget);
+      expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+      expect(find.text(_issuedInvite.code), findsNothing);
+
+      pendingVerification.complete(IssuedInviteUsability.usable);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('issued-invite-secret')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'failed usability check retries in memory without another issuance',
+    (tester) async {
+      final store = _MemoryAttemptStore();
+      final repository = _FakeInviteCodeRepository(
+        verifyResults: [
+          FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'status response lost',
+          ),
+          IssuedInviteUsability.usable,
+        ],
+      );
+      await _pumpScreen(tester, repository: repository, attemptStore: store);
+      await _openAndSelectBlueTeam(tester);
+
+      await tester.tap(find.byKey(const Key('generate-invite-submit')));
+      await tester.pumpAndSettle();
+
+      expect(store.attempt, isNull);
+      expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+      expect(find.text('Check again'), findsOneWidget);
+      await tester.tap(find.text('Check again'));
+      await tester.pumpAndSettle();
+
+      expect(repository.createCalls, hasLength(1));
+      expect(repository.verifiedCodes, [
+        _issuedInvite.code,
+        _issuedInvite.code,
+      ]);
+      expect(find.byKey(const Key('issued-invite-secret')), findsOneWidget);
     },
   );
 
@@ -130,9 +240,43 @@ void main() {
       expect(repository.createCalls.map((call) => call.operationId).toSet(), {
         'fixed_create_operation_0001',
       });
+      expect(store.attempt, isNull);
       expect(find.text(_issuedInvite.code), findsOneWidget);
     },
   );
+
+  testWidgets('stale recovered receipt never presents a sendable secret', (
+    tester,
+  ) async {
+    final store = _MemoryAttemptStore()
+      ..attempt = const InviteCreationAttempt(
+        role: 'rep',
+        teamId: 'team-blue',
+        daysValid: 30,
+        operationId: 'fixed_create_operation_0001',
+      );
+    final repository = _FakeInviteCodeRepository(
+      verifyResults: [IssuedInviteUsability.inactive],
+    );
+    await _pumpScreen(tester, repository: repository, attemptStore: store);
+
+    await tester.tap(find.text('Generate invite'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recover invite'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('generate-invite-submit')));
+    await tester.pumpAndSettle();
+
+    expect(repository.createCalls, hasLength(1));
+    expect(repository.verifiedCodes, [_issuedInvite.code]);
+    expect(store.attempt, isNull);
+    expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+    expect(find.text(_issuedInvite.code), findsNothing);
+    expect(
+      find.textContaining('no sendable code will be shown'),
+      findsOneWidget,
+    );
+    expect(find.text('Close'), findsOneWidget);
+  });
 
   testWidgets('blocks duplicate submits while creation is in flight', (
     tester,
@@ -286,7 +430,43 @@ Future<void> _pumpScreen(
               divisionId: 'division-1',
               seasonId: 'season-1',
             ),
+            TeamModel(
+              id: 'team-archived',
+              name: 'Archived Bears',
+              divisionId: 'division-old',
+              seasonId: 'season-0',
+            ),
+            TeamModel(
+              id: 'team-archived-division',
+              name: 'Archived Division Bears',
+              divisionId: 'division-archived',
+              seasonId: 'season-1',
+            ),
+            TeamModel(
+              id: 'team-future',
+              name: 'Future Flyers',
+              divisionId: 'division-future',
+              seasonId: 'season-2',
+            ),
           ]),
+        ),
+        divisionsStreamProvider.overrideWith(
+          (ref) => Stream.value(const [
+            DivisionModel(
+              id: 'division-1',
+              name: 'Premier',
+              seasonId: 'season-1',
+            ),
+            DivisionModel(
+              id: 'division-archived',
+              name: 'Retired division',
+              seasonId: 'season-1',
+              status: DivisionStatus.archived,
+            ),
+          ]),
+        ),
+        activeSeasonIdProvider.overrideWith(
+          (ref) => Stream<String?>.value('season-1'),
         ),
       ],
       child: MaterialApp(
@@ -307,7 +487,7 @@ Future<void> _openAndSelectBlueTeam(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('invite-team-rep-null')));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Blue Mountains • Season season-1').last);
+  await tester.tap(find.text('Blue Mountains • Premier').last);
   await tester.pumpAndSettle();
 }
 
@@ -343,7 +523,11 @@ class _FakeInviteCodeRepository extends InviteCodeRepository {
   final List<Object> createResults;
   final Completer<IssuedInviteCode>? pendingCreate;
   final Object? revokeError;
+  final List<Object> verifyResults;
+  final VoidCallback? beforeVerify;
+  final Completer<IssuedInviteUsability>? pendingVerify;
   final List<_CreateCall> createCalls = [];
+  final List<String> verifiedCodes = [];
   final List<String> revokedIds = [];
 
   _FakeInviteCodeRepository({
@@ -351,8 +535,12 @@ class _FakeInviteCodeRepository extends InviteCodeRepository {
     List<Object>? createResults,
     this.pendingCreate,
     this.revokeError,
+    List<Object>? verifyResults,
+    this.beforeVerify,
+    this.pendingVerify,
   }) : codes = codes ?? [],
-       createResults = createResults ?? [_issuedInvite];
+       createResults = createResults ?? [_issuedInvite],
+       verifyResults = verifyResults ?? [IssuedInviteUsability.usable];
 
   @override
   Future<List<InviteCodeModel>> getAllCodes(String associationId) async {
@@ -366,7 +554,9 @@ class _FakeInviteCodeRepository extends InviteCodeRepository {
     String? teamId,
     required int daysValid,
     required String operationId,
+    required String expectedAssociationId,
   }) async {
+    expect(expectedAssociationId, 'jba');
     createCalls.add(
       _CreateCall(
         role: role,
@@ -386,6 +576,18 @@ class _FakeInviteCodeRepository extends InviteCodeRepository {
     if (revokeError != null) throw revokeError!;
     revokedIds.add(inviteId);
     codes.removeWhere((code) => code.inviteId == inviteId);
+  }
+
+  @override
+  Future<IssuedInviteUsability> verifyIssuedCode(
+    IssuedInviteCode issued,
+  ) async {
+    beforeVerify?.call();
+    verifiedCodes.add(issued.code);
+    if (pendingVerify != null) return pendingVerify!.future;
+    final result = verifyResults[verifiedCodes.length - 1];
+    if (result is Error || result is Exception) throw result;
+    return result as IssuedInviteUsability;
   }
 }
 
