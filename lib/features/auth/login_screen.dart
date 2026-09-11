@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/time/league_time.dart';
 import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
+import '../../models/public_league_snapshot.dart';
+import '../../providers/public_league_provider.dart';
 import 'auth_error_message.dart';
 import 'login_auth_actions.dart';
-import '../../app/router/app_route_contract.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -133,6 +136,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final publicSnapshot = ref.watch(publicLeagueSnapshotProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -187,7 +191,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 20),
+                  _LeagueSneakPeek(
+                    snapshot: publicSnapshot,
+                    enabled: !_loading,
+                    onBrowse: () => context.go(PublicRoutePaths.games),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      const Expanded(child: Divider()),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          'member access',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      const Expanded(child: Divider()),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
                   Row(
                     children: [
                       Expanded(
@@ -338,17 +364,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _loading
-                          ? null
-                          : () => context.go(PublicRoutePaths.games),
-                      icon: const Icon(Icons.visibility_outlined),
-                      label: const Text('Browse scores & schedule as a guest'),
-                    ),
-                  ),
                   const SizedBox(height: 20),
                   Row(
                     children: [
@@ -489,6 +504,204 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _LeagueSneakPeek extends StatelessWidget {
+  const _LeagueSneakPeek({
+    required this.snapshot,
+    required this.enabled,
+    required this.onBrowse,
+  });
+
+  final AsyncValue<PublicLeagueSnapshot?> snapshot;
+  final bool enabled;
+  final VoidCallback onBrowse;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final semanticColors = context.semanticColors;
+    return Semantics(
+      container: true,
+      label:
+          'League sneak peek. Public scores and schedule. No account needed.',
+      child: Container(
+        key: const Key('league-sneak-peek'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: semanticColors.warningContainer,
+          borderRadius: BorderRadius.circular(AppSizes.radiusLg),
+          border: Border.all(color: semanticColors.warning, width: 2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.sports_basketball,
+                  color: semanticColors.warning,
+                  size: 28,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'League sneak peek',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: semanticColors.onWarningContainer,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Latest scores and what is coming up. No sign-in needed.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: semanticColors.onWarningContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            snapshot.when(
+              loading: () => Text(
+                'Loading the latest public league update…',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: semanticColors.onWarningContainer,
+                ),
+              ),
+              error: (_, _) => Text(
+                'Public updates are temporarily unavailable. You can still open the league page and try again.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: semanticColors.onWarningContainer,
+                ),
+              ),
+              data: (data) => _LeaguePeekContent(snapshot: data),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('browse-public-league-button'),
+                onPressed: enabled ? onBrowse : null,
+                icon: const Icon(Icons.visibility_outlined),
+                label: const Text('View scores & schedule'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LeaguePeekContent extends StatelessWidget {
+  const _LeaguePeekContent({required this.snapshot});
+
+  final PublicLeagueSnapshot? snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = snapshot;
+    if (data == null || data.version.state != PublicReleaseState.published) {
+      return _fallback(context);
+    }
+
+    final finals =
+        data.schedule
+            .where((game) => game.status == PublicGameStatus.finalResult)
+            .toList(growable: false)
+          ..sort((a, b) => b.startTime.compareTo(a.startTime));
+    final now = DateTime.now().toUtc();
+    final scheduled =
+        data.schedule
+            .where(
+              (game) =>
+                  game.status == PublicGameStatus.scheduled &&
+                  game.startTime.isAfter(now),
+            )
+            .toList(growable: false)
+          ..sort((a, b) => a.startTime.compareTo(b.startTime));
+    if (finals.isEmpty && scheduled.isEmpty) return _fallback(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (finals.isNotEmpty)
+          _LeaguePeekGame(label: 'LATEST RESULT', game: finals.first),
+        if (finals.isNotEmpty && scheduled.isNotEmpty)
+          const SizedBox(height: 10),
+        if (scheduled.isNotEmpty)
+          _LeaguePeekGame(label: 'NEXT GAME', game: scheduled.first),
+      ],
+    );
+  }
+
+  Widget _fallback(BuildContext context) => Text(
+    'Published league updates will appear here as soon as they are available.',
+    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+      color: context.semanticColors.onWarningContainer,
+    ),
+  );
+}
+
+class _LeaguePeekGame extends StatelessWidget {
+  const _LeaguePeekGame({required this.label, required this.game});
+
+  final String label;
+  final PublicGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = context.semanticColors.onWarningContainer;
+    final home = game.homeTeamName ?? 'Home team';
+    final away = game.awayTeamName ?? 'Away team';
+    final isFinal = game.status == PublicGameStatus.finalResult;
+    final matchup = isFinal
+        ? '$home ${game.homeScore ?? '–'}  ·  ${game.awayScore ?? '–'} $away'
+        : '$home vs $away';
+    final timing = isFinal
+        ? LeagueTime.formatJamaicaDate(game.startTime, pattern: 'MMM d')
+        : '${LeagueTime.formatJamaicaDate(game.startTime, pattern: 'EEE, MMM d')} · ${LeagueTime.formatJamaicaTime(game.startTime)}';
+
+    return Semantics(
+      label: '$label. $matchup. $timing.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: foreground,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            matchup,
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: foreground,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            timing,
+            style: theme.textTheme.bodySmall?.copyWith(color: foreground),
+          ),
+        ],
       ),
     );
   }

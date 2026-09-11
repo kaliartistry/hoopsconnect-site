@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
 import 'package:hoops_connect/features/auth/login_auth_actions.dart';
 import 'package:hoops_connect/features/auth/login_screen.dart';
+import 'package:hoops_connect/models/public_league_snapshot.dart';
+import 'package:hoops_connect/providers/public_league_provider.dart';
 
 void main() {
   Future<void> pumpLogin(
@@ -16,6 +18,7 @@ void main() {
     Size size = const Size(375, 844),
     _FakeLoginAuthActions? auth,
     TextScaler textScaler = TextScaler.noScaling,
+    PublicLeagueSnapshot? publicSnapshot,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
@@ -26,6 +29,9 @@ void main() {
         overrides: [
           loginAuthActionsProvider.overrideWithValue(
             auth ?? _FakeLoginAuthActions(),
+          ),
+          publicLeagueSnapshotProvider.overrideWith(
+            (ref) => Stream.value(publicSnapshot ?? _publicSnapshot()),
           ),
         ],
         child: MaterialApp(
@@ -56,13 +62,44 @@ void main() {
     expect(_editable(tester, const Key('login-password-field')).autofillHints, [
       AutofillHints.password,
     ]);
-    expect(find.text('Browse scores & schedule as a guest'), findsOneWidget);
+    expect(find.text('League sneak peek'), findsOneWidget);
+    expect(find.text('View scores & schedule'), findsOneWidget);
 
     final headingSemantics = tester.getSemantics(
       find.text('Jamaica HoopsConnect'),
     );
     expect(headingSemantics.flagsCollection.isHeader, isTrue);
     semantics.dispose();
+  });
+
+  testWidgets('makes guest access prominent with a public league preview', (
+    tester,
+  ) async {
+    await pumpLogin(tester);
+
+    expect(find.byKey(const Key('league-sneak-peek')), findsOneWidget);
+    expect(find.text('LATEST RESULT'), findsOneWidget);
+    expect(
+      find.text('Kingston Lions 82  ·  76 Montego Bay Waves'),
+      findsOneWidget,
+    );
+    expect(find.text('NEXT GAME'), findsOneWidget);
+    expect(
+      find.text('Spanish Town Sparks vs Portmore Pelicans'),
+      findsOneWidget,
+    );
+
+    final card = tester.widget<Container>(
+      find.byKey(const Key('league-sneak-peek')),
+    );
+    expect(
+      (card.decoration! as BoxDecoration).color,
+      AppSemanticColors.forBrightness(Brightness.light).warningContainer,
+    );
+    final browse = tester.widget<FilledButton>(
+      find.byKey(const Key('browse-public-league-button')),
+    );
+    expect(browse.onPressed, isNotNull);
   });
 
   testWidgets('Return in password submits once and exposes pending state', (
@@ -115,7 +152,7 @@ void main() {
       isTrue,
     );
 
-    await tester.tap(find.text('Create Account').first);
+    await _tapVisible(tester, find.text('Create Account').first);
     await tester.pump();
     expect(
       _editable(tester, const Key('login-name-field')).focusNode.hasFocus,
@@ -165,7 +202,7 @@ void main() {
     final auth = _FakeLoginAuthActions();
     await pumpLogin(tester, auth: auth);
 
-    await tester.tap(find.text('Create Account').first);
+    await _tapVisible(tester, find.text('Create Account').first);
     await tester.pump();
     expect(_editable(tester, const Key('login-password-field')).autofillHints, [
       AutofillHints.newPassword,
@@ -183,7 +220,7 @@ void main() {
       find.byKey(const Key('login-password-field')),
       'new password',
     );
-    await tester.tap(find.byKey(const Key('login-submit-button')));
+    await _tapVisible(tester, find.byKey(const Key('login-submit-button')));
     await tester.pumpAndSettle();
 
     expect(auth.signInSubmissions, isEmpty);
@@ -204,7 +241,7 @@ void main() {
       ..signInError = Exception('[firebase_auth/wrong-password] rejected');
     await pumpLogin(tester, auth: auth);
 
-    await tester.tap(find.byKey(const Key('login-submit-button')));
+    await _tapVisible(tester, find.byKey(const Key('login-submit-button')));
     await tester.pump();
     expect(find.text('Enter your email'), findsOneWidget);
     expect(find.text('Enter your password'), findsOneWidget);
@@ -217,7 +254,7 @@ void main() {
       find.byKey(const Key('login-password-field')),
       'wrong',
     );
-    await tester.tap(find.byKey(const Key('login-submit-button')));
+    await _tapVisible(tester, find.byKey(const Key('login-submit-button')));
     await tester.pumpAndSettle();
 
     expect(
@@ -326,6 +363,12 @@ EditableText _editable(WidgetTester tester, Key fieldKey) {
   );
 }
 
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+}
+
 double _contrastRatio(Color foreground, Color background) {
   final lighter = foreground.computeLuminance() > background.computeLuminance()
       ? foreground.computeLuminance()
@@ -334,4 +377,57 @@ double _contrastRatio(Color foreground, Color background) {
       ? background.computeLuminance()
       : foreground.computeLuminance();
   return (lighter + 0.05) / (darker + 0.05);
+}
+
+PublicLeagueSnapshot _publicSnapshot() {
+  final now = DateTime.now().toUtc();
+  return PublicLeagueSnapshot(
+    leagueName: 'Jamaica Basketball Association',
+    leagueShortName: 'JBA',
+    seasonId: '2026',
+    seasonName: '2026 Season',
+    version: PublicSnapshotVersion(
+      schemaVersion: 1,
+      contractVersion: 'legacy-public-snapshot-v1.1',
+      snapshotVersion: null,
+      verificationStatus: 'legacyApproved',
+      state: PublicReleaseState.published,
+      privacyEpoch: 1,
+      generatedAt: now,
+    ),
+    schedule: [
+      PublicGame(
+        gameId: 'latest-final',
+        title: 'Kingston Lions vs Montego Bay Waves',
+        startTime: now.subtract(const Duration(days: 1)),
+        homeTeamId: 'kingston-lions',
+        homeTeamName: 'Kingston Lions',
+        awayTeamId: 'montego-bay-waves',
+        awayTeamName: 'Montego Bay Waves',
+        homeScore: 82,
+        awayScore: 76,
+        status: PublicGameStatus.finalResult,
+      ),
+      PublicGame(
+        gameId: 'past-scheduled-game',
+        title: 'Past scheduled listing',
+        startTime: now.subtract(const Duration(hours: 2)),
+        homeTeamName: 'Past Home',
+        awayTeamName: 'Past Away',
+        status: PublicGameStatus.scheduled,
+      ),
+      PublicGame(
+        gameId: 'next-game',
+        title: 'Spanish Town Sparks vs Portmore Pelicans',
+        startTime: now.add(const Duration(days: 2)),
+        homeTeamId: 'spanish-town-sparks',
+        homeTeamName: 'Spanish Town Sparks',
+        awayTeamId: 'portmore-pelicans',
+        awayTeamName: 'Portmore Pelicans',
+        status: PublicGameStatus.scheduled,
+      ),
+    ],
+    standings: const [],
+    leaderboards: const [],
+  );
 }
