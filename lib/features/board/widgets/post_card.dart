@@ -2,13 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/time/league_time.dart';
+import '../../ack/widgets/acknowledgment_action.dart';
 import '../../../models/post_model.dart';
 
 class PostCard extends StatelessWidget {
   final PostModel post;
   final String? currentUserId;
   final bool canEditDelete;
-  final VoidCallback? onAcknowledge;
+  final Future<void> Function()? onAcknowledge;
   final VoidCallback? onTap;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
@@ -159,16 +160,9 @@ class PostCard extends StatelessWidget {
                 // Acknowledge button
                 if (needsAck && onAcknowledge != null) ...[
                   const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: onAcknowledge,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.ack,
-                      ),
-                      icon: const Icon(Icons.check, size: 18),
-                      label: const Text('Acknowledge'),
-                    ),
+                  AcknowledgmentAction(
+                    compact: true,
+                    onAcknowledge: onAcknowledge!,
                   ),
                 ],
 

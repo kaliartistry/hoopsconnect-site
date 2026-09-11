@@ -8,6 +8,7 @@ import '../board/board_post_visibility.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/post_providers.dart';
 import '../../providers/role_preview_provider.dart';
+import 'widgets/acknowledgment_action.dart';
 
 class AckDetailScreen extends ConsumerWidget {
   final String postId;
@@ -174,31 +175,19 @@ class AckDetailScreen extends ConsumerWidget {
                   previewShowsAcknowledge &&
                   realUserCanAcknowledge &&
                   assignedToRealUser) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      final actingUser = ref
-                          .read(currentUserProvider)
-                          .valueOrNull;
-                      if (assocId != null &&
-                          actingUser?.hasCapability('posts.acknowledge') ==
-                              true) {
-                        ref
-                            .read(postRepositoryProvider)
-                            .acknowledge(assocId, post.id);
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.ack,
-                    ),
-                    icon: const Icon(Icons.check_circle, size: 20),
-                    label: const Text(
-                      'Acknowledge This Post',
-                      style: TextStyle(fontSize: 16),
-                    ),
-                  ),
+                AcknowledgmentAction(
+                  onAcknowledge: () async {
+                    final actingUser = ref
+                        .read(currentUserProvider)
+                        .valueOrNull;
+                    if (assocId != null &&
+                        actingUser?.hasCapability('posts.acknowledge') ==
+                            true) {
+                      await ref
+                          .read(postRepositoryProvider)
+                          .acknowledge(assocId, post.id);
+                    }
+                  },
                 ),
               ],
 

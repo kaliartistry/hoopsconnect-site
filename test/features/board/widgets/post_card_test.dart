@@ -8,7 +8,7 @@ void main() {
   Widget buildCard({
     required PostModel post,
     required String currentUserId,
-    VoidCallback? onAcknowledge,
+    Future<void> Function()? onAcknowledge,
     VoidCallback? onTap,
   }) {
     return MaterialApp(
@@ -34,7 +34,7 @@ void main() {
       buildCard(
         post: post,
         currentUserId: 'unassigned',
-        onAcknowledge: () => acknowledgeCalls += 1,
+        onAcknowledge: () async => acknowledgeCalls += 1,
       ),
     );
 
@@ -45,7 +45,7 @@ void main() {
       buildCard(
         post: post,
         currentUserId: 'assigned',
-        onAcknowledge: () => acknowledgeCalls += 1,
+        onAcknowledge: () async => acknowledgeCalls += 1,
       ),
     );
     await tester.pump();

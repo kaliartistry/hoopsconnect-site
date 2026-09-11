@@ -205,13 +205,13 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                       : null,
                   onAcknowledge: !canAcknowledge
                       ? null
-                      : () {
+                      : () async {
                           final actingUser = ref
                               .read(currentUserProvider)
                               .valueOrNull;
                           if (actingUser != null &&
                               actingUser.hasCapability('posts.acknowledge')) {
-                            ref
+                            await ref
                                 .read(postRepositoryProvider)
                                 .acknowledge(assocId, post.id);
                           }

@@ -7,6 +7,7 @@ import '../../../core/widgets/empty_state.dart';
 import '../../../providers/auth_providers.dart';
 import '../../../providers/post_providers.dart';
 import '../../../providers/role_preview_provider.dart';
+import '../../ack/widgets/acknowledgment_action.dart';
 import '../board_post_visibility.dart';
 
 /// Embeddable post detail panel for the desktop 2-column board layout.
@@ -172,31 +173,16 @@ class PostDetailPanel extends ConsumerWidget {
                 realUser != null &&
                 assignedToRealUser &&
                 canAcknowledge) ...[
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    final actingUser = ref
-                        .read(currentUserProvider)
-                        .valueOrNull;
-                    if (assocId != null &&
-                        actingUser?.hasCapability('posts.acknowledge') ==
-                            true) {
-                      ref
-                          .read(postRepositoryProvider)
-                          .acknowledge(assocId, post.id);
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.ack,
-                  ),
-                  icon: const Icon(Icons.check_circle, size: 20),
-                  label: const Text(
-                    'Acknowledge This Post',
-                    style: TextStyle(fontSize: 16),
-                  ),
-                ),
+              AcknowledgmentAction(
+                onAcknowledge: () async {
+                  final actingUser = ref.read(currentUserProvider).valueOrNull;
+                  if (assocId != null &&
+                      actingUser?.hasCapability('posts.acknowledge') == true) {
+                    await ref
+                        .read(postRepositoryProvider)
+                        .acknowledge(assocId, post.id);
+                  }
+                },
               ),
             ],
 
