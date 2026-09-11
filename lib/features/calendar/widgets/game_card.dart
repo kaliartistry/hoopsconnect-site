@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/time/league_time.dart';
 import '../../../models/event_model.dart';
 import '../../../models/game_stats_model.dart';
 import '../../../models/team_model.dart';
@@ -45,10 +45,15 @@ class GameCard extends StatelessWidget {
       style: TextStyle(
         fontSize: 15,
         fontWeight: FontWeight.bold,
-        color: onTeamTap != null ? AppColors.primaryDark : AppColors.textPrimary,
-        decoration: onTeamTap != null ? TextDecoration.underline : TextDecoration.none,
-        decorationColor:
-            onTeamTap != null ? AppColors.primaryDark : Colors.transparent,
+        color: onTeamTap != null
+            ? AppColors.primaryDark
+            : AppColors.textPrimary,
+        decoration: onTeamTap != null
+            ? TextDecoration.underline
+            : TextDecoration.none,
+        decorationColor: onTeamTap != null
+            ? AppColors.primaryDark
+            : Colors.transparent,
       ),
     );
 
@@ -68,30 +73,34 @@ class GameCard extends StatelessWidget {
     }
 
     final homeTeamId =
-        gameStats?.homeTeamId ?? (event.teamIds.isNotEmpty ? event.teamIds[0] : '');
+        gameStats?.homeTeamId ??
+        (event.teamIds.isNotEmpty ? event.teamIds[0] : '');
     final awayTeamId =
-        gameStats?.awayTeamId ?? (event.teamIds.length > 1 ? event.teamIds[1] : '');
+        gameStats?.awayTeamId ??
+        (event.teamIds.length > 1 ? event.teamIds[1] : '');
 
     final homeName = gameStats?.homeTeamName ?? _teamName(homeTeamId);
     final awayName = gameStats?.awayTeamName ?? _teamName(awayTeamId);
 
-    final isCompleted = event.statsStatus == StatsStatus.approved ||
+    final isCompleted =
+        event.statsStatus == StatsStatus.approved ||
         (gameStats != null && gameStats!.status == GameStatsStatus.approved);
-    final isLive = gameStats != null &&
+    final isLive =
+        gameStats != null &&
         gameStats!.status == GameStatsStatus.submitted &&
         event.statsStatus != StatsStatus.approved;
 
     final statusText = isCompleted
         ? 'FINAL'
         : isLive
-            ? 'LIVE'
-            : DateFormat('h:mm a').format(event.startTime);
+        ? 'LIVE'
+        : LeagueTime.formatJamaicaTime(event.startTime);
 
     final statusColor = isCompleted
         ? AppColors.success
         : isLive
-            ? AppColors.ack
-            : Colors.white.withValues(alpha: 0.7);
+        ? AppColors.ack
+        : Colors.white.withValues(alpha: 0.7);
 
     return GestureDetector(
       onTap: onTap,
@@ -138,14 +147,16 @@ class GameCard extends StatelessWidget {
                   else
                     const SizedBox.shrink(),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: isCompleted
                           ? AppColors.success.withValues(alpha: 0.15)
                           : isLive
-                              ? AppColors.ack.withValues(alpha: 0.15)
-                              : Colors.white.withValues(alpha: 0.08),
+                          ? AppColors.ack.withValues(alpha: 0.15)
+                          : Colors.white.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -167,12 +178,7 @@ class GameCard extends StatelessWidget {
               child: Row(
                 children: [
                   // Home team
-                  Expanded(
-                    child: _buildTeamName(
-                      homeTeamId,
-                      homeName,
-                    ),
-                  ),
+                  Expanded(child: _buildTeamName(homeTeamId, homeName)),
 
                   // Score or VS
                   if (isCompleted || isLive)
@@ -238,8 +244,7 @@ class GameCard extends StatelessWidget {
             if (event.location != null)
               Container(
                 width: double.infinity,
-                padding:
-                    const EdgeInsets.only(left: 16, right: 16, bottom: 10),
+                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 10),
                 child: Row(
                   children: [
                     const Icon(
@@ -277,7 +282,7 @@ class _NonGameCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeStr = DateFormat('h:mm a').format(event.startTime);
+    final timeStr = LeagueTime.formatJamaicaTime(event.startTime);
     final isDeadline = event.type == 'deadline';
 
     final Color accentColor;

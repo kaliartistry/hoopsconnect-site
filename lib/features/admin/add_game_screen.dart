@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
 import '../../models/event_model.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
@@ -20,7 +21,9 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
   final _formKey = GlobalKey<FormState>();
   final _locationController = TextEditingController();
 
-  DateTime _date = DateTime.now().add(AppDefaults.addGameDateOffset);
+  DateTime _date = LeagueTime.jamaicaDate(
+    DateTime.now(),
+  ).add(AppDefaults.addGameDateOffset);
   TimeOfDay _time = AppDefaults.defaultGameTime;
   String? _divisionId;
   String? _homeTeamId;
@@ -34,29 +37,27 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
   }
 
   Future<void> _pickDate() async {
+    final today = LeagueTime.jamaicaDate(DateTime.now());
     final date = await showDatePicker(
       context: context,
       initialDate: _date,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(AppDefaults.datePickerMaxFuture),
+      firstDate: today,
+      lastDate: today.add(AppDefaults.datePickerMaxFuture),
     );
     if (date != null) setState(() => _date = date);
   }
 
   Future<void> _pickTime() async {
-    final time = await showTimePicker(
-      context: context,
-      initialTime: _time,
-    );
+    final time = await showTimePicker(context: context, initialTime: _time);
     if (time != null) setState(() => _time = time);
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_homeTeamId == null || _awayTeamId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select both teams')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please select both teams')));
       return;
     }
     if (_homeTeamId == _awayTeamId) {
@@ -73,12 +74,10 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final startTime = DateTime(
-        _date.year,
-        _date.month,
-        _date.day,
-        _time.hour,
-        _time.minute,
+      final startTime = LeagueTime.jamaicaWallClockToUtc(
+        date: _date,
+        hour: _time.hour,
+        minute: _time.minute,
       );
 
       // Get team names for the title
@@ -111,9 +110,9 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
@@ -122,10 +121,9 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final divisionsAsync = ref.watch(divisionsStreamProvider);
     final teamsAsync = ref.watch(teamsStreamProvider);
 
-    final divisions = divisionsAsync.valueOrNull ?? [];
+    final divisions = ref.watch(activeDivisionsProvider);
     final teams = teamsAsync.valueOrNull ?? [];
 
     return Scaffold(
@@ -155,7 +153,9 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.calendar_today),
               title: const Text('Date'),
-              subtitle: Text(DateFormat('EEEE, MMM d, yyyy').format(_date)),
+              subtitle: Text(
+                '${DateFormat('EEEE, MMM d, yyyy').format(_date)} (Jamaica)',
+              ),
               trailing: TextButton(
                 onPressed: _pickDate,
                 child: const Text('Change'),
@@ -168,7 +168,7 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.access_time),
               title: const Text('Time'),
-              subtitle: Text(_time.format(context)),
+              subtitle: Text('${_time.format(context)} Jamaica time'),
               trailing: TextButton(
                 onPressed: _pickTime,
                 child: const Text('Change'),
@@ -196,14 +196,10 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
                 prefixIcon: Icon(Icons.category_outlined),
               ),
               items: [
-                const DropdownMenuItem(
-                  value: null,
-                  child: Text('No division'),
+                const DropdownMenuItem(value: null, child: Text('No division')),
+                ...divisions.map(
+                  (d) => DropdownMenuItem(value: d.id, child: Text(d.name)),
                 ),
-                ...divisions.map((d) => DropdownMenuItem(
-                      value: d.id,
-                      child: Text(d.name),
-                    )),
               ],
               onChanged: (v) => setState(() => _divisionId = v),
             ),
@@ -217,10 +213,9 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
                 prefixIcon: Icon(Icons.home_outlined),
               ),
               items: teams
-                  .map((t) => DropdownMenuItem(
-                        value: t.id,
-                        child: Text(t.name),
-                      ))
+                  .map(
+                    (t) => DropdownMenuItem(value: t.id, child: Text(t.name)),
+                  )
                   .toList(),
               onChanged: (v) => setState(() => _homeTeamId = v),
               validator: (v) => v == null ? 'Required' : null,
@@ -235,10 +230,9 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
                 prefixIcon: Icon(Icons.flight_outlined),
               ),
               items: teams
-                  .map((t) => DropdownMenuItem(
-                        value: t.id,
-                        child: Text(t.name),
-                      ))
+                  .map(
+                    (t) => DropdownMenuItem(value: t.id, child: Text(t.name)),
+                  )
                   .toList(),
               onChanged: (v) => setState(() => _awayTeamId = v),
               validator: (v) => v == null ? 'Required' : null,
