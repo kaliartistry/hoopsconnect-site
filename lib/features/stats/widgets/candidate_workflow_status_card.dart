@@ -57,6 +57,17 @@ class CandidateWorkflowStatusCard extends StatelessWidget {
 
 ({String title, String message, AppStateTone tone, IconData icon})
 _deliveryPresentation(CandidateStatsWorkflow workflow) {
+  if (workflow.captureStage == CandidateCaptureStage.preparation &&
+      workflow.activeRevision == null) {
+    return (
+      title: 'Preparing game package',
+      message:
+          'No stat revision exists yet. Confirm the assignment, roster, and '
+          'rules package before capture.',
+      tone: AppStateTone.neutral,
+      icon: Icons.inventory_2_outlined,
+    );
+  }
   final identity = _revisionIdentity(workflow.activeRevision);
   return switch (workflow.deliveryState) {
     JournalDeliveryState.savedOnDevice => (
@@ -94,6 +105,15 @@ _deliveryPresentation(CandidateStatsWorkflow workflow) {
 
 ({String title, String message, AppStateTone tone, IconData icon})
 _reviewPresentation(CandidateStatsWorkflow workflow) {
+  if (workflow.captureStage == CandidateCaptureStage.preparation &&
+      workflow.activeRevision == null) {
+    return (
+      title: 'Not ready for review',
+      message: 'Capture must create and seal a revision before submission.',
+      tone: AppStateTone.neutral,
+      icon: Icons.hourglass_empty_outlined,
+    );
+  }
   final revision = workflow.submittedRevision ?? workflow.activeRevision;
   final revisionLabel = '${_revisionIdentity(revision)} is the review target.';
   return switch (workflow.reviewState) {

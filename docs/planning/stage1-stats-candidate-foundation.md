@@ -102,6 +102,9 @@ separate. During correction it shows both the reviewed N identity and active
 N+1 identity, including the revision ID and a short hash, while delivery status
 tracks N+1.
 
+Preparation with no active revision is labelled as package preparation and not
+ready for review. It never claims that nonexistent work is saved or uploadable.
+
 The widget is not imported by an app route in this packet.
 
 ## Integration-owner requests

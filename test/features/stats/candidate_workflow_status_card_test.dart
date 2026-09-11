@@ -40,6 +40,21 @@ Widget _app(CandidateStatsWorkflow workflow, {VoidCallback? onRetry}) =>
     );
 
 void main() {
+  testWidgets('preparation does not claim nonexistent work is saved', (
+    tester,
+  ) async {
+    final workflow = CandidateStatsWorkflow.preparing(scope: _scope());
+
+    await tester.pumpWidget(_app(workflow));
+
+    expect(find.text('Preparing game package'), findsOneWidget);
+    expect(find.text('Not ready for review'), findsOneWidget);
+    expect(find.textContaining('No stat revision exists yet'), findsOneWidget);
+    expect(find.textContaining('create and seal a revision'), findsOneWidget);
+    expect(find.text('Saved on this device'), findsNothing);
+    expect(find.text('Queued for upload'), findsNothing);
+  });
+
   testWidgets('states saved-on-device separately from review status', (
     tester,
   ) async {
