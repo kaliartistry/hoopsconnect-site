@@ -67,7 +67,7 @@ void main() {
     expect(find.text('Enter Game Stats'), findsOneWidget);
     expect(find.text('Acknowledgment Tracker'), findsOneWidget);
     expect(find.text('Teams & Rosters'), findsOneWidget);
-    expect(find.text('Create Announcement'), findsOneWidget);
+    expect(find.text('Create board post'), findsOneWidget);
     expect(find.text('User Management'), findsNothing);
     expect(find.text('Invite Codes'), findsNothing);
     expect(find.text('Game Schedule'), findsNothing);
