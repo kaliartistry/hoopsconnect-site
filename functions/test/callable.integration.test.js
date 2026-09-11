@@ -3,6 +3,7 @@
 process.env.GCLOUD_PROJECT = 'demo-hoopsconnect';
 
 const assert = require('node:assert/strict');
+const {createHash} = require('node:crypto');
 const test = require('node:test');
 const admin = require('firebase-admin');
 const {initializeApp, deleteApp} = require('firebase/app');
@@ -23,6 +24,7 @@ if (admin.apps.length === 0) {
 }
 const adminDb = admin.firestore();
 const {capabilitiesForRole} = require('../lib/authorization');
+const leagueOperations = require('../lib/league_operations');
 const clientApp = initializeApp({
   projectId: 'demo-hoopsconnect',
   apiKey: 'demo-key',
@@ -165,7 +167,69 @@ async function createLeagueOperator(email, role, capabilities, teamId = null) {
     capabilities,
     authorizationSchemaVersion: 1,
   });
+  await activateLeagueActor(credential.user, 1);
   return credential.user.uid;
+}
+
+async function activateLeagueActor(user, authorizationSchemaVersion) {
+  const accountGenerationV2 = createHash('sha256')
+    .update(`test-generation:${user.uid}`)
+    .digest('hex');
+  await admin.auth().setCustomUserClaims(user.uid, {
+    authIncarnationSchemaVersionV2: 2,
+    accountGenerationV2,
+    accountLifecycleEpochV2: 1,
+  });
+  await adminDb.doc(`memberships/${user.uid}`).update({
+    authIncarnationSchemaVersionV2: 2,
+    authProjectIdV2: 'demo-hoopsconnect',
+    authTenantIdV2: null,
+    authUidV2: user.uid,
+    accountGenerationV2,
+    accountLifecycleEpochV2: 1,
+    membershipStatusV2: 'active',
+  });
+  await adminDb.doc(`associations/jba/leagueActorAuthorities/${user.uid}`).set({
+    schemaVersion: 1,
+    authIncarnationSchemaVersionV2: 2,
+    authProjectIdV2: 'demo-hoopsconnect',
+    authTenantIdV2: null,
+    authUidV2: user.uid,
+    accountGenerationV2,
+    accountLifecycleEpochV2: 1,
+    lifecycleStateV2: 'active',
+    membershipStatusV2: 'active',
+    reauthAfterSecV2: 0,
+    associationId: 'jba',
+    authorizationSchemaVersion,
+    operationalStateV2: 'operating',
+    custodyStateV2: 'operating',
+    custodyPolicyVersionV2: 1,
+    identitySuppressedV2: false,
+    privacyStateV2: 'internal',
+    privacyEpochV2: 1,
+  });
+  await user.getIdToken(true);
+}
+
+function leagueCallable(name) {
+  return async (data) => {
+    const user = auth.currentUser;
+    assert.ok(user, 'league callable test requires an authenticated user');
+    const token = (await user.getIdTokenResult()).claims;
+    try {
+      return {data: await leagueOperations[`${name}Handler`]({
+        auth: {uid: user.uid, token},
+        app: {appId: 'test-app'},
+        data,
+      })};
+    } catch (error) {
+      if (typeof error?.code === 'string' && !error.code.startsWith('functions/')) {
+        error.code = `functions/${error.code}`;
+      }
+      throw error;
+    }
+  };
 }
 
 async function seedLeagueOperations() {
@@ -185,6 +249,11 @@ async function seedLeagueOperations() {
     directWritesDenied: true,
     lifecycleAuthorityReady: true,
     custodyAuthorityReady: true,
+    actorAuthorityReady: true,
+    identityAuthorityReady: true,
+    privacyAuthorityReady: true,
+    custodyPolicyVersionV2: 1,
+    privacyEpochV2: 1,
     rosters: true,
     divisionDeletion: true,
     scheduling: true,
@@ -223,7 +292,7 @@ test('league operation callables stay closed until every server readiness fact i
   await createLeagueOperator('closed-scheduler@example.com', 'superAdmin', [
     'association.read', 'association.manage', 'schedule.manage',
   ]);
-  const schedule = httpsCallable(functions, 'scheduleGame');
+  const schedule = leagueCallable('scheduleGame');
   await assert.rejects(
     schedule({
       schemaVersion: 1,
@@ -245,8 +314,8 @@ test('roster callables preserve exact jersey strings and representative proposal
   await createLeagueOperator('roster-admin@example.com', 'admin', [
     'association.read', 'teams.manage',
   ]);
-  const submit = httpsCallable(functions, 'submitRosterChange');
-  const workspace = httpsCallable(functions, 'getRosterWorkspace');
+  const submit = leagueCallable('submitRosterChange');
+  const workspace = leagueCallable('getRosterWorkspace');
   const firstRequest = {
     schemaVersion: 1,
     operationId: 'roster_admin_add_0001',
@@ -255,12 +324,12 @@ test('roster callables preserve exact jersey strings and representative proposal
     expectedRosterVersion: 0,
     kind: 'addPlayer',
     requestedOutcome: 'propose',
-    displayName: 'Aaliyah Brown',
+    displayName: '  Aaliyah Brown  ',
     jerseyNumber: '00',
-    reason: 'New registration',
+    reason: '  New registration  ',
   };
   const first = await submit(firstRequest);
-  const retry = await submit(firstRequest);
+  const retry = await submit({...firstRequest, displayName: 'Aaliyah Brown', reason: 'New registration'});
   assert.deepEqual(retry.data, first.data);
   assert.equal(first.data.status, 'approved');
   assert.equal(first.data.rosterVersion, 1);
@@ -288,7 +357,7 @@ test('roster callables preserve exact jersey strings and representative proposal
     kind: 'addPlayer',
     requestedOutcome: 'apply',
     displayName: 'Jordan Smith',
-    jerseyNumber: '0',
+    jerseyNumber: 'GK-01',
     reason: 'Team request',
   });
   assert.equal(proposal.data.status, 'pending');
@@ -312,7 +381,7 @@ test('roster callables preserve exact jersey strings and representative proposal
   await createLeagueOperator('roster-reviewer@example.com', 'admin', [
     'association.read', 'teams.manage',
   ]);
-  const review = httpsCallable(functions, 'reviewRosterProposal');
+  const review = leagueCallable('reviewRosterProposal');
   const reviewRequest = {
     schemaVersion: 1,
     operationId: 'roster_review_000001',
@@ -327,7 +396,7 @@ test('roster callables preserve exact jersey strings and representative proposal
   assert.deepEqual(approvedRetry.data, approved.data);
   assert.equal(approved.data.rosterVersion, 2);
   const finalWorkspace = await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'});
-  assert.deepEqual(finalWorkspace.data.registrations.map((entry) => entry.jerseyNumber).sort(), ['0', '00']);
+  assert.deepEqual(finalWorkspace.data.registrations.map((entry) => entry.jerseyNumber).sort(), ['00', 'GK-01']);
 
   await adminDb.doc('associations/jba/divisions/premier').update({
     deletionPending: {schemaVersion: 1, operationId: 'delete_in_progress_01'},
@@ -348,8 +417,8 @@ test('schedule callables serialize conflicts, replay exactly, and preserve cance
   await createLeagueOperator('scheduler@example.com', 'superAdmin', [
     'association.read', 'association.manage', 'schedule.manage',
   ]);
-  const schedule = httpsCallable(functions, 'scheduleGame');
-  const mutate = httpsCallable(functions, 'mutateScheduledGame');
+  const schedule = leagueCallable('scheduleGame');
+  const mutate = leagueCallable('mutateScheduledGame');
   const requestData = {
     schemaVersion: 1,
     operationId: 'schedule_create_00001',
@@ -359,10 +428,10 @@ test('schedule callables serialize conflicts, replay exactly, and preserve cance
     awayTeamId: 'team-b',
     startTimeUtc: '2026-09-13T01:00:00.000Z',
     endTimeUtc: '2026-09-13T03:00:00.000Z',
-    location: 'National Arena',
+    location: '  National Arena  ',
   };
   const created = await schedule(requestData);
-  assert.deepEqual((await schedule(requestData)).data, created.data);
+  assert.deepEqual((await schedule({...requestData, location: 'National Arena'})).data, created.data);
   await assert.rejects(
     schedule({...requestData, location: 'Changed venue'}),
     (error) => error.code === 'functions/already-exists',
@@ -394,6 +463,13 @@ test('schedule callables serialize conflicts, replay exactly, and preserve cance
     `associations/jba/competitions/nbl/seasons/s2026/games/${created.data.eventId}/scheduleRevisions`,
   ).get();
   assert.equal(revisions.size, 2);
+  const cancellationRevision = revisions.docs.find((entry) => entry.id === 'schedule_2');
+  assert.equal(cancellationRevision.get('actorId'), auth.currentUser.uid);
+  assert.equal(cancellationRevision.get('title'), 'Team A vs Team B');
+  assert.equal(cancellationRevision.get('description'), null);
+  assert.equal(cancellationRevision.get('location'), 'National Arena');
+  assert.equal(cancellationRevision.get('status'), 'cancelled');
+  assert.equal(cancellationRevision.get('cancellationReason'), 'Venue unavailable');
 });
 
 test('division deletion returns malformed references as blockers and replays the receipt', async () => {
@@ -401,7 +477,7 @@ test('division deletion returns malformed references as blockers and replays the
   await createLeagueOperator('division-ordinary@example.com', 'admin', [
     'association.read', 'teams.manage',
   ]);
-  const remove = httpsCallable(functions, 'deleteDivisionIfUnreferenced');
+  const remove = leagueCallable('deleteDivisionIfUnreferenced');
   await assert.rejects(
     remove({
       schemaVersion: 1,
@@ -456,6 +532,7 @@ test('v2 scheduling requires the exact scoped grant and never falls back to lega
     membershipVersion: 7,
     capabilities: ['games.schedule'],
   });
+  await activateLeagueActor(credential.user, 2);
   const associationControl = {
     dataSchemaVersion: 2,
     associationId: 'jba',
@@ -511,7 +588,7 @@ test('v2 scheduling requires the exact scoped grant and never falls back to lega
     accessVersion: 1,
     grants: {'games.schedule|division|premier': grant},
   });
-  const schedule = httpsCallable(functions, 'scheduleGame');
+  const schedule = leagueCallable('scheduleGame');
   const created = await schedule({
     schemaVersion: 1,
     operationId: 'schedule_v2_create_01',
@@ -552,7 +629,7 @@ test('v2 scheduling requires the exact scoped grant and never falls back to lega
   await adminDb.doc(`associations/jba/competitions/nbl/seasons/s2026/access/${uid}`).update({
     grants: {'rosters.assert|teamEntry|premier|entry-a': rosterGrant},
   });
-  const submitRoster = httpsCallable(functions, 'submitRosterChange');
+  const submitRoster = leagueCallable('submitRosterChange');
   const rosterHead = await adminDb.doc(
     'associations/jba/competitions/nbl/seasons/s2026/rosterHeads/entry-a',
   ).get();
@@ -608,9 +685,9 @@ test('batch, concurrent, cross-midnight, stale, and approved-game schedule guard
   await createLeagueOperator('scheduler-guards@example.com', 'superAdmin', [
     'association.read', 'association.manage', 'schedule.manage',
   ]);
-  const schedule = httpsCallable(functions, 'scheduleGame');
-  const batch = httpsCallable(functions, 'createScheduleBatch');
-  const mutate = httpsCallable(functions, 'mutateScheduledGame');
+  const schedule = leagueCallable('scheduleGame');
+  const batch = leagueCallable('createScheduleBatch');
+  const mutate = leagueCallable('mutateScheduledGame');
 
   const batchRequest = {
     schemaVersion: 1,
@@ -716,5 +793,207 @@ test('batch, concurrent, cross-midnight, stale, and approved-game schedule guard
       startTimeUtc: '2026-11-09T01:00:00.000Z', endTimeUtc: '2026-11-09T03:00:00.000Z',
     }),
     (error) => error.code === 'functions/failed-precondition',
+  );
+});
+
+test('league exports require App Check and a retry reauthorizes account lifecycle, custody, and freshness', async () => {
+  assert.equal(leagueOperations.LEAGUE_CALLABLE_OPTIONS.enforceAppCheck, true);
+  await seedLeagueOperations();
+  const uid = await createLeagueOperator('reauth-replay@example.com', 'superAdmin', [
+    'association.read', 'association.manage', 'schedule.manage',
+  ]);
+  const schedule = leagueCallable('scheduleGame');
+  const requestData = {
+    schemaVersion: 1, operationId: 'schedule_reauth_replay_1',
+    seasonId: 's2026', divisionId: 'premier', homeTeamId: 'team-a', awayTeamId: 'team-b',
+    startTimeUtc: '2026-12-01T01:00:00.000Z', endTimeUtc: '2026-12-01T03:00:00.000Z',
+  };
+  const first = await schedule(requestData);
+  assert.equal(first.data.status, 'created');
+  const projectionRef = adminDb.doc(`associations/jba/leagueActorAuthorities/${uid}`);
+  await projectionRef.update({lifecycleStateV2: 'deleting'});
+  await assert.rejects(schedule(requestData), (error) => error.code === 'functions/permission-denied');
+  await projectionRef.update({lifecycleStateV2: 'active', custodyStateV2: 'suspendedToCustody'});
+  await assert.rejects(schedule(requestData), (error) => error.code === 'functions/permission-denied');
+  const token = (await auth.currentUser.getIdTokenResult()).claims;
+  await projectionRef.update({custodyStateV2: 'operating', reauthAfterSecV2: token.auth_time});
+  await assert.rejects(schedule(requestData), (error) => error.code === 'functions/permission-denied');
+  await projectionRef.update({reauthAfterSecV2: 0});
+  await adminDb.doc(`memberships/${uid}`).update({accountGenerationV2: 'f'.repeat(64)});
+  await assert.rejects(schedule(requestData), (error) => error.code === 'functions/permission-denied');
+
+  const networkSchedule = httpsCallable(functions, 'scheduleGame');
+  await assert.rejects(
+    networkSchedule({...requestData, operationId: 'schedule_missing_appcheck_1'}),
+    (error) => error.code === 'functions/unauthenticated',
+  );
+});
+
+test('roster reads and mutations require unsuppressed current identity chains and prohibit unguided renames', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('identity-roster@example.com', 'admin', [
+    'association.read', 'teams.manage',
+  ]);
+  const submit = leagueCallable('submitRosterChange');
+  const workspace = leagueCallable('getRosterWorkspace');
+  const startingVersion = (await adminDb.doc(
+    'associations/jba/competitions/nbl/seasons/s2026/rosterHeads/entry-a',
+  ).get()).get('rosterVersion') ?? 0;
+  const added = await submit({
+    schemaVersion: 1, operationId: 'roster_identity_add_01', teamId: 'team-a', seasonId: 's2026',
+    expectedRosterVersion: startingVersion, kind: 'addPlayer', requestedOutcome: 'apply',
+    displayName: 'Current Identity', jerseyNumber: 'A1', reason: 'Identity test',
+  });
+  const registration = (await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'})).data.registrations
+    .find((entry) => entry.playerId === added.data.playerId);
+  assert.ok(registration);
+  await assert.rejects(submit({
+    schemaVersion: 1, operationId: 'roster_identity_rename_1', teamId: 'team-a', seasonId: 's2026',
+    expectedRosterVersion: startingVersion + 1, kind: 'updatePlayer', requestedOutcome: 'apply',
+    playerId: added.data.playerId, registrationId: added.data.registrationId,
+    displayName: 'Ungoverned Rename', jerseyNumber: 'A1', reason: 'Should remain closed',
+  }), (error) => error.code === 'functions/failed-precondition');
+
+  const guardRef = adminDb.doc(`associations/jba/leagueIdentityAuthorities/${added.data.playerId}`);
+  await guardRef.update({identitySuppressedV2: true});
+  await assert.rejects(
+    workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'}),
+    (error) => error.code === 'functions/failed-precondition',
+  );
+  await guardRef.update({identitySuppressedV2: false, currentPlayerDisplayNameVersionId: 'stale-version'});
+  await assert.rejects(submit({
+    schemaVersion: 1, operationId: 'roster_identity_stale_01', teamId: 'team-a', seasonId: 's2026',
+    expectedRosterVersion: startingVersion + 1, kind: 'updatePlayer', requestedOutcome: 'apply',
+    playerId: registration.playerId, registrationId: registration.registrationId,
+    displayName: registration.displayName, jerseyNumber: 'A2', reason: 'Stale chain must fail',
+  }), (error) => error.code === 'functions/failed-precondition');
+});
+
+test('schedule mutation rejects every started, submitted, rejected, final, or snapshotted state', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('lifecycle-scheduler@example.com', 'superAdmin', [
+    'association.read', 'association.manage', 'schedule.manage',
+  ]);
+  const schedule = leagueCallable('scheduleGame');
+  const mutate = leagueCallable('mutateScheduledGame');
+  const created = await schedule({
+    schemaVersion: 1, operationId: 'schedule_states_create_1', seasonId: 's2026', divisionId: 'premier',
+    homeTeamId: 'team-a', awayTeamId: 'team-b',
+    startTimeUtc: '2026-12-03T01:00:00.000Z', endTimeUtc: '2026-12-03T03:00:00.000Z',
+  });
+  const eventRef = adminDb.doc(`associations/jba/events/${created.data.eventId}`);
+  const gameRef = adminDb.doc(`associations/jba/competitions/nbl/seasons/s2026/games/${created.data.eventId}`);
+  const cases = [
+    ['event-status-started', eventRef, {status: 'started'}],
+    ['play-in-progress', gameRef, {playState: 'inProgress'}],
+    ['stats-submitted', eventRef, {statsStatus: 'submitted'}],
+    ['review-rejected', gameRef, {reviewState: 'rejected'}],
+    ['stats-final', eventRef, {statsStatus: 'approved'}],
+  ];
+  for (const [label, reference, update] of cases) {
+    await eventRef.update({status: 'scheduled', statsStatus: 'pending'});
+    await gameRef.update({playState: 'scheduled', reviewState: 'none'});
+    await reference.update(update);
+    await assert.rejects(mutate({
+      schemaVersion: 1, operationId: `schedule_state_${label}`, eventId: created.data.eventId,
+      expectedScheduleVersion: 1, action: 'edit', location: `Blocked ${label}`,
+    }), (error) => error.code === 'functions/failed-precondition', label);
+  }
+  await eventRef.update({status: 'scheduled', statsStatus: 'pending'});
+  await gameRef.update({playState: 'scheduled', reviewState: 'none'});
+  await gameRef.collection('participantSnapshots').doc('locked').set({divisionId: 'premier'});
+  await assert.rejects(mutate({
+    schemaVersion: 1, operationId: 'schedule_state_snapshot_1', eventId: created.data.eventId,
+    expectedScheduleVersion: 1, action: 'cancel', reason: 'Must keep participant history',
+  }), (error) => error.code === 'functions/failed-precondition');
+});
+
+test('division deletion resumes persisted operations and inventories canonical journal references', async () => {
+  await seedLeagueOperations();
+  const uid = await createLeagueOperator('division-recovery@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
+  ]);
+  const remove = leagueCallable('deleteDivisionIfUnreferenced');
+  await adminDb.doc('associations/jba/divisions/recoverable').set({name: 'Recoverable', status: 'active', version: 1});
+  const operationId = 'division_recovery_0001';
+  const canonical = (value) => Array.isArray(value) ? value.map(canonical) :
+    value && typeof value === 'object' ? Object.keys(value).sort().reduce((result, key) => {
+      result[key] = canonical(value[key]);
+      return result;
+    }, {}) : value;
+  const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+  const fingerprint = digest({schemaVersion: 1, operationId, divisionId: 'recoverable', expectedDivisionVersion: 1});
+  const operationRef = adminDb.doc(
+    `associations/jba/divisionDeletionOperations/${digest({actorId: uid, operationId})}`,
+  );
+  await operationRef.set({
+    schemaVersion: 1, associationId: 'jba', actorId: uid, operationId,
+    divisionId: 'recoverable', expectedDivisionVersion: 1, requestFingerprint: fingerprint,
+    status: 'inventoryFailed', attempt: 1,
+  });
+  const recovered = await remove({
+    schemaVersion: 1, operationId, divisionId: 'recoverable', expectedDivisionVersion: 1,
+  });
+  assert.equal(recovered.data.status, 'deleted');
+  assert.equal((await operationRef.get()).get('status'), 'deleted');
+
+  await adminDb.doc('associations/jba/divisions/inventory').set({name: 'Inventory', status: 'active', version: 1});
+  await adminDb.doc(
+    'associations/jba/competitions/nbl/seasons/s2026/games/inventory-game/workspaces/w1/operations/op1',
+  ).set({associationId: 'jba', divisionId: 'inventory', displayName: 'Journal evidence'});
+  const blocked = await remove({
+    schemaVersion: 1, operationId: 'division_inventory_0001', divisionId: 'inventory', expectedDivisionVersion: 1,
+  });
+  assert.equal(blocked.data.status, 'blocked');
+  assert.ok(blocked.data.references.some((entry) => entry.kind === 'journalOperation'));
+
+  await adminDb.doc('associations/jba/divisions/inventory-limit').set({
+    name: 'Inventory Limit', status: 'active', version: 1,
+  });
+  let batch = adminDb.batch();
+  for (let index = 0; index < 501; index += 1) {
+    batch.set(adminDb.doc(`associations/jba/leaderboard/inventory-limit-${index}`), {
+      divisionId: 'inventory-limit',
+      displayName: `Reference ${index}`,
+    });
+    if (index === 499) {
+      await batch.commit();
+      batch = adminDb.batch();
+    }
+  }
+  await batch.commit();
+  const limitedOperationId = 'division_inventory_limit_1';
+  await assert.rejects(remove({
+    schemaVersion: 1,
+    operationId: limitedOperationId,
+    divisionId: 'inventory-limit',
+    expectedDivisionVersion: 1,
+  }), (error) => error.code === 'functions/resource-exhausted');
+  const limitedDivision = await adminDb.doc(
+    'associations/jba/divisions/inventory-limit',
+  ).get();
+  assert.equal(limitedDivision.exists, true);
+  assert.equal(limitedDivision.get('deletionPending'), undefined);
+  const limitedOperation = await adminDb.doc(
+    `associations/jba/divisionDeletionOperations/${digest({actorId: uid, operationId: limitedOperationId})}`,
+  ).get();
+  assert.equal(limitedOperation.get('status'), 'inventoryFailed');
+  assert.equal(limitedOperation.get('failureCode'), 'inventory-too-large');
+});
+
+test('per-actor quota bounds league callable abuse', async () => {
+  await seedLeagueOperations();
+  const uid = await createLeagueOperator('quota-operator@example.com', 'admin', [
+    'association.read', 'teams.manage',
+  ]);
+  await adminDb.doc(`associations/jba/leagueActorQuotas/${createHash('sha256').update(JSON.stringify({uid})).digest('hex')}`).set({
+    schemaVersion: 1, associationId: 'jba', actorId: uid,
+    minuteStartedAt: admin.firestore.Timestamp.now(), minuteCount: 120,
+    dayStartedAt: admin.firestore.Timestamp.now(), dayCount: 120,
+  });
+  const workspace = leagueCallable('getRosterWorkspace');
+  await assert.rejects(
+    workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'}),
+    (error) => error.code === 'functions/resource-exhausted',
   );
 });

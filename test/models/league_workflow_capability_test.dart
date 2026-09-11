@@ -14,6 +14,11 @@ void main() {
     'directWritesDenied': true,
     'lifecycleAuthorityReady': true,
     'custodyAuthorityReady': true,
+    'actorAuthorityReady': true,
+    'identityAuthorityReady': true,
+    'privacyAuthorityReady': true,
+    'custodyPolicyVersionV2': 1,
+    'privacyEpochV2': 1,
     'rosters': true,
     'divisionDeletion': true,
     'scheduling': true,
@@ -25,6 +30,7 @@ void main() {
       final ready = LeagueWorkflowCapability.fromMap(
         fixture(),
         expectedAssociationId: 'jba',
+        clientAuthorizationSchemaVersion: 1,
       );
       expect(ready.schedulingEnabled, isTrue);
       for (final key in [
@@ -32,15 +38,25 @@ void main() {
         'directWritesDenied',
         'lifecycleAuthorityReady',
         'custodyAuthorityReady',
+        'actorAuthorityReady',
+        'identityAuthorityReady',
+        'privacyAuthorityReady',
       ]) {
-        final closed = LeagueWorkflowCapability.fromMap({
-          ...fixture(),
-          key: false,
-        }, expectedAssociationId: 'jba');
+        final closed = LeagueWorkflowCapability.fromMap(
+          {...fixture(), key: false},
+          expectedAssociationId: 'jba',
+          clientAuthorizationSchemaVersion: 1,
+        );
         expect(closed.schedulingEnabled, isFalse, reason: key);
         expect(closed.rosterEnabled, isFalse, reason: key);
         expect(closed.divisionDeletionEnabled, isFalse, reason: key);
       }
+      final mismatchedSchema = LeagueWorkflowCapability.fromMap(
+        fixture(),
+        expectedAssociationId: 'jba',
+        clientAuthorizationSchemaVersion: 2,
+      );
+      expect(mismatchedSchema.schedulingEnabled, isFalse);
     },
   );
 
@@ -49,21 +65,24 @@ void main() {
       () => LeagueWorkflowCapability.fromMap(
         fixture(),
         expectedAssociationId: 'other',
+        clientAuthorizationSchemaVersion: 1,
       ),
       throwsFormatException,
     );
     expect(
-      () => LeagueWorkflowCapability.fromMap({
-        ...fixture(),
-        'timezone': 'America/New_York',
-      }, expectedAssociationId: 'jba'),
+      () => LeagueWorkflowCapability.fromMap(
+        {...fixture(), 'timezone': 'America/New_York'},
+        expectedAssociationId: 'jba',
+        clientAuthorizationSchemaVersion: 1,
+      ),
       throwsFormatException,
     );
     expect(
-      () => LeagueWorkflowCapability.fromMap({
-        ...fixture(),
-        'authorityMode': 'unknown',
-      }, expectedAssociationId: 'jba'),
+      () => LeagueWorkflowCapability.fromMap(
+        {...fixture(), 'authorityMode': 'unknown'},
+        expectedAssociationId: 'jba',
+        clientAuthorizationSchemaVersion: 1,
+      ),
       throwsFormatException,
     );
   });

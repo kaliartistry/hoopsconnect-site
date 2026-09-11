@@ -752,7 +752,9 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
                       validator: (value) {
                         final text = value ?? '';
                         if (text.isEmpty) return 'Enter a jersey number';
-                        if (text.trim() != text || text.length > 8) {
+                        if (text.trim() != text ||
+                            text.length > 8 ||
+                            RegExp(r'[\x00-\x1f\x7f]').hasMatch(text)) {
                           return 'Use 1-8 characters without outside spaces';
                         }
                         return null;

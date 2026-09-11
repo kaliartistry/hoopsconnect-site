@@ -7,7 +7,13 @@ import 'auth_providers.dart';
 final leagueWorkflowCapabilityProvider =
     StreamProvider<LeagueWorkflowCapability?>((ref) {
       final associationId = ref.watch(currentAssociationIdProvider);
-      if (associationId == null) return Stream.value(null);
+      final authorizationSchemaVersion = ref
+          .watch(currentMembershipProvider)
+          .valueOrNull
+          ?.schemaVersion;
+      if (associationId == null || authorizationSchemaVersion == null) {
+        return Stream.value(null);
+      }
       return FirebaseFirestore.instance
           .doc('associations/$associationId/leagueWorkflowControl/current')
           .snapshots()
@@ -17,6 +23,7 @@ final leagueWorkflowCapabilityProvider =
             return LeagueWorkflowCapability.fromMap(
               data,
               expectedAssociationId: associationId,
+              clientAuthorizationSchemaVersion: authorizationSchemaVersion,
             );
           });
     });

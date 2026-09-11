@@ -16,7 +16,7 @@ class DivisionModel {
     this.seasonId,
     this.description,
     this.status = DivisionStatus.active,
-    this.version = 0,
+    this.version = 1,
   });
 
   factory DivisionModel.fromFirestore(
@@ -54,6 +54,7 @@ class DivisionModel {
       'seasonId': seasonId,
       'description': description,
       'status': status.name,
+      'version': version,
     };
   }
 

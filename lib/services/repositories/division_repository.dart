@@ -57,8 +57,28 @@ class DivisionRepository {
     String assocId,
     String divisionId,
     Map<String, dynamic> data,
-  ) {
-    return _db.doc(FirestorePaths.division(assocId, divisionId)).update(data);
+  ) async {
+    if (data.containsKey('version') || data.containsKey('deletionPending')) {
+      throw ArgumentError(
+        'Division versions and deletion guards are server controlled',
+      );
+    }
+    final reference = _db.doc(FirestorePaths.division(assocId, divisionId));
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      if (!snapshot.exists) throw StateError('Division not found');
+      final storedVersion = snapshot.data()?['version'];
+      if (storedVersion is! int || storedVersion < 1) {
+        throw StateError(
+          'Division must be migrated to a versioned record before editing',
+        );
+      }
+      transaction.update(reference, {
+        ...data,
+        'version': storedVersion + 1,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
   }
 
   Future<void> setArchived(

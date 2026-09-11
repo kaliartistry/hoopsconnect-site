@@ -11,7 +11,22 @@ void main() {
 
     expect(division.status, DivisionStatus.active);
     expect(division.isArchived, isFalse);
+    expect(division.version, 0);
   });
+
+  test(
+    'new division writes start at version one and preserve explicit versions',
+    () {
+      const created = DivisionModel(id: 'new', name: 'New');
+      expect(created.toFirestore()['version'], 1);
+      final existing = DivisionModel.fromMap(
+        id: 'existing',
+        data: const {'name': 'Existing', 'status': 'active', 'version': 7},
+      );
+      expect(existing.version, 7);
+      expect(existing.toFirestore()['version'], 7);
+    },
+  );
 
   test('archived division round-trips its lifecycle state', () {
     final division = DivisionModel.fromMap(

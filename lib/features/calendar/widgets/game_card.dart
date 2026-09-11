@@ -89,14 +89,19 @@ class GameCard extends StatelessWidget {
         gameStats != null &&
         gameStats!.status == GameStatsStatus.submitted &&
         event.statsStatus != StatsStatus.approved;
+    final isCancelled = event.lifecycleStatus == EventLifecycleStatus.cancelled;
 
-    final statusText = isCompleted
+    final statusText = isCancelled
+        ? 'CANCELLED'
+        : isCompleted
         ? 'FINAL'
         : isLive
         ? 'LIVE'
         : LeagueTime.formatJamaicaTime(event.startTime);
 
-    final statusColor = isCompleted
+    final statusColor = isCancelled
+        ? AppColors.urgent
+        : isCompleted
         ? AppColors.success
         : isLive
         ? AppColors.ack

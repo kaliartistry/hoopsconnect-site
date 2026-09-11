@@ -2,6 +2,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/event_model.dart';
 
 void main() {
+  test('cancelled games are visible but do not need stats or block a slot', () {
+    final cancelled = EventModel(
+      id: 'game-cancelled',
+      title: 'Cancelled game',
+      type: 'game',
+      startTime: DateTime.utc(2026, 9, 12, 1),
+      endTime: DateTime.utc(2026, 9, 12, 3),
+      teamIds: const ['team-a', 'team-b'],
+      createdBy: 'scheduler',
+      statsStatus: StatsStatus.cancelled,
+      lifecycleStatus: EventLifecycleStatus.cancelled,
+    );
+
+    expect(cancelled.needsStats, isFalse);
+    expect(
+      findManualScheduleConflicts(
+        existingEvents: [cancelled],
+        homeTeamId: 'team-a',
+        awayTeamId: 'team-b',
+        startTimeUtc: DateTime.utc(2026, 9, 12, 1),
+        endTimeUtc: DateTime.utc(2026, 9, 12, 3),
+      ),
+      isEmpty,
+    );
+  });
+
   final start = DateTime.utc(2026, 9, 13, 1);
   final end = DateTime.utc(2026, 9, 13, 3);
 

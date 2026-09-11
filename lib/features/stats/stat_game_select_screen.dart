@@ -300,6 +300,10 @@ class _StatusBadge extends StatelessWidget {
         bgColor = const Color(0xFFDCFCE7);
         textColor = const Color(0xFF16A34A);
         label = 'APPROVED';
+      case StatsStatus.cancelled:
+        bgColor = AppColors.urgentBg;
+        textColor = AppColors.urgent;
+        label = 'CANCELLED';
     }
 
     return Container(

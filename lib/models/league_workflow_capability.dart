@@ -11,6 +11,12 @@ class LeagueWorkflowCapability {
   final bool directWritesDenied;
   final bool lifecycleAuthorityReady;
   final bool custodyAuthorityReady;
+  final bool actorAuthorityReady;
+  final bool identityAuthorityReady;
+  final bool privacyAuthorityReady;
+  final int custodyPolicyVersionV2;
+  final int privacyEpochV2;
+  final int clientAuthorizationSchemaVersion;
   final bool rosters;
   final bool divisionDeletion;
   final bool scheduling;
@@ -25,6 +31,12 @@ class LeagueWorkflowCapability {
     required this.directWritesDenied,
     required this.lifecycleAuthorityReady,
     required this.custodyAuthorityReady,
+    required this.actorAuthorityReady,
+    required this.identityAuthorityReady,
+    required this.privacyAuthorityReady,
+    required this.custodyPolicyVersionV2,
+    required this.privacyEpochV2,
+    required this.clientAuthorizationSchemaVersion,
     required this.rosters,
     required this.divisionDeletion,
     required this.scheduling,
@@ -33,6 +45,7 @@ class LeagueWorkflowCapability {
   factory LeagueWorkflowCapability.fromMap(
     Map<String, dynamic> map, {
     required String expectedAssociationId,
+    required int clientAuthorizationSchemaVersion,
   }) {
     String requiredId(String key) {
       final value = map[key];
@@ -45,6 +58,10 @@ class LeagueWorkflowCapability {
     if (map['schemaVersion'] != schemaVersion ||
         map['associationId'] != expectedAssociationId ||
         map['timezone'] != timezone ||
+        map['custodyPolicyVersionV2'] is! int ||
+        (map['custodyPolicyVersionV2'] as int) < 1 ||
+        map['privacyEpochV2'] is! int ||
+        (map['privacyEpochV2'] as int) < 1 ||
         !{'legacyV1', 'v2'}.contains(map['authorityMode'])) {
       throw const FormatException('Invalid league workflow capability');
     }
@@ -58,6 +75,12 @@ class LeagueWorkflowCapability {
       directWritesDenied: map['directWritesDenied'] == true,
       lifecycleAuthorityReady: map['lifecycleAuthorityReady'] == true,
       custodyAuthorityReady: map['custodyAuthorityReady'] == true,
+      actorAuthorityReady: map['actorAuthorityReady'] == true,
+      identityAuthorityReady: map['identityAuthorityReady'] == true,
+      privacyAuthorityReady: map['privacyAuthorityReady'] == true,
+      custodyPolicyVersionV2: map['custodyPolicyVersionV2'] as int,
+      privacyEpochV2: map['privacyEpochV2'] as int,
+      clientAuthorizationSchemaVersion: clientAuthorizationSchemaVersion,
       rosters: map['rosters'] == true,
       divisionDeletion: map['divisionDeletion'] == true,
       scheduling: map['scheduling'] == true,
@@ -68,7 +91,12 @@ class LeagueWorkflowCapability {
       callablesReady &&
       directWritesDenied &&
       lifecycleAuthorityReady &&
-      custodyAuthorityReady;
+      custodyAuthorityReady &&
+      actorAuthorityReady &&
+      identityAuthorityReady &&
+      privacyAuthorityReady &&
+      ((authorityMode == 'legacyV1' && clientAuthorizationSchemaVersion == 1) ||
+          (authorityMode == 'v2' && clientAuthorizationSchemaVersion == 2));
 
   bool get rosterEnabled => commonReady && rosters;
   bool get divisionDeletionEnabled => commonReady && divisionDeletion;

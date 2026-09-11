@@ -410,7 +410,8 @@ String _requiredJersey(Object? value) {
   if (value is! String ||
       value.isEmpty ||
       value.length > 8 ||
-      value.trim() != value) {
+      value.trim() != value ||
+      RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
     throw ArgumentError.value(
       value,
       'jerseyNumber',

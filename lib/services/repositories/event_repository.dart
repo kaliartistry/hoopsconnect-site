@@ -94,7 +94,12 @@ class EventRepository {
         .where('statsStatus', isEqualTo: 'pending')
         .orderBy('startTime', descending: true)
         .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList());
+        .map(
+          (snap) => snap.docs
+              .map((d) => d.data())
+              .where((event) => event.needsStats)
+              .toList(),
+        );
   }
 
   /// All games (any stats status) sorted by most recent first.

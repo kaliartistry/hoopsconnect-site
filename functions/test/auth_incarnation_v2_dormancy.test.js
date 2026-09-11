@@ -9,7 +9,7 @@ const test = require('node:test');
 const repositoryRoot = path.resolve(__dirname, '../..');
 const baselineGitBlobHashes = Object.freeze({
   'functions/src/index.ts': '04347ea48ff46cdc6564489b682c22c4495c2df4',
-  'firestore.rules': 'd65c153e6c6c85eb47b928d511324790748bca7a',
+  'firestore.rules': '263d865c407e3ac2f6da1b04b4968db2404975be',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   // Reviewed public deep-link transition: URL strategy only; V2 stays absent.
   'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',

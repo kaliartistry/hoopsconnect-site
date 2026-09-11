@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum StatsStatus { pending, submitted, approved }
+enum StatsStatus { pending, submitted, approved, cancelled }
+
+enum EventLifecycleStatus { scheduled, cancelled }
 
 class EventModel {
   final String id;
@@ -14,6 +16,7 @@ class EventModel {
   final String? description;
   final String createdBy;
   final StatsStatus statsStatus;
+  final EventLifecycleStatus lifecycleStatus;
 
   const EventModel({
     required this.id,
@@ -27,6 +30,7 @@ class EventModel {
     this.description,
     required this.createdBy,
     this.statsStatus = StatsStatus.pending,
+    this.lifecycleStatus = EventLifecycleStatus.scheduled,
   });
 
   factory EventModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -44,9 +48,8 @@ class EventModel {
       teamIds: List<String>.from(data['teamIds'] ?? []),
       description: data['description'] as String?,
       createdBy: data['createdBy'] as String,
-      statsStatus: StatsStatus.values.byName(
-        data['statsStatus'] as String? ?? 'pending',
-      ),
+      statsStatus: _statsStatus(data['statsStatus']),
+      lifecycleStatus: _eventLifecycleStatus(data['status']),
     );
   }
 
@@ -62,11 +65,32 @@ class EventModel {
       'description': description,
       'createdBy': createdBy,
       'statsStatus': statsStatus.name,
+      'status': lifecycleStatus.name,
     };
   }
 
   bool get isGame => type == 'game';
-  bool get needsStats => isGame && statsStatus == StatsStatus.pending;
+  bool get needsStats =>
+      isGame &&
+      lifecycleStatus != EventLifecycleStatus.cancelled &&
+      statsStatus == StatsStatus.pending;
+}
+
+StatsStatus _statsStatus(Object? value) {
+  if (value == null) return StatsStatus.pending;
+  if (value is String && StatsStatus.values.asNameMap().containsKey(value)) {
+    return StatsStatus.values.byName(value);
+  }
+  throw FormatException('Unsupported stats status: $value');
+}
+
+EventLifecycleStatus _eventLifecycleStatus(Object? value) {
+  if (value == null) return EventLifecycleStatus.scheduled;
+  if (value is String &&
+      EventLifecycleStatus.values.asNameMap().containsKey(value)) {
+    return EventLifecycleStatus.values.byName(value);
+  }
+  throw FormatException('Unsupported event lifecycle status: $value');
 }
 
 enum ManualScheduleConflictKind { duplicate, teamOverlap }
@@ -156,7 +180,10 @@ List<ManualScheduleConflict> findManualScheduleConflicts({
 }) {
   final proposedTeams = {homeTeamId, awayTeamId};
   final conflicts = <ManualScheduleConflict>[];
-  for (final event in existingEvents.where((event) => event.isGame)) {
+  for (final event in existingEvents.where(
+    (event) =>
+        event.isGame && event.lifecycleStatus != EventLifecycleStatus.cancelled,
+  )) {
     final existingTeams = event.teamIds.toSet();
     final samePair =
         existingTeams.length == 2 &&

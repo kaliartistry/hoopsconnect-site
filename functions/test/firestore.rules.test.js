@@ -215,7 +215,31 @@ test('league operations remain callable-only even for a super administrator', as
   await assertFails(deleteDoc(doc(root, 'associations/jba/events/game-1')));
   await assertFails(updateDoc(doc(root, 'associations/jba/leagueWorkflowControl/current'), {scheduling: false}));
   await assertFails(setDoc(doc(root, 'leagueOperationReceipts/forged'), {status: 'created'}));
+  await assertFails(setDoc(doc(root, 'associations/jba/leagueActorAuthorities/root'), {status: 'active'}));
+  await assertFails(setDoc(doc(root, 'associations/jba/leagueActorQuotas/root'), {minuteCount: 0}));
+  await assertFails(setDoc(doc(root, 'associations/jba/leagueIdentityAuthorities/player-1'), {rosterReadable: true}));
+  await assertFails(setDoc(doc(root, 'associations/jba/divisionDeletionOperations/op-1'), {status: 'deleted'}));
   await assertFails(updateDoc(doc(root, 'associations/jba/playerSeasonStats/player-1'), {points: 999}));
+});
+
+test('direct division creates and every edit advance an exact integer version', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'memberships/root'), {
+      associationId: 'jba', role: 'superAdmin', status: 'active',
+      authorizationSchemaVersion: 1, capabilities: ['association.read', 'association.manage'],
+    });
+  });
+  const root = authed('root', 'root@example.com');
+  const division = doc(root, 'associations/jba/divisions/versioned');
+  await assertFails(setDoc(division, {name: 'Versioned', status: 'active'}));
+  await assertFails(setDoc(division, {name: 'Versioned', status: 'active', version: 2}));
+  await assertSucceeds(setDoc(division, {name: 'Versioned', status: 'active', version: 1}));
+  await assertFails(updateDoc(division, {name: 'Skipped', version: 3, updatedAt: serverTimestamp()}));
+  await assertFails(updateDoc(division, {name: 'Unversioned', updatedAt: serverTimestamp()}));
+  await assertSucceeds(updateDoc(division, {name: 'Edited', version: 2, updatedAt: serverTimestamp()}));
+  await assertSucceeds(updateDoc(division, {
+    status: 'archived', archivedAt: serverTimestamp(), version: 3, updatedAt: serverTimestamp(),
+  }));
 });
 
 test('direct team writers cannot bypass a pending division deletion guard', async () => {
@@ -253,6 +277,36 @@ test('direct team writers cannot bypass a pending division deletion guard', asyn
   }));
   await assertFails(setDoc(doc(root, 'associations/jba/gameStats/game-pending'), {
     status: 'draft', homeScore: 0, awayScore: 0,
+  }));
+});
+
+test('archived divisions allow corrections to existing stat references but no new references', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'memberships/stats'), {
+      associationId: 'jba', role: 'statistician', status: 'active',
+      authorizationSchemaVersion: 1, capabilities: ['association.read', 'stats.enter'],
+    });
+    await setDoc(doc(db, 'associations/jba/divisions/archived'), {
+      name: 'Archived', status: 'archived', version: 4,
+    });
+    for (const gameId of ['existing-game', 'new-game']) {
+      await setDoc(doc(db, `associations/jba/events/${gameId}`), {
+        type: 'game', divisionId: 'archived',
+      });
+    }
+    await setDoc(doc(db, 'associations/jba/gameStats/existing-game'), {
+      eventId: 'existing-game', divisionId: 'archived', status: 'draft', homeScore: 0, awayScore: 0,
+    });
+  });
+  const stats = authed('stats', 'stats@example.com');
+  await assertSucceeds(updateDoc(doc(stats, 'associations/jba/gameStats/existing-game'), {
+    homeScore: 2,
+  }));
+  await assertFails(updateDoc(doc(stats, 'associations/jba/gameStats/existing-game'), {
+    divisionId: 'other', homeScore: 3,
+  }));
+  await assertFails(setDoc(doc(stats, 'associations/jba/gameStats/new-game'), {
+    eventId: 'new-game', divisionId: 'archived', status: 'draft', homeScore: 0, awayScore: 0,
   }));
 });
 

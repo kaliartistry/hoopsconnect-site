@@ -155,12 +155,16 @@ service cloud.firestore {
         allow read: if canReadAssociation(assocId);
         allow create: if canManageAssociation(assocId)
           && request.resource.data.keys().hasOnly([
-            'name', 'seasonId', 'description', 'status'
-          ]);
+            'name', 'seasonId', 'description', 'status', 'version'
+          ])
+          && request.resource.data.version == 1;
         allow update: if canManageAssociation(assocId)
           && !('deletionPending' in resource.data)
+          && resource.data.version is int
+          && request.resource.data.version == resource.data.version + 1
+          && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'name', 'seasonId', 'description', 'status', 'archivedAt', 'updatedAt'
+            'name', 'seasonId', 'description', 'status', 'archivedAt', 'updatedAt', 'version'
           ]);
         // Permanent deletion is callable-only. This also denies historical
         // administrator clients that still expose a direct delete action.
@@ -234,6 +238,22 @@ service cloud.firestore {
           && resource.data.schemaVersion == 1;
         allow list: if false;
         allow write: if false;
+      }
+
+      match /leagueActorAuthorities/{actorId} {
+        allow read, write: if false;
+      }
+
+      match /leagueActorQuotas/{actorId} {
+        allow read, write: if false;
+      }
+
+      match /leagueIdentityAuthorities/{playerId} {
+        allow read, write: if false;
+      }
+
+      match /divisionDeletionOperations/{operationId} {
+        allow read, write: if false;
       }
 
       match /scheduleLocks/{lockId} {
@@ -382,7 +402,7 @@ service cloud.firestore {
       let approvalValid = data.status != 'approved' || data.approvedBy == request.auth.uid;
       let rejectionValid = data.status != 'rejected' || data.rejectedBy == request.auth.uid;
       let scoresValid = data.homeScore >= 0 && data.awayScore >= 0;
-      return validStatEventReference(assocId, gameId) && statusValid && approvalAllowed
+      return validExistingStatEventReference(assocId, gameId) && statusValid && approvalAllowed
         && approvalValid && rejectionValid && scoresValid;
     }
 
@@ -405,6 +425,20 @@ service cloud.firestore {
         && get(path).data.type == 'game'
         && get(path).data.divisionId is string
         && divisionAcceptsNewReferences(assocId, get(path).data.divisionId);
+    }
+
+    // Corrections to an existing stat document do not create a new division
+    // reference. They remain permitted after archival, but the event link and
+    // division scope are immutable and must still resolve to a game.
+    function validExistingStatEventReference(assocId, gameId) {
+      let path = /databases/$(database)/documents/associations/$(assocId)/events/$(gameId);
+      return exists(path)
+        && get(path).data.type == 'game'
+        && get(path).data.divisionId is string
+        && request.resource.data.eventId == resource.data.eventId
+        && request.resource.data.divisionId == resource.data.divisionId
+        && resource.data.eventId == gameId
+        && resource.data.divisionId == get(path).data.divisionId;
     }
 
     match /{document=**} {
