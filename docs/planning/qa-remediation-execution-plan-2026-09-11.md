@@ -1,12 +1,12 @@
 # HoopsConnect QA remediation and execution plan
 
-Status: implementation in progress. Stage 0 and the reviewed Stage 1 access, statistics-lifecycle, and league-integrity packets are integrated. Stage 2 server, public/media, account-lifecycle, and courtside-recovery work remains in progress.
+Status: implementation in progress. Stage 0, the reviewed Stage 1 packets, the dormant account-lifecycle candidate, and the public/media packet are integrated. Stage 2 league-server and courtside-recovery candidates remain in corrective review; invite, communications, season, branding, and final rendered QA remain in progress.
 
 Prepared: 11 September 2026.
 
 ## Implementation progress snapshot
 
-Snapshot commit: `5780ab8` on `codex/qa-remediation-integration`.
+Snapshot commit: `f0ee642` on `codex/qa-remediation-integration`.
 
 | Packet | State | Evidence at this snapshot |
 | --- | --- | --- |
@@ -15,10 +15,11 @@ Snapshot commit: `5780ab8` on `codex/qa-remediation-integration`.
 | Stage 1 access, routes, capabilities, recovery, role preview | Integrated and independently reviewed | `fe7b3d6` through `1248bb1`; access dormancy transition reviewed |
 | Stage 1 official-stat lifecycle candidate | Integrated but dormant | `de03084` through `b8f0b48`; unreachable from production entrypoints pending activation decisions |
 | Stage 1 league models, schedule validation, roster proposals, Jamaica time | Integrated and independently reviewed | `13092f2` through `5780ab8` |
-| Stage 2 trusted league callables/rules | In progress | Isolated implementation and hostile-client contract review active |
-| Stage 2 fan/media/public output | In progress | Isolated implementation active; independent review and integration still required |
-| Account lifecycle | Revision in progress, dormant | First candidate rejected for custody, route, retry, receipt, and cleanup-binding gaps |
-| Combined regression state | Passing locally | 675 Flutter tests pass, 16 intentionally skip; 50 dormancy checks and 109 acceptance-script checks pass |
+| Stage 2 trusted league callables/rules | Corrective review in progress, dormant | Server authority and recovery candidate remains isolated; roster-workspace, division-delete recovery, and team-season invite blockers are being corrected |
+| Stage 2 fan/media/public output | Integrated and independently reviewed | Commits `fcbe898` through `f0ee642`; canonical history-mode routes, version-bound public reads, Jamaica time, and guarded synthetic projection are integrated |
+| Account lifecycle | Integrated but dormant | Commits `4781e33` through `6682f06`; independent review is clean, but production entrypoints and activation gates remain closed |
+| Stage 2 courtside recovery | Corrective review in progress, dormant | Exact revision receipt persistence and mixed recovery-action presentation remain isolated blockers |
+| Combined regression state | Passing locally and in GitHub | Pull request 30 build-and-test and isolated full-role local-QA jobs pass at `f0ee642`; production deployment and live activation remain outside scope |
 
 Production deployment, live rule activation, store submission, and real-data migration are not authorized by this implementation snapshot. JBA rules, ranking/qualification, roster authority, and account-deletion G1-G11 decisions remain explicit activation gates.
 
