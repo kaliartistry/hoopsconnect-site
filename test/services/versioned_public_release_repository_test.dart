@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
 import 'package:hoops_connect/services/repositories/versioned_public_release_repository.dart';
@@ -119,6 +120,11 @@ void main() {
       expect(snapshot?.teams.single.name, 'Home Team');
       expect(snapshot?.schedule.single.gameId, 'game-1');
       expect(reader.pointerReads, 2);
+      expect(reader.readRequests, hasLength(fixture.pages.length + 3));
+      expect(
+        reader.readRequests.map((request) => request.source),
+        everyElement(Source.server),
+      );
       expect(
         reader.readPaths.where((path) => path.contains('/pages/')).length,
         fixture.pages.length,
@@ -166,6 +172,20 @@ void main() {
       repository.readCurrentRelease(),
       throwsA(isA<PublicReleaseIntegrityException>()),
     );
+  });
+
+  test('repository never falls back to cached release data offline', () async {
+    final fixture = _releaseFixture();
+    final reader = _FakeDocumentReader.fromFixture(
+      fixture,
+      readError: StateError('server unavailable'),
+    );
+    final repository =
+        DormantVersionedPublicReleaseRepository.withDocumentReader(reader);
+
+    await expectLater(repository.readCurrentRelease(), throwsStateError);
+    expect(reader.readRequests, hasLength(1));
+    expect(reader.readRequests.single.source, Source.server);
   });
 }
 
@@ -296,10 +316,12 @@ _releaseFixture({bool retracted = false}) {
 class _FakeDocumentReader implements PublicReleaseDocumentReader {
   final Map<String, Map<String, dynamic>> documents;
   final List<Map<String, dynamic>> _pointerResponses;
+  final Object? readError;
   final List<String> readPaths = [];
+  final List<({String path, Source source})> readRequests = [];
   int pointerReads = 0;
 
-  _FakeDocumentReader(this.documents, this._pointerResponses);
+  _FakeDocumentReader(this.documents, this._pointerResponses, {this.readError});
 
   factory _FakeDocumentReader.fromFixture(
     ({
@@ -309,19 +331,29 @@ class _FakeDocumentReader implements PublicReleaseDocumentReader {
     })
     fixture, {
     List<Map<String, dynamic>>? pointerReads,
+    Object? readError,
   }) {
     final manifestPath = fixture.pointer['manifestPath'] as String;
-    return _FakeDocumentReader({
-      manifestPath: fixture.manifest,
-      for (final page in fixture.pages)
-        '$manifestPath/pages/${page['id']}': Map<String, dynamic>.from(page)
-          ..remove('id'),
-    }, pointerReads ?? [fixture.pointer]);
+    return _FakeDocumentReader(
+      {
+        manifestPath: fixture.manifest,
+        for (final page in fixture.pages)
+          '$manifestPath/pages/${page['id']}': Map<String, dynamic>.from(page)
+            ..remove('id'),
+      },
+      pointerReads ?? [fixture.pointer],
+      readError: readError,
+    );
   }
 
   @override
-  Future<Map<String, dynamic>?> readDocument(String path) async {
+  Future<Map<String, dynamic>?> readDocument(
+    String path, {
+    required GetOptions options,
+  }) async {
     readPaths.add(path);
+    readRequests.add((path: path, source: options.source));
+    if (readError != null) throw readError!;
     if (path == DormantVersionedPublicReleaseRepository.currentPointerPath) {
       final index = pointerReads < _pointerResponses.length
           ? pointerReads
@@ -335,6 +367,6 @@ class _FakeDocumentReader implements PublicReleaseDocumentReader {
 
   @override
   Stream<Map<String, dynamic>?> watchDocument(String path) async* {
-    yield await readDocument(path);
+    yield Map<String, dynamic>.from(_pointerResponses.first);
   }
 }

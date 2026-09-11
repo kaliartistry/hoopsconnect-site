@@ -7,7 +7,10 @@ import '../../models/public_league_snapshot.dart';
 import '../public_artifact_release_validator.dart';
 
 abstract interface class PublicReleaseDocumentReader {
-  Future<Map<String, dynamic>?> readDocument(String path);
+  Future<Map<String, dynamic>?> readDocument(
+    String path, {
+    required GetOptions options,
+  });
 
   Stream<Map<String, dynamic>?> watchDocument(String path);
 }
@@ -20,8 +23,11 @@ class FirestorePublicReleaseDocumentReader
     : _db = firestore ?? FirebaseFirestore.instance;
 
   @override
-  Future<Map<String, dynamic>?> readDocument(String path) async {
-    final snapshot = await _db.doc(path).get();
+  Future<Map<String, dynamic>?> readDocument(
+    String path, {
+    required GetOptions options,
+  }) async {
+    final snapshot = await _db.doc(path).get(options);
     return snapshot.exists ? snapshot.data() : null;
   }
 
@@ -335,15 +341,26 @@ class DormantVersionedPublicReleaseRepository
 
   Stream<PublicLeagueSnapshot?> watchCurrentRelease() => _documents
       .watchDocument(currentPointerPath)
-      .asyncMap((pointer) => pointer == null ? null : _load(pointer));
+      .asyncMap(
+        (pointer) => pointer == null
+            ? null
+            : _load(pointer, options: const GetOptions()),
+      );
 
   @override
   Future<PublicLeagueSnapshot?> readCurrentRelease() async {
-    final pointer = await _documents.readDocument(currentPointerPath);
-    return pointer == null ? null : _load(pointer);
+    const serverOnly = GetOptions(source: Source.server);
+    final pointer = await _documents.readDocument(
+      currentPointerPath,
+      options: serverOnly,
+    );
+    return pointer == null ? null : _load(pointer, options: serverOnly);
   }
 
-  Future<PublicLeagueSnapshot> _load(Map<String, dynamic> pointer) async {
+  Future<PublicLeagueSnapshot> _load(
+    Map<String, dynamic> pointer, {
+    required GetOptions options,
+  }) async {
     final releaseId = pointer['releaseId'];
     if (releaseId is! String ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(releaseId)) {
@@ -357,7 +374,10 @@ class DormantVersionedPublicReleaseRepository
         'Pointer manifest path is invalid.',
       );
     }
-    final manifest = await _documents.readDocument(expectedManifestPath);
+    final manifest = await _documents.readDocument(
+      expectedManifestPath,
+      options: options,
+    );
     if (manifest == null) {
       throw const PublicReleaseIntegrityException(
         'Public manifest is missing.',
@@ -380,6 +400,7 @@ class DormantVersionedPublicReleaseRepository
         );
         final page = await _documents.readDocument(
           '$expectedManifestPath/pages/$id',
+          options: options,
         );
         if (page == null) {
           throw PublicReleaseIntegrityException('Public page $id is missing.');
@@ -392,7 +413,10 @@ class DormantVersionedPublicReleaseRepository
       manifest: manifest,
       pages: pages,
     );
-    final current = await _documents.readDocument(currentPointerPath);
+    final current = await _documents.readDocument(
+      currentPointerPath,
+      options: options,
+    );
     if (current == null || !_samePointer(pointer, current)) {
       throw const PublicReleaseIntegrityException(
         'Public release changed while pages were loading.',

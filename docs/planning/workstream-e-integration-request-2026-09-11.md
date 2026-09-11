@@ -58,8 +58,11 @@ Baseline: Stage 0 integration commit `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
   season, and privacy epoch; then rereads the pointer before returning. Missing,
   duplicate, changed, oversized, or stale data fails closed.
 - Public artifact actions use an injected current-release validator. The
-  active legacy adapter performs an uncached Firestore document read; the
-  dormant v2 repository implements the same reader contract. Game share, copy,
+  active legacy adapter performs a Firestore `Source.server` document read; the
+  dormant v2 repository uses `Source.server` for its pointer, manifest, every
+  page, and final pointer reread under the same contract. There is no cache
+  fallback for artifact eligibility, so offline actions fail closed. Display
+  streams retain their normal cache behavior. Game share, copy,
   and CSV actions validate immediately before the action and after any
   asynchronous platform handoff. The share sheet also validates before image
   capture, immediately before its platform call, and before reporting success.

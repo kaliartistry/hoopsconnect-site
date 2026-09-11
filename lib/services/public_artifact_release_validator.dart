@@ -97,7 +97,7 @@ class PublicArtifactReleaseValidator {
       current = await _reader.readCurrentRelease();
     } catch (_) {
       throw const PublicArtifactReleaseException(
-        'The current public release could not be verified.',
+        'The current public release could not be verified with the server. Check your connection.',
       );
     }
     if (current == null || !current.canCreatePublishedArtifacts) {

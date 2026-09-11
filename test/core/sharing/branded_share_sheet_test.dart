@@ -198,6 +198,23 @@ void main() {
     );
   });
 
+  testWidgets('offline validation cancels with connection guidance', (
+    tester,
+  ) async {
+    final actions = _FakeShareActions();
+    await _pumpSheet(
+      tester,
+      actions,
+      validateCurrent: () async => throw StateError('server unavailable'),
+    );
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Copy text'));
+    await tester.pumpAndSettle();
+
+    expect(actions.copyCalls, 0);
+    expect(find.textContaining('Check your connection'), findsOneWidget);
+  });
+
   testWidgets('version change during share suppresses a stale success claim', (
     tester,
   ) async {
@@ -218,7 +235,10 @@ void main() {
     expect(actions.imageCalls, 1);
     expect(find.text('Publication changed during action'), findsOneWidget);
     expect(find.text('Share completed'), findsNothing);
-    expect(find.textContaining('may already contain the older artifact'), findsOneWidget);
+    expect(
+      find.textContaining('may already contain the older artifact'),
+      findsOneWidget,
+    );
   });
 }
 

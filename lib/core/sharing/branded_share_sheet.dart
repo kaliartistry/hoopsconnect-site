@@ -331,7 +331,7 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
             : 'Publication changed',
         message: actionMayHaveCompleted
             ? 'The platform may already contain the older artifact. Do not distribute it. Refresh this view for the current public release.'
-            : 'This action was canceled because the current public release could not be verified or changed. Refresh this view before sharing.',
+            : 'This action was canceled because the current public release could not be verified with the server or changed. Check your connection and refresh this view before sharing.',
         tone: AppStateTone.error,
       );
       return false;

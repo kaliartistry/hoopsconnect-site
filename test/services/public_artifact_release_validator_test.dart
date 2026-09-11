@@ -68,6 +68,28 @@ void main() {
       ),
     );
   });
+
+  test('offline authoritative verification fails closed truthfully', () async {
+    final displayed = _snapshot();
+    final validator = PublicArtifactReleaseValidator(
+      _ThrowingReader(StateError('server unavailable')),
+    );
+
+    await expectLater(
+      validator.requireCurrent(
+        PublicArtifactBinding.game(displayed, displayed.schedule.single),
+      ),
+      throwsA(
+        isA<PublicArtifactReleaseException>()
+            .having((error) => error.message, 'message', contains('server'))
+            .having(
+              (error) => error.message,
+              'message',
+              contains('connection'),
+            ),
+      ),
+    );
+  });
 }
 
 PublicLeagueSnapshot _snapshot({
@@ -137,4 +159,13 @@ class _QueueReader implements PublicCurrentReleaseReader {
     reads++;
     return snapshots[index];
   }
+}
+
+class _ThrowingReader implements PublicCurrentReleaseReader {
+  final Object error;
+
+  _ThrowingReader(this.error);
+
+  @override
+  Future<PublicLeagueSnapshot?> readCurrentRelease() => Future.error(error);
 }
