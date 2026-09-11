@@ -140,6 +140,7 @@ void main() {
         appleRelationship: AppleAccountRelationship.notLinked,
       ),
       reauthentication: AccountDeletionReauthenticationResult(
+        operationBinding: _operationBinding,
         method: AccountDeletionReauthenticationMethod.google,
         outcome: AccountDeletionReauthenticationOutcome.cancelled,
         appleRevocationMaterialState:
@@ -194,13 +195,14 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('last-owner custody conflict allows personal deletion', (
+  testWidgets('last-owner custody attention allows personal deletion', (
     tester,
   ) async {
     final gateway = _Gateway(
       statusPhase: DeletionStatusPhase.attentionRequired,
-      messageCode: 'CUSTODY_CONFLICT',
+      messageCode: 'AD_CLEANUP_ATTENTION_REQUIRED',
       impact: CandidateAccountDeletionImpact(
+        operationBinding: _operationBinding,
         intentId: 'intent_1',
         policyVersion: 'policy_1',
         impactVersion: 'impact_1',
@@ -380,10 +382,20 @@ void main() {
 final _statusSecret = base64Url
     .encode(Uint8List.fromList(List<int>.filled(32, 7)))
     .replaceAll('=', '');
+final _generationA = List.filled(64, 'a').join();
 final _deviceBinding = AccountDeletionDeviceBinding(
+  authProjectIdV2: 'demo-hoopsconnect',
+  authTenantIdV2: null,
   accountId: 'account_1',
-  accountGeneration: 'generation_1',
+  accountGeneration: _generationA,
+  accountLifecycleEpochV2: 7,
   deviceSessionId: 'device_session_1',
+);
+final _operationBinding = AccountDeletionOperationBinding(
+  deviceBinding: _deviceBinding,
+  sessionAttemptIdV2: 'deletion_session_1',
+  sessionAttemptEpochV2: 1,
+  sessionAttemptNonceV2: Object(),
 );
 
 AccountDeletionCandidateController _controller({
@@ -403,11 +415,13 @@ AccountDeletionCandidateController _controller({
           methods: const [AccountDeletionReauthenticationMethod.password],
           appleRelationship: AppleAccountRelationship.notLinked,
         ),
-    deviceBinding: _deviceBinding,
+    operationBinding: _operationBinding,
+    sessionGuard: _SessionGuard(_operationBinding),
     gateway: effectiveGateway,
     reauthenticator: _Reauthenticator(
       reauthentication ??
           AccountDeletionReauthenticationResult(
+            operationBinding: _operationBinding,
             method: AccountDeletionReauthenticationMethod.password,
             outcome: AccountDeletionReauthenticationOutcome.verified,
             appleRevocationMaterialState:
@@ -437,6 +451,7 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   }) : impact =
            impact ??
            CandidateAccountDeletionImpact(
+             operationBinding: _operationBinding,
              intentId: 'intent_1',
              policyVersion: 'policy_1',
              impactVersion: 'impact_1',
@@ -463,7 +478,9 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   bool get isSyntheticCandidate => true;
 
   @override
-  Future<CandidateAccountDeletionImpact> prepareDeletion() async {
+  Future<CandidateAccountDeletionImpact> prepareDeletion(
+    AccountDeletionOperationBinding operationBinding,
+  ) async {
     prepareCalls++;
     return impact;
   }
@@ -471,9 +488,11 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   @override
   Future<AcceptedAccountDeletionRequest> requestDeletion(
     RequestDeletionContract request,
+    AccountDeletionOperationBinding operationBinding,
   ) async {
     requestCalls++;
     return AcceptedAccountDeletionRequest(
+      operationBinding: operationBinding,
       requestId: request.requestId,
       internalJobId: 'job_1',
       acceptedAt: DateTime.utc(2026, 9, 11, 16),
@@ -486,7 +505,9 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   Future<AccountDeletionStatusSnapshot> deletionStatus({
     required String requestId,
     required String statusSecret,
+    required AccountDeletionOperationBinding operationBinding,
   }) async {
+    expect(operationBinding.matches(_operationBinding), isTrue);
     statusCalls++;
     if (statusFails) {
       throw const AccountDeletionCandidateFailure('AD_STATUS_UNAVAILABLE');
@@ -504,9 +525,14 @@ final class _Gateway implements CandidateAccountDeletionGateway {
       providerOutcome: providerOutcome,
       messageCode:
           messageCode ??
-          (statusPhase == DeletionStatusPhase.complete
-              ? 'AD_ACCOUNT_DELETION_COMPLETE'
-              : 'AD_DELETION_REQUESTED'),
+          switch (statusPhase) {
+            DeletionStatusPhase.processing => 'AD_DELETION_REQUESTED',
+            DeletionStatusPhase.accountRemovedCleanupPending =>
+              'AD_ACCOUNT_REMOVED_CLEANUP_PENDING',
+            DeletionStatusPhase.attentionRequired =>
+              'AD_CLEANUP_ATTENTION_REQUIRED',
+            DeletionStatusPhase.complete => 'AD_ACCOUNT_DELETION_COMPLETE',
+          },
       retainedCategoryCodes: const [],
     );
   }
@@ -523,6 +549,7 @@ final class _Reauthenticator
 
   @override
   Future<AccountDeletionReauthenticationResult> reauthenticate({
+    required AccountDeletionOperationBinding operationBinding,
     required AccountDeletionReauthenticationMethod method,
     String? password,
   }) async => result;
@@ -602,8 +629,18 @@ CandidateAccountDeletionReceipt _savedReceipt() {
     statusSecret: _statusSecret,
     state: AccountDeletionReceiptState.acceptanceUnknown,
     recordedAt: DateTime.utc(2026, 9, 11, 16),
-    requiresInitialCustodyConflict: false,
+    requiresCustodyAttention: false,
   );
+}
+
+final class _SessionGuard implements CandidateAccountDeletionSessionGuard {
+  _SessionGuard(this.currentOperationBinding);
+
+  @override
+  bool get isSyntheticCandidate => true;
+
+  @override
+  AccountDeletionOperationBinding? currentOperationBinding;
 }
 
 final class _Clock implements AccountDeletionCandidateClock {

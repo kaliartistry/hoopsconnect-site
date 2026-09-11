@@ -5,6 +5,17 @@ const int accountDirectorySchemaVersionV2 = 2;
 
 enum AccountLifecycleRouteIntentV2 { ordinary, accountDeletion }
 
+/// Verified classification of the device-local deletion receipt, made before
+/// route selection. A caller may not collapse a stale or cross-account receipt
+/// into a generic boolean and accidentally enter public status recovery.
+enum AccountLifecycleStatusReceiptStateV2 {
+  absent,
+  exactAcceptanceUnknown,
+  exactAccepted,
+  exactComplete,
+  staleOrMismatched,
+}
+
 final class ActiveMemberDirectoryEntryV2 {
   final String uid;
   final String displayName;
@@ -111,19 +122,22 @@ String candidateRouteForAccountLifecycleV2({
   required AuthIncarnationSessionStateV2 state,
   required String requestedLocation,
   AccountLifecycleRouteIntentV2 intent = AccountLifecycleRouteIntentV2.ordinary,
-  bool hasBoundStatusReceipt = false,
+  AccountLifecycleStatusReceiptStateV2 statusReceiptState =
+      AccountLifecycleStatusReceiptStateV2.absent,
   bool requiresDeviceReconciliation = false,
 }) {
   if (requestedLocation ==
       AccountLifecycleCandidateRoutePathsV2.deletionStatus) {
     return AccountLifecycleCandidateRoutePathsV2.deletionStatus;
   }
-  if (hasBoundStatusReceipt &&
-      (intent == AccountLifecycleRouteIntentV2.accountDeletion ||
-          requestedLocation ==
-              AccountLifecycleCandidateRoutePathsV2.requestDeletion ||
-          state == AuthIncarnationSessionStateV2.deleting ||
-          state == AuthIncarnationSessionStateV2.deleted)) {
+  final hasExactRecoverableStatusReceipt = switch (statusReceiptState) {
+    AccountLifecycleStatusReceiptStateV2.exactAcceptanceUnknown ||
+    AccountLifecycleStatusReceiptStateV2.exactAccepted ||
+    AccountLifecycleStatusReceiptStateV2.exactComplete => true,
+    AccountLifecycleStatusReceiptStateV2.absent ||
+    AccountLifecycleStatusReceiptStateV2.staleOrMismatched => false,
+  };
+  if (hasExactRecoverableStatusReceipt) {
     return AccountLifecycleCandidateRoutePathsV2.deletionStatus;
   }
   if (requestedLocation ==
@@ -159,11 +173,11 @@ String candidateRouteForAccountLifecycleV2({
     AuthIncarnationSessionStateV2.ready => requestedLocation,
     AuthIncarnationSessionStateV2.blocked => '/access-blocked',
     AuthIncarnationSessionStateV2.deleting =>
-      hasBoundStatusReceipt
+      hasExactRecoverableStatusReceipt
           ? AccountLifecycleCandidateRoutePathsV2.deletionStatus
           : AccountLifecycleCandidateRoutePathsV2.requestDeletion,
     AuthIncarnationSessionStateV2.deleted =>
-      hasBoundStatusReceipt
+      hasExactRecoverableStatusReceipt
           ? AccountLifecycleCandidateRoutePathsV2.deletionStatus
           : '/login',
   };

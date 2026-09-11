@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -71,6 +72,7 @@ void main() {
           gateway: gateway,
           reauthenticator: _Reauthenticator(
             AccountDeletionReauthenticationResult(
+              operationBinding: _operationBinding,
               method: AccountDeletionReauthenticationMethod.google,
               outcome: AccountDeletionReauthenticationOutcome.cancelled,
               appleRevocationMaterialState:
@@ -105,6 +107,7 @@ void main() {
           gateway: gateway,
           reauthenticator: _Reauthenticator(
             AccountDeletionReauthenticationResult(
+              operationBinding: _operationBinding,
               method: AccountDeletionReauthenticationMethod.google,
               outcome: AccountDeletionReauthenticationOutcome.verified,
               appleRevocationMaterialState:
@@ -139,6 +142,7 @@ void main() {
         gateway: gateway,
         reauthenticator: _Reauthenticator(
           AccountDeletionReauthenticationResult(
+            operationBinding: _operationBinding,
             method: AccountDeletionReauthenticationMethod.apple,
             outcome: AccountDeletionReauthenticationOutcome.cancelled,
             appleRevocationMaterialState: AppleRevocationMaterialState.unknown,
@@ -181,6 +185,7 @@ void main() {
             gateway: gateway,
             reauthenticator: _Reauthenticator(
               AccountDeletionReauthenticationResult(
+                operationBinding: _operationBinding,
                 method: AccountDeletionReauthenticationMethod.apple,
                 outcome: AccountDeletionReauthenticationOutcome.verified,
                 appleRevocationMaterialState: appleCase.state,
@@ -225,6 +230,7 @@ void main() {
         gateway: gateway,
         reauthenticator: _Reauthenticator(
           AccountDeletionReauthenticationResult(
+            operationBinding: _operationBinding,
             method: AccountDeletionReauthenticationMethod.apple,
             outcome: AccountDeletionReauthenticationOutcome.verified,
             appleRevocationMaterialState: AppleRevocationMaterialState.staged,
@@ -566,6 +572,7 @@ void main() {
       () async {
         final gateway = _Gateway(
           impact: CandidateAccountDeletionImpact(
+            operationBinding: _operationBinding,
             intentId: 'intent_1',
             policyVersion: 'policy_1',
             impactVersion: 'impact_1',
@@ -579,10 +586,9 @@ void main() {
             sportingHistoryIsNotAccountData: true,
           ),
           statuses: [
-            _status(
-              phase: DeletionStatusPhase.attentionRequired,
-              messageCode: 'CUSTODY_CONFLICT',
-            ),
+            _status(),
+            _status(phase: DeletionStatusPhase.accountRemovedCleanupPending),
+            _status(phase: DeletionStatusPhase.attentionRequired),
           ],
         );
         final controller = _controller(
@@ -602,11 +608,23 @@ void main() {
 
         expect(controller.state.canSubmit, isFalse);
         expect(gateway.requestCalls, 1);
+        expect(controller.state.phase, AccountDeletionJourneyPhase.processing);
+        expect(controller.state.status!.messageCode, 'AD_DELETION_REQUESTED');
+        await controller.refreshStatus();
+        expect(
+          controller.state.phase,
+          AccountDeletionJourneyPhase.accountRemovedCleanupPending,
+        );
+        await controller.refreshStatus();
         expect(
           controller.state.phase,
           AccountDeletionJourneyPhase.attentionRequired,
         );
-        expect(controller.state.status!.messageCode, 'CUSTODY_CONFLICT');
+        expect(
+          controller.state.status!.messageCode,
+          'AD_CLEANUP_ATTENTION_REQUIRED',
+        );
+        expect(controller.state.receipt!.custodyAttentionObserved, isTrue);
         expect(
           gateway.lastRequest!.custodyChoice,
           CustodyChoice.suspendToCustody,
@@ -615,10 +633,11 @@ void main() {
     );
 
     test(
-      'unresolved custody rejects a status that omits CUSTODY_CONFLICT',
+      'unresolved custody rejects impossible completion without attention',
       () async {
         final gateway = _Gateway(
           impact: CandidateAccountDeletionImpact(
+            operationBinding: _operationBinding,
             intentId: 'intent_1',
             policyVersion: 'policy_1',
             impactVersion: 'impact_1',
@@ -631,7 +650,12 @@ void main() {
             serverDeletionContinuesIndependently: true,
             sportingHistoryIsNotAccountData: true,
           ),
-          statuses: [_status()],
+          statuses: [
+            _status(
+              phase: DeletionStatusPhase.complete,
+              providerOutcome: ProviderCheckpointState.notApplicable,
+            ),
+          ],
         );
         final controller = _controller(
           gateway: gateway,
@@ -654,7 +678,7 @@ void main() {
         );
         expect(controller.state.errorCode, 'AD_CUSTODY_STATUS_MISMATCH');
         expect(controller.state.receipt, isNotNull);
-        expect(controller.state.receipt!.custodyConflictObserved, isFalse);
+        expect(controller.state.receipt!.custodyAttentionObserved, isFalse);
       },
     );
 
@@ -811,18 +835,27 @@ void main() {
 
     for (final mismatch in [
       AccountDeletionDeviceBinding(
+        authProjectIdV2: 'demo-hoopsconnect',
+        authTenantIdV2: null,
         accountId: 'other_account',
-        accountGeneration: 'generation_1',
+        accountGeneration: _generationA,
+        accountLifecycleEpochV2: 7,
         deviceSessionId: 'device_session_1',
       ),
       AccountDeletionDeviceBinding(
+        authProjectIdV2: 'demo-hoopsconnect',
+        authTenantIdV2: null,
         accountId: 'account_1',
-        accountGeneration: 'other_generation',
+        accountGeneration: _generationB,
+        accountLifecycleEpochV2: 7,
         deviceSessionId: 'device_session_1',
       ),
       AccountDeletionDeviceBinding(
+        authProjectIdV2: 'demo-hoopsconnect',
+        authTenantIdV2: null,
         accountId: 'account_1',
-        accountGeneration: 'generation_1',
+        accountGeneration: _generationA,
+        accountLifecycleEpochV2: 7,
         deviceSessionId: 'other_device',
       ),
     ]) {
@@ -858,8 +891,11 @@ void main() {
 
     test('cleanup envelope rejects a cross-device local manifest', () {
       final otherDevice = AccountDeletionDeviceBinding(
+        authProjectIdV2: 'demo-hoopsconnect',
+        authTenantIdV2: null,
         accountId: 'account_1',
-        accountGeneration: 'generation_1',
+        accountGeneration: _generationA,
+        accountLifecycleEpochV2: 7,
         deviceSessionId: 'other_device',
       );
       expect(
@@ -879,8 +915,11 @@ void main() {
         final receipt = _receipt();
         await store.write(receipt);
         final otherBinding = AccountDeletionDeviceBinding(
+          authProjectIdV2: 'demo-hoopsconnect',
+          authTenantIdV2: null,
           accountId: 'account_1',
-          accountGeneration: 'generation_1',
+          accountGeneration: _generationA,
+          accountLifecycleEpochV2: 7,
           deviceSessionId: 'other_device',
         );
 
@@ -892,11 +931,243 @@ void main() {
       },
     );
 
+    test(
+      'account switch during reauthentication aborts before prepare',
+      () async {
+        final reauthCompleter =
+            Completer<AccountDeletionReauthenticationResult>();
+        final reauth = _Reauthenticator(
+          _passwordVerified(),
+          completer: reauthCompleter,
+        );
+        final gateway = _Gateway(statuses: [_status()]);
+        final guard = _SessionGuard(_operationBinding);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: reauth,
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: _ReceiptStore(),
+          sessionGuard: guard,
+        );
+        await controller.initialize();
+
+        final continuing = controller.continueToImpact(
+          password: 'correct horse',
+        );
+        await _waitUntil(() => reauth.calls == 1);
+        guard.currentOperationBinding = _otherOperationBinding;
+        reauthCompleter.complete(_passwordVerified());
+        await continuing;
+
+        expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+        expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+        expect(gateway.prepareCalls, 0);
+        expect(gateway.requestCalls, 0);
+      },
+    );
+
+    test(
+      'reauthentication result with mixed identity binding is rejected',
+      () async {
+        final gateway = _Gateway(statuses: [_status()]);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(
+            _passwordVerified(operationBinding: _otherOperationBinding),
+          ),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: _ReceiptStore(),
+        );
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+
+        expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+        expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+        expect(gateway.prepareCalls, 0);
+        expect(gateway.requestCalls, 0);
+      },
+    );
+
+    test('account switch during prepare aborts before submission', () async {
+      final prepareCompleter = Completer<CandidateAccountDeletionImpact>();
+      final gateway = _Gateway(
+        statuses: [_status()],
+        prepareCompleter: prepareCompleter,
+      );
+      final guard = _SessionGuard(_operationBinding);
+      final controller = _controller(
+        gateway: gateway,
+        reauthenticator: _Reauthenticator(_passwordVerified()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
+        receiptStore: _ReceiptStore(),
+        sessionGuard: guard,
+      );
+      await controller.initialize();
+
+      final continuing = controller.continueToImpact(password: 'correct horse');
+      await _waitUntil(() => gateway.prepareCalls == 1);
+      guard.currentOperationBinding = _otherOperationBinding;
+      prepareCompleter.complete(_impact());
+      await continuing;
+
+      expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+      expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+      expect(gateway.requestCalls, 0);
+    });
+
+    test('prepared impact with mixed identity binding is rejected', () async {
+      final gateway = _Gateway(
+        statuses: [_status()],
+        impact: _impact(operationBinding: _otherOperationBinding),
+      );
+      final controller = _controller(
+        gateway: gateway,
+        reauthenticator: _Reauthenticator(_passwordVerified()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
+        receiptStore: _ReceiptStore(),
+      );
+      await controller.initialize();
+      await controller.continueToImpact(password: 'correct horse');
+
+      expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+      expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+      expect(gateway.prepareCalls, 1);
+      expect(gateway.requestCalls, 0);
+    });
+
+    test(
+      'account switch while submit is in flight preserves unknown receipt and never cleans',
+      () async {
+        final requestCompleter = Completer<AcceptedAccountDeletionRequest>();
+        final gateway = _Gateway(
+          statuses: [_status()],
+          requestCompleter: requestCompleter,
+        );
+        final cleanup = _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        );
+        final store = _ReceiptStore();
+        final guard = _SessionGuard(_operationBinding);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: cleanup,
+          receiptStore: store,
+          sessionGuard: guard,
+        );
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+
+        final submitting = controller.submitDeletion();
+        await _waitUntil(() => gateway.requestCalls == 1);
+        guard.currentOperationBinding = _otherOperationBinding;
+        requestCompleter.complete(_accepted());
+        await submitting;
+
+        expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+        expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+        expect(
+          store.receipt!.state,
+          AccountDeletionReceiptState.acceptanceUnknown,
+        );
+        expect(cleanup.clearCalls, 0);
+        expect(gateway.statusCalls, 0);
+      },
+    );
+
+    test('submit response with mixed identity binding never cleans', () async {
+      final requestCompleter = Completer<AcceptedAccountDeletionRequest>();
+      final gateway = _Gateway(
+        statuses: [_status()],
+        requestCompleter: requestCompleter,
+      );
+      final cleanup = _DeviceCleanup(
+        AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+      );
+      final store = _ReceiptStore();
+      final controller = _controller(
+        gateway: gateway,
+        reauthenticator: _Reauthenticator(_passwordVerified()),
+        cleanup: cleanup,
+        receiptStore: store,
+      );
+      await controller.initialize();
+      await controller.continueToImpact(password: 'correct horse');
+      controller.setConsequencesConfirmed(true);
+      controller.setConfirmationText('DELETE');
+
+      final submitting = controller.submitDeletion();
+      await _waitUntil(() => gateway.requestCalls == 1);
+      requestCompleter.complete(
+        _accepted(operationBinding: _otherOperationBinding),
+      );
+      await submitting;
+
+      expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+      expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+      expect(
+        store.receipt!.state,
+        AccountDeletionReceiptState.acceptanceUnknown,
+      );
+      expect(cleanup.clearCalls, 0);
+      expect(gateway.statusCalls, 0);
+    });
+
+    test(
+      'account switch during local cleanup cannot continue into status',
+      () async {
+        final clearCompleter = Completer<AccountDeletionLocalCleanupResult>();
+        final cleanup = _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          clearCompleter: clearCompleter,
+        );
+        final gateway = _Gateway(statuses: [_status()]);
+        final guard = _SessionGuard(_operationBinding);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: cleanup,
+          receiptStore: _ReceiptStore(),
+          sessionGuard: guard,
+        );
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+
+        final submitting = controller.submitDeletion();
+        await _waitUntil(() => cleanup.clearCalls == 1);
+        guard.currentOperationBinding = _otherOperationBinding;
+        clearCompleter.complete(_cleanupComplete());
+        await submitting;
+
+        expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+        expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+        expect(gateway.requestCalls, 1);
+        expect(gateway.statusCalls, 0);
+        expect(
+          cleanup.lastCleanupRequest!.currentBinding.matches(_deviceBinding),
+          isTrue,
+        );
+      },
+    );
+
     test('non-synthetic dependencies cannot activate the candidate', () {
       expect(
         () => AccountDeletionCandidateController(
           providerProfile: _passwordProfile,
-          deviceBinding: _deviceBinding,
+          operationBinding: _operationBinding,
+          sessionGuard: _SessionGuard(_operationBinding),
           gateway: _Gateway(statuses: [_status()], synthetic: false),
           reauthenticator: _Reauthenticator(_passwordVerified()),
           deviceCleanup: _DeviceCleanup(
@@ -912,10 +1183,36 @@ void main() {
 }
 
 final _now = DateTime.utc(2026, 9, 11, 16);
+final _generationA = List.filled(64, 'a').join();
+final _generationB = List.filled(64, 'b').join();
 final _deviceBinding = AccountDeletionDeviceBinding(
+  authProjectIdV2: 'demo-hoopsconnect',
+  authTenantIdV2: null,
   accountId: 'account_1',
-  accountGeneration: 'generation_1',
+  accountGeneration: _generationA,
+  accountLifecycleEpochV2: 7,
   deviceSessionId: 'device_session_1',
+);
+final _sessionNonce = Object();
+final _operationBinding = AccountDeletionOperationBinding(
+  deviceBinding: _deviceBinding,
+  sessionAttemptIdV2: 'deletion_session_1',
+  sessionAttemptEpochV2: 1,
+  sessionAttemptNonceV2: _sessionNonce,
+);
+final _otherDeviceBinding = AccountDeletionDeviceBinding(
+  authProjectIdV2: 'other-project',
+  authTenantIdV2: 'tenant_b',
+  accountId: 'account_2',
+  accountGeneration: _generationB,
+  accountLifecycleEpochV2: 8,
+  deviceSessionId: 'device_session_2',
+);
+final _otherOperationBinding = AccountDeletionOperationBinding(
+  deviceBinding: _otherDeviceBinding,
+  sessionAttemptIdV2: 'deletion_session_2',
+  sessionAttemptEpochV2: 2,
+  sessionAttemptNonceV2: Object(),
 );
 final _passwordProfile = AccountDeletionProviderProfile(
   methods: const [AccountDeletionReauthenticationMethod.password],
@@ -931,9 +1228,13 @@ AccountDeletionCandidateController _controller({
   required _DeviceCleanup cleanup,
   required _ReceiptStore receiptStore,
   AccountDeletionProviderProfile? profile,
+  _SessionGuard? sessionGuard,
+  AccountDeletionOperationBinding? operationBinding,
 }) => AccountDeletionCandidateController(
   providerProfile: profile ?? _passwordProfile,
-  deviceBinding: _deviceBinding,
+  operationBinding: operationBinding ?? _operationBinding,
+  sessionGuard:
+      sessionGuard ?? _SessionGuard(operationBinding ?? _operationBinding),
   gateway: gateway,
   reauthenticator: reauthenticator,
   deviceCleanup: cleanup,
@@ -942,7 +1243,10 @@ AccountDeletionCandidateController _controller({
   operationFactory: const _OperationFactory(),
 );
 
-CandidateAccountDeletionImpact _impact() => CandidateAccountDeletionImpact(
+CandidateAccountDeletionImpact _impact({
+  AccountDeletionOperationBinding? operationBinding,
+}) => CandidateAccountDeletionImpact(
+  operationBinding: operationBinding ?? _operationBinding,
   intentId: 'intent_1',
   policyVersion: 'policy_1',
   impactVersion: 'impact_1',
@@ -972,18 +1276,52 @@ AccountDeletionStatusSnapshot _status({
   providerOutcome: providerOutcome,
   messageCode:
       messageCode ??
-      (phase == DeletionStatusPhase.complete
-          ? 'AD_ACCOUNT_DELETION_COMPLETE'
-          : 'AD_DELETION_REQUESTED'),
+      switch (phase) {
+        DeletionStatusPhase.processing => 'AD_DELETION_REQUESTED',
+        DeletionStatusPhase.accountRemovedCleanupPending =>
+          'AD_ACCOUNT_REMOVED_CLEANUP_PENDING',
+        DeletionStatusPhase.attentionRequired =>
+          'AD_CLEANUP_ATTENTION_REQUIRED',
+        DeletionStatusPhase.complete => 'AD_ACCOUNT_DELETION_COMPLETE',
+      },
   retainedCategoryCodes: const [],
 );
 
-AccountDeletionReauthenticationResult _passwordVerified() =>
-    AccountDeletionReauthenticationResult(
-      method: AccountDeletionReauthenticationMethod.password,
-      outcome: AccountDeletionReauthenticationOutcome.verified,
-      appleRevocationMaterialState: AppleRevocationMaterialState.notApplicable,
+AccountDeletionReauthenticationResult _passwordVerified({
+  AccountDeletionOperationBinding? operationBinding,
+}) => AccountDeletionReauthenticationResult(
+  operationBinding: operationBinding ?? _operationBinding,
+  method: AccountDeletionReauthenticationMethod.password,
+  outcome: AccountDeletionReauthenticationOutcome.verified,
+  appleRevocationMaterialState: AppleRevocationMaterialState.notApplicable,
+);
+
+AcceptedAccountDeletionRequest _accepted({
+  AccountDeletionOperationBinding? operationBinding,
+}) => AcceptedAccountDeletionRequest(
+  operationBinding: operationBinding ?? _operationBinding,
+  requestId: 'request_fixed',
+  internalJobId: 'job_1',
+  acceptedAt: _now,
+  nextPollAfter: const Duration(seconds: 5),
+  sameGenerationConvergence: false,
+);
+
+AccountDeletionLocalCleanupResult _cleanupComplete() =>
+    AccountDeletionLocalCleanupResult(
+      listenersStopped: true,
+      notificationRegistrationDetached: true,
+      ordinaryCachesCleared: true,
+      localNotificationsCancelled: true,
+      localOfficialWorkPreservedOrConsented: true,
     );
+
+Future<void> _waitUntil(bool Function() predicate) async {
+  for (var index = 0; index < 50 && !predicate(); index++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+  expect(predicate(), isTrue, reason: 'async test boundary was not reached');
+}
 
 AccountDeletionLocalWorkSummary _resolvedLocalWork() =>
     AccountDeletionLocalWorkSummary(
@@ -1018,8 +1356,18 @@ CandidateAccountDeletionReceipt _receipt({
     statusSecret: _statusSecret,
     state: state,
     recordedAt: _now,
-    requiresInitialCustodyConflict: false,
+    requiresCustodyAttention: false,
   );
+}
+
+final class _SessionGuard implements CandidateAccountDeletionSessionGuard {
+  _SessionGuard(this.currentOperationBinding);
+
+  @override
+  bool get isSyntheticCandidate => true;
+
+  @override
+  AccountDeletionOperationBinding? currentOperationBinding;
 }
 
 final class _Gateway implements CandidateAccountDeletionGateway {
@@ -1027,6 +1375,8 @@ final class _Gateway implements CandidateAccountDeletionGateway {
     CandidateAccountDeletionImpact? impact,
     required List<Object> statuses,
     this.requestError,
+    this.prepareCompleter,
+    this.requestCompleter,
     this.synthetic = true,
   }) : impact = impact ?? _impact(),
        statuses = [...statuses];
@@ -1034,6 +1384,8 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   final CandidateAccountDeletionImpact impact;
   final List<Object> statuses;
   Object? requestError;
+  final Completer<CandidateAccountDeletionImpact>? prepareCompleter;
+  final Completer<AcceptedAccountDeletionRequest>? requestCompleter;
   final bool synthetic;
   int prepareCalls = 0;
   int requestCalls = 0;
@@ -1044,32 +1396,35 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   bool get isSyntheticCandidate => synthetic;
 
   @override
-  Future<CandidateAccountDeletionImpact> prepareDeletion() async {
+  Future<CandidateAccountDeletionImpact> prepareDeletion(
+    AccountDeletionOperationBinding operationBinding,
+  ) async {
+    expect(operationBinding.matches(_operationBinding), isTrue);
     prepareCalls++;
-    return impact;
+    return prepareCompleter == null ? impact : await prepareCompleter!.future;
   }
 
   @override
   Future<AcceptedAccountDeletionRequest> requestDeletion(
     RequestDeletionContract request,
+    AccountDeletionOperationBinding operationBinding,
   ) async {
+    expect(operationBinding.matches(_operationBinding), isTrue);
     requestCalls++;
     lastRequest = request;
     if (requestError case final error?) throw error;
-    return AcceptedAccountDeletionRequest(
-      requestId: request.requestId,
-      internalJobId: 'job_1',
-      acceptedAt: _now,
-      nextPollAfter: const Duration(seconds: 5),
-      sameGenerationConvergence: false,
-    );
+    return requestCompleter == null
+        ? _accepted(operationBinding: operationBinding)
+        : await requestCompleter!.future;
   }
 
   @override
   Future<AccountDeletionStatusSnapshot> deletionStatus({
     required String requestId,
     required String statusSecret,
+    required AccountDeletionOperationBinding operationBinding,
   }) async {
+    expect(operationBinding.matches(_operationBinding), isTrue);
     statusCalls++;
     expect(requestId, 'request_fixed');
     expect(statusSecret, _statusSecret);
@@ -1081,9 +1436,10 @@ final class _Gateway implements CandidateAccountDeletionGateway {
 
 final class _Reauthenticator
     implements CandidateAccountDeletionReauthenticator {
-  _Reauthenticator(this.result);
+  _Reauthenticator(this.result, {this.completer});
 
   final AccountDeletionReauthenticationResult result;
+  final Completer<AccountDeletionReauthenticationResult>? completer;
   int calls = 0;
 
   @override
@@ -1091,11 +1447,13 @@ final class _Reauthenticator
 
   @override
   Future<AccountDeletionReauthenticationResult> reauthenticate({
+    required AccountDeletionOperationBinding operationBinding,
     required AccountDeletionReauthenticationMethod method,
     String? password,
   }) async {
+    expect(operationBinding.matches(_operationBinding), isTrue);
     calls++;
-    return result;
+    return completer == null ? result : await completer!.future;
   }
 }
 
@@ -1104,11 +1462,13 @@ final class _DeviceCleanup implements CandidateAccountDeletionDeviceCleanup {
     this.initial, {
     AccountDeletionLocalWorkSummary? resolved,
     this.failClearAttempts = 0,
+    this.clearCompleter,
   }) : resolved = resolved ?? initial;
 
   final AccountDeletionLocalWorkSummary initial;
   final AccountDeletionLocalWorkSummary resolved;
   final int failClearAttempts;
+  final Completer<AccountDeletionLocalCleanupResult>? clearCompleter;
   int resolveCalls = 0;
   int clearCalls = 0;
   AccountDeletionLocalCleanupRequest? lastCleanupRequest;
@@ -1141,13 +1501,9 @@ final class _DeviceCleanup implements CandidateAccountDeletionDeviceCleanup {
         'AD_DEVICE_CLEANUP_INCOMPLETE',
       );
     }
-    return AccountDeletionLocalCleanupResult(
-      listenersStopped: true,
-      notificationRegistrationDetached: true,
-      ordinaryCachesCleared: true,
-      localNotificationsCancelled: true,
-      localOfficialWorkPreservedOrConsented: true,
-    );
+    return clearCompleter == null
+        ? _cleanupComplete()
+        : await clearCompleter!.future;
   }
 }
 

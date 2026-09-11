@@ -7,9 +7,17 @@ import 'account_deletion_candidate_models.dart';
 abstract final class AccountDeletionCandidateWire {
   static CandidateAccountDeletionImpact parseImpact(
     Map<String, Object?> value,
+    AccountDeletionOperationBinding expectedBinding,
   ) {
     AccountDeletionContract.requireExactKeys(value, const {
       'schemaVersion',
+      'authProjectIdV2',
+      'authTenantIdV2',
+      'authUidV2',
+      'generationHash',
+      'expectedLifecycleEpochV2',
+      'sessionAttemptIdV2',
+      'sessionAttemptEpochV2',
       'intentId',
       'policyVersion',
       'impactVersion',
@@ -22,7 +30,21 @@ abstract final class AccountDeletionCandidateWire {
       'sportingHistoryIsNotAccountData',
     });
     _requireSchema(value['schemaVersion']);
+    final binding = expectedBinding.deviceBinding;
+    if (value['authProjectIdV2'] != binding.authProjectIdV2 ||
+        value['authTenantIdV2'] != binding.authTenantIdV2 ||
+        value['authUidV2'] != binding.accountId ||
+        value['generationHash'] != binding.accountGeneration ||
+        value['expectedLifecycleEpochV2'] != binding.accountLifecycleEpochV2 ||
+        value['sessionAttemptIdV2'] != expectedBinding.sessionAttemptIdV2 ||
+        value['sessionAttemptEpochV2'] !=
+            expectedBinding.sessionAttemptEpochV2) {
+      throw const FormatException(
+        'Prepared deletion impact does not match the exact account session.',
+      );
+    }
     return CandidateAccountDeletionImpact(
+      operationBinding: expectedBinding,
       intentId: _string('intentId', value['intentId']),
       policyVersion: _string('policyVersion', value['policyVersion']),
       impactVersion: _string('impactVersion', value['impactVersion']),
@@ -55,6 +77,7 @@ abstract final class AccountDeletionCandidateWire {
 
   static AcceptedAccountDeletionRequest parseAccepted(
     Map<String, Object?> value,
+    AccountDeletionOperationBinding expectedBinding,
   ) {
     AccountDeletionContract.requireExactKeys(value, const {
       'requestId',
@@ -91,6 +114,7 @@ abstract final class AccountDeletionCandidateWire {
       throw const FormatException('Invalid deletion binding kind.');
     }
     return AcceptedAccountDeletionRequest(
+      operationBinding: expectedBinding,
       requestId: _string('requestId', value['requestId']),
       internalJobId: _string('internalJobId', value['internalJobId']),
       acceptedAt: _date('acceptedAt', value['acceptedAt']),

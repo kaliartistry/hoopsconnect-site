@@ -21,6 +21,10 @@ synthetic-only until the owners below accept and implement the contract.
 - The route guard must evaluate a device-bound deletion receipt before the
   ordinary signed-in/signed-out redirect. A successful request explicitly
   hands off to the public status path before Auth can disappear.
+- On an ordinary cold start, a signed-out account with an exact accepted or
+  acceptance-unknown receipt goes directly to `/account/deletion/status`; it
+  does not need a separate account-deletion intent. A stale-generation,
+  cross-account or cross-device receipt never gets that precedence.
 - A saved request receipt is local recovery authority only for the read-only
   status endpoint. It is never authorization for another deletion request.
 - Status recovery never starts provider reauthentication and never creates a
@@ -58,7 +62,14 @@ Provide a reviewed adapter for the candidate reauthentication interface:
   on the client only by an opaque reference;
 - an explicit Apple relationship state of linked, not linked or unknown;
 - current project, tenant, UID, generation, lifecycle epoch and recent-auth
-  binding for the subsequent prepare call; and
+  binding for the subsequent prepare call;
+- one unforgeable session-attempt ID, monotonic epoch and opaque nonce shared
+  by reauthentication, prepare and submission; provider and prepare results
+  must return the exact binding and the client must recheck it after every
+  asynchronous boundary; and
+- an account switch at any boundary must discard staged provider material,
+  stop the old flow and prohibit later request or cleanup work under mixed
+  authority; and
 - no deletion request when the provider window is cancelled or its result is
   ambiguous.
 
@@ -72,8 +83,9 @@ journal contract. The adapter must enumerate the exact device manifest,
 distinguish unaccepted from accepted and receipt-unknown operations, prohibit
 discard of receipt-unknown work, and bind any consent to that device and
 manifest checksum. Every inspection, decision and cleanup call must bind the
-exact `accountId`, random `accountGeneration` and `deviceSessionId`; the saved
-receipt and local-work summary must match all three. Another account,
+exact project, nullable tenant, `accountId`, random `accountGeneration`,
+lifecycle enforcement epoch and `deviceSessionId`; the saved receipt and
+local-work summary must match every field. Another account,
 recreated generation or device's receipt/consent must not be reused.
 
 ### C: notification and cache teardown seam
@@ -92,6 +104,13 @@ requests this sanitized prepare DTO:
 
 ```text
 schemaVersion
+authProjectIdV2
+authTenantIdV2
+authUidV2
+generationHash
+expectedLifecycleEpochV2
+sessionAttemptIdV2
+sessionAttemptEpochV2
 intentId
 policyVersion
 impactVersion
@@ -103,6 +122,13 @@ associationId
 serverDeletionContinuesIndependently
 sportingHistoryIsNotAccountData
 ```
+
+The first five identity fields come from the existing AD04 prepared intent.
+The transport wrapper adds the two current session-attempt fields while
+sanitizing the intent into this client DTO; the strict client adapter rejects
+any mismatch before impact review. The wrapper must carry the same binding
+into acceptance, and must never select a current Firebase user after an await
+without revalidating that exact binding.
 
 The accepted and status responses must remain the existing strict AD04 wire
 shape. Status secrets must be generated with cryptographic randomness, stored
@@ -138,9 +164,17 @@ packet.
   request and status capability, while `never` and operator-resolution classes
   retain a durable terminal rejection fence and cannot create replacement IDs,
   including after restart.
-- Prove an unresolved last-owner request is accepted and fenced, opens
-  `CUSTODY_CONFLICT`, enters `needsAttention`, and lets personal deletion
-  continue while shared operations remain suspended.
+- Prove an unresolved last-owner request is accepted and fenced, reports the
+  actual AD04 progression `processing` / `AD_DELETION_REQUESTED`, then
+  `accountRemovedCleanupPending` / `AD_ACCOUNT_REMOVED_CLEANUP_PENDING`, and
+  finally `attentionRequired` / `AD_CLEANUP_ATTENTION_REQUIRED`; personal
+  deletion must continue while shared operations remain suspended.
+- Prove ordinary signed-out cold starts with exact accepted or unknown receipts
+  route to public status without extra intent, while stale or mismatched
+  receipts use the ordinary safe route.
+- Switch accounts independently during provider reauthentication, prepare,
+  submit and local cleanup; each old operation must stop at that boundary and
+  no request, receipt transition or cleanup may run under mixed binding.
 - Prove Auth deletion is scheduled only after the durable fence/minimum
   references, can continue while cleanup is blocked, and never makes cleanup
   appear complete merely because Auth is absent.

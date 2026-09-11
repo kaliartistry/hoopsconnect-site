@@ -45,7 +45,7 @@ void main() {
       candidateRouteForAccountLifecycleV2(
         state: AuthIncarnationSessionStateV2.deleted,
         requestedLocation: '/board',
-        hasBoundStatusReceipt: true,
+        statusReceiptState: AccountLifecycleStatusReceiptStateV2.exactAccepted,
       ),
       AccountLifecycleCandidateRoutePathsV2.deletionStatus,
     );
@@ -127,12 +127,37 @@ void main() {
         candidateRouteForAccountLifecycleV2(
           state: state,
           requestedLocation: '/board',
-          intent: AccountLifecycleRouteIntentV2.accountDeletion,
-          hasBoundStatusReceipt: true,
+          statusReceiptState:
+              AccountLifecycleStatusReceiptStateV2.exactAcceptanceUnknown,
         ),
         AccountLifecycleCandidateRoutePathsV2.deletionStatus,
         reason: 'bound receipt after ${state.name}',
       );
     }
+
+    for (final receiptState in [
+      AccountLifecycleStatusReceiptStateV2.exactAcceptanceUnknown,
+      AccountLifecycleStatusReceiptStateV2.exactAccepted,
+    ]) {
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: AuthIncarnationSessionStateV2.signedOut,
+          requestedLocation: '/board',
+          statusReceiptState: receiptState,
+        ),
+        AccountLifecycleCandidateRoutePathsV2.deletionStatus,
+        reason: 'ordinary cold start with ${receiptState.name}',
+      );
+    }
+    expect(
+      candidateRouteForAccountLifecycleV2(
+        state: AuthIncarnationSessionStateV2.signedOut,
+        requestedLocation: '/board',
+        statusReceiptState:
+            AccountLifecycleStatusReceiptStateV2.staleOrMismatched,
+      ),
+      '/login',
+      reason: 'a stale or cross-account receipt is never recovery authority',
+    );
   });
 }

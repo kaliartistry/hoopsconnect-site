@@ -1,5 +1,6 @@
 import '../../models/account_deletion/account_deletion_contract.dart';
 import '../../models/account_deletion/account_lifecycle_ad02_v2.dart';
+import '../../models/auth_incarnation/auth_incarnation_v2.dart';
 
 /// The lifecycle surface is deliberately unreachable from production roots.
 ///
@@ -101,30 +102,77 @@ final class AccountDeletionProviderProfile {
 /// account generation and the device session that owns the local journal.
 final class AccountDeletionDeviceBinding {
   AccountDeletionDeviceBinding({
+    required this.authProjectIdV2,
+    required this.authTenantIdV2,
     required this.accountId,
     required this.accountGeneration,
+    required this.accountLifecycleEpochV2,
     required this.deviceSessionId,
   }) {
-    AccountDeletionContract.requireFirebaseUid(accountId);
-    AccountDeletionContract.requireOpaqueId(
-      'accountGeneration',
-      accountGeneration,
-    );
+    AuthIncarnationScopeV2.fromMap({
+      'authProjectIdV2': authProjectIdV2,
+      'authTenantIdV2': authTenantIdV2,
+      'authUidV2': accountId,
+    });
+    if (!AuthIncarnationV2.generationPattern.hasMatch(accountGeneration)) {
+      throw const FormatException('Invalid account deletion generation.');
+    }
+    if (accountLifecycleEpochV2 < 0 ||
+        accountLifecycleEpochV2 > AuthIncarnationV2.maxSafeInteger) {
+      throw const FormatException('Invalid account deletion lifecycle epoch.');
+    }
     AccountDeletionContract.requireOpaqueId('deviceSessionId', deviceSessionId);
   }
 
+  final String authProjectIdV2;
+  final String? authTenantIdV2;
   final String accountId;
   final String accountGeneration;
+  final int accountLifecycleEpochV2;
   final String deviceSessionId;
 
   bool matches(AccountDeletionDeviceBinding other) =>
+      authProjectIdV2 == other.authProjectIdV2 &&
+      authTenantIdV2 == other.authTenantIdV2 &&
       accountId == other.accountId &&
       accountGeneration == other.accountGeneration &&
+      accountLifecycleEpochV2 == other.accountLifecycleEpochV2 &&
       deviceSessionId == other.deviceSessionId;
+}
+
+/// Unforgeable live-session binding for every pre-acceptance async boundary.
+final class AccountDeletionOperationBinding {
+  AccountDeletionOperationBinding({
+    required this.deviceBinding,
+    required this.sessionAttemptIdV2,
+    required this.sessionAttemptEpochV2,
+    required this.sessionAttemptNonceV2,
+  }) {
+    AccountDeletionContract.requireOpaqueId(
+      'sessionAttemptIdV2',
+      sessionAttemptIdV2,
+    );
+    if (sessionAttemptEpochV2 <= 0 ||
+        sessionAttemptEpochV2 > AuthIncarnationV2.maxSafeInteger) {
+      throw const FormatException('Invalid deletion session-attempt epoch.');
+    }
+  }
+
+  final AccountDeletionDeviceBinding deviceBinding;
+  final String sessionAttemptIdV2;
+  final int sessionAttemptEpochV2;
+  final Object sessionAttemptNonceV2;
+
+  bool matches(AccountDeletionOperationBinding other) =>
+      deviceBinding.matches(other.deviceBinding) &&
+      sessionAttemptIdV2 == other.sessionAttemptIdV2 &&
+      sessionAttemptEpochV2 == other.sessionAttemptEpochV2 &&
+      identical(sessionAttemptNonceV2, other.sessionAttemptNonceV2);
 }
 
 final class AccountDeletionReauthenticationResult {
   AccountDeletionReauthenticationResult({
+    required this.operationBinding,
     required this.method,
     required this.outcome,
     required this.appleRevocationMaterialState,
@@ -159,6 +207,7 @@ final class AccountDeletionReauthenticationResult {
   }
 
   final AccountDeletionReauthenticationMethod method;
+  final AccountDeletionOperationBinding operationBinding;
   final AccountDeletionReauthenticationOutcome outcome;
   final AppleRevocationMaterialState appleRevocationMaterialState;
   final String? providerRevocationRef;
@@ -269,6 +318,7 @@ final class AccountDeletionLocalWorkSummary {
 
 final class CandidateAccountDeletionImpact {
   CandidateAccountDeletionImpact({
+    required this.operationBinding,
     required this.intentId,
     required this.policyVersion,
     required this.impactVersion,
@@ -325,6 +375,7 @@ final class CandidateAccountDeletionImpact {
   }
 
   final String intentId;
+  final AccountDeletionOperationBinding operationBinding;
   final String policyVersion;
   final String impactVersion;
   final DateTime expiresAt;
@@ -344,6 +395,7 @@ final class CandidateAccountDeletionImpact {
 
 final class AcceptedAccountDeletionRequest {
   AcceptedAccountDeletionRequest({
+    required this.operationBinding,
     required this.requestId,
     required this.internalJobId,
     required this.acceptedAt,
@@ -363,6 +415,7 @@ final class AcceptedAccountDeletionRequest {
     }
   }
 
+  final AccountDeletionOperationBinding operationBinding;
   final String requestId;
   final String internalJobId;
   final DateTime acceptedAt;
@@ -383,6 +436,18 @@ final class AccountDeletionStatusSnapshot {
   }) : retainedCategoryCodes = List.unmodifiable(retainedCategoryCodes) {
     AccountDeletionContract.requireOpaqueId('requestId', requestId);
     AccountDeletionContract.requireOpaqueId('messageCode', messageCode);
+    final expectedMessageCode = switch (phase) {
+      DeletionStatusPhase.processing => 'AD_DELETION_REQUESTED',
+      DeletionStatusPhase.accountRemovedCleanupPending =>
+        'AD_ACCOUNT_REMOVED_CLEANUP_PENDING',
+      DeletionStatusPhase.attentionRequired => 'AD_CLEANUP_ATTENTION_REQUIRED',
+      DeletionStatusPhase.complete => 'AD_ACCOUNT_DELETION_COMPLETE',
+    };
+    if (messageCode != expectedMessageCode) {
+      throw const FormatException(
+        'Deletion phase and AD04 status message code must match.',
+      );
+    }
     if (!acceptedAt.isUtc || (completedAt != null && !completedAt!.isUtc)) {
       throw const FormatException('Deletion status times must be UTC.');
     }
@@ -467,8 +532,8 @@ final class CandidateAccountDeletionReceipt {
     required this.statusSecret,
     required this.state,
     required this.recordedAt,
-    required this.requiresInitialCustodyConflict,
-    this.custodyConflictObserved = false,
+    required this.requiresCustodyAttention,
+    this.custodyAttentionObserved = false,
     this.terminalErrorCode,
   }) {
     AccountDeletionContract.requireFirebaseUid(binding.accountId);
@@ -482,9 +547,9 @@ final class CandidateAccountDeletionReceipt {
     if (!recordedAt.isUtc) {
       throw const FormatException('Deletion receipt time must be UTC.');
     }
-    if (custodyConflictObserved && !requiresInitialCustodyConflict) {
+    if (custodyAttentionObserved && !requiresCustodyAttention) {
       throw const FormatException(
-        'Custody conflict evidence requires an unresolved-custody receipt.',
+        'Custody-attention evidence requires an unresolved-custody receipt.',
       );
     }
     final terminalPolicy = terminalErrorCode == null
@@ -510,14 +575,14 @@ final class CandidateAccountDeletionReceipt {
   final String statusSecret;
   final AccountDeletionReceiptState state;
   final DateTime recordedAt;
-  final bool requiresInitialCustodyConflict;
-  final bool custodyConflictObserved;
+  final bool requiresCustodyAttention;
+  final bool custodyAttentionObserved;
   final String? terminalErrorCode;
 
   CandidateAccountDeletionReceipt copyWith({
     AccountDeletionReceiptState? state,
     DateTime? recordedAt,
-    bool? custodyConflictObserved,
+    bool? custodyAttentionObserved,
     String? terminalErrorCode,
     bool clearTerminalErrorCode = false,
   }) => CandidateAccountDeletionReceipt(
@@ -526,9 +591,9 @@ final class CandidateAccountDeletionReceipt {
     statusSecret: statusSecret,
     state: state ?? this.state,
     recordedAt: recordedAt ?? this.recordedAt,
-    requiresInitialCustodyConflict: requiresInitialCustodyConflict,
-    custodyConflictObserved:
-        custodyConflictObserved ?? this.custodyConflictObserved,
+    requiresCustodyAttention: requiresCustodyAttention,
+    custodyAttentionObserved:
+        custodyAttentionObserved ?? this.custodyAttentionObserved,
     terminalErrorCode: clearTerminalErrorCode
         ? null
         : terminalErrorCode ?? this.terminalErrorCode,

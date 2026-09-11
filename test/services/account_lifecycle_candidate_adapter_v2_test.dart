@@ -172,7 +172,8 @@ void main() {
           state: AuthIncarnationSessionStateV2.deleting,
           requestedLocation: '/board',
           intent: AccountLifecycleRouteIntentV2.accountDeletion,
-          hasBoundStatusReceipt: true,
+          statusReceiptState:
+              AccountLifecycleStatusReceiptStateV2.exactAccepted,
         ),
         expected['deletingWithReceipt'],
       );

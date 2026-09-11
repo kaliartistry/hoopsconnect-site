@@ -4,8 +4,31 @@ import 'package:hoops_connect/features/account_deletion/account_deletion_candida
 import 'package:hoops_connect/models/account_deletion/account_deletion_contract.dart';
 
 void main() {
+  final generation = List.filled(64, 'a').join();
+  final deviceBinding = AccountDeletionDeviceBinding(
+    authProjectIdV2: 'demo-hoopsconnect',
+    authTenantIdV2: 'tenant_a',
+    accountId: 'account_1',
+    accountGeneration: generation,
+    accountLifecycleEpochV2: 7,
+    deviceSessionId: 'device_session_1',
+  );
+  final operationBinding = AccountDeletionOperationBinding(
+    deviceBinding: deviceBinding,
+    sessionAttemptIdV2: 'deletion_session_1',
+    sessionAttemptEpochV2: 3,
+    sessionAttemptNonceV2: Object(),
+  );
+
   Map<String, Object?> impact() => {
     'schemaVersion': 1,
+    'authProjectIdV2': 'demo-hoopsconnect',
+    'authTenantIdV2': 'tenant_a',
+    'authUidV2': 'account_1',
+    'generationHash': generation,
+    'expectedLifecycleEpochV2': 7,
+    'sessionAttemptIdV2': 'deletion_session_1',
+    'sessionAttemptEpochV2': 3,
     'intentId': 'intent_1',
     'policyVersion': 'policy_1',
     'impactVersion': 'impact_1',
@@ -40,8 +63,12 @@ void main() {
   };
 
   test('impact preserves custody and sporting-history boundaries', () {
-    final parsed = AccountDeletionCandidateWire.parseImpact(impact());
+    final parsed = AccountDeletionCandidateWire.parseImpact(
+      impact(),
+      operationBinding,
+    );
 
+    expect(parsed.operationBinding, same(operationBinding));
     expect(parsed.custodyChoice, CustodyChoice.ordinary);
     expect(
       parsed.ownershipResolution,
@@ -60,15 +87,38 @@ void main() {
       {...impact(), 'extra': true},
     ]) {
       expect(
-        () => AccountDeletionCandidateWire.parseImpact(changed),
+        () =>
+            AccountDeletionCandidateWire.parseImpact(changed, operationBinding),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('impact wire adapter rejects every mixed account-session field', () {
+    for (final changed in [
+      {...impact(), 'authProjectIdV2': 'other-project'},
+      {...impact(), 'authTenantIdV2': 'tenant_b'},
+      {...impact(), 'authUidV2': 'account_2'},
+      {...impact(), 'generationHash': List.filled(64, 'b').join()},
+      {...impact(), 'expectedLifecycleEpochV2': 8},
+      {...impact(), 'sessionAttemptIdV2': 'deletion_session_2'},
+      {...impact(), 'sessionAttemptEpochV2': 4},
+    ]) {
+      expect(
+        () =>
+            AccountDeletionCandidateWire.parseImpact(changed, operationBinding),
         throwsFormatException,
       );
     }
   });
 
   test('accepted response binds one request and a positive poll interval', () {
-    final parsed = AccountDeletionCandidateWire.parseAccepted(accepted());
+    final parsed = AccountDeletionCandidateWire.parseAccepted(
+      accepted(),
+      operationBinding,
+    );
 
+    expect(parsed.operationBinding, same(operationBinding));
     expect(parsed.requestId, 'request_1');
     expect(parsed.internalJobId, 'job_1');
     expect(parsed.nextPollAfter, const Duration(seconds: 5));
@@ -83,7 +133,10 @@ void main() {
       {...accepted(), 'targetUid': 'someone_else'},
     ]) {
       expect(
-        () => AccountDeletionCandidateWire.parseAccepted(changed),
+        () => AccountDeletionCandidateWire.parseAccepted(
+          changed,
+          operationBinding,
+        ),
         throwsFormatException,
       );
     }
@@ -98,11 +151,27 @@ void main() {
     expect(parsed.providerOutcome, ProviderCheckpointState.pending);
   });
 
+  test('status accepts only the exact observable AD04 progression', () {
+    for (final entry in <(String, String)>[
+      ('processing', 'AD_DELETION_REQUESTED'),
+      ('accountRemovedCleanupPending', 'AD_ACCOUNT_REMOVED_CLEANUP_PENDING'),
+      ('attentionRequired', 'AD_CLEANUP_ATTENTION_REQUIRED'),
+    ]) {
+      final parsed = AccountDeletionCandidateWire.parseStatus({
+        ...status(),
+        'phase': entry.$1,
+        'messageCode': entry.$2,
+      });
+      expect(parsed.messageCode, entry.$2);
+    }
+  });
+
   test('complete status requires completion evidence and no next poll', () {
     final complete = AccountDeletionCandidateWire.parseStatus(
       {
         ...status(),
         'phase': 'complete',
+        'messageCode': 'AD_ACCOUNT_DELETION_COMPLETE',
         'completedAt': '2026-09-11T16:20:00.000Z',
         'providerOutcome': 'manual_action_guidance',
       }..remove('nextPollAfterSeconds'),
@@ -127,8 +196,15 @@ void main() {
       {
         ...status(),
         'phase': 'complete',
+        'messageCode': 'AD_ACCOUNT_DELETION_COMPLETE',
         'completedAt': '2026-09-11T16:20:00.000Z',
       }..remove('nextPollAfterSeconds'),
+      {...status(), 'messageCode': 'CUSTODY_CONFLICT'},
+      {
+        ...status(),
+        'phase': 'attentionRequired',
+        'messageCode': 'AD_ACCOUNT_REMOVED_CLEANUP_PENDING',
+      },
       {...status(), 'adapterResults': <Object?>[]},
     ]) {
       expect(

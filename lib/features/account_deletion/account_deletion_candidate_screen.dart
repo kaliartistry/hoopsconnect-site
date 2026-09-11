@@ -406,7 +406,7 @@ class _AccountDeletionCandidateScreenState
             key: Key('custody-blocker'),
             icon: Icons.support_agent,
             text:
-                'No named custody path is ready for this last-owner account. Your personal deletion may continue. The accepted job must fence shared operations, open CUSTODY_CONFLICT and remain needs attention until an authorized operator resolves custody.',
+                'No named custody path is ready for this last-owner account. Your personal deletion may continue while shared operations stay fenced. Status can process account removal first, then remains Needs attention until an authorized operator resolves custody.',
           ),
         ],
         const SizedBox(height: 20),
@@ -693,7 +693,7 @@ class _AccountDeletionCandidateScreenState
     'AD_CUSTODY_OPERATIONAL_RESOLUTION_REQUIRED' =>
       'Shared operations will be suspended for staff custody resolution while personal account deletion continues.',
     'AD_CUSTODY_STATUS_MISMATCH' =>
-      'The accepted last-owner request did not return the required custody-conflict status. The account stays fenced and needs staff attention.',
+      'The unresolved-custody request returned an impossible completion state. Shared operations stay fenced and the request needs staff review.',
     'AD_INTENT_EXPIRED' || 'AD_IMPACT_CHANGED' =>
       'The account impact expired or changed. Reauthenticate and review a fresh impact.',
     'AD_ACCEPTANCE_UNKNOWN' =>
@@ -708,6 +708,8 @@ class _AccountDeletionCandidateScreenState
       'Server deletion continues, but this device has not finished local cleanup.',
     'AD_RECEIPT_DEVICE_BINDING_MISMATCH' || 'AD_LOCAL_WORK_BINDING_MISMATCH' =>
       'Saved deletion material does not belong to this account generation and device session.',
+    'AD_ACCOUNT_SESSION_CHANGED' =>
+      'The signed-in account or security session changed. This deletion flow stopped before it could act under mixed account authority.',
     'AD_IDENTITY_MISMATCH' =>
       'The current identity does not match this deletion request. It cannot be retried.',
     'AD_INVALID_REQUEST' || 'AD_OPERATION_CONFLICT' =>
