@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
+import 'package:hoops_connect/core/constants/app_constants.dart';
 import 'package:hoops_connect/features/auth/login_auth_actions.dart';
 import 'package:hoops_connect/features/auth/login_screen.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
@@ -62,8 +63,12 @@ void main() {
     expect(_editable(tester, const Key('login-password-field')).autofillHints, [
       AutofillHints.password,
     ]);
-    expect(find.text('League sneak peek'), findsOneWidget);
-    expect(find.text('View scores & schedule'), findsOneWidget);
+    expect(find.text('JBA Scoreboard'), findsOneWidget);
+    expect(find.text('Full scores & schedule'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Full scores and schedule. No account needed.'),
+      findsOneWidget,
+    );
 
     final headingSemantics = tester.getSemantics(
       find.text('Jamaica HoopsConnect'),
@@ -79,27 +84,30 @@ void main() {
 
     expect(find.byKey(const Key('league-sneak-peek')), findsOneWidget);
     expect(find.text('LATEST RESULT'), findsOneWidget);
+    expect(find.text('Kingston Lions'), findsOneWidget);
+    expect(find.text('82'), findsOneWidget);
+    expect(find.text('Montego Bay Waves'), findsOneWidget);
+    expect(find.text('76'), findsOneWidget);
+    expect(find.text('UP NEXT'), findsOneWidget);
+    expect(find.text('Spanish Town Sparks'), findsOneWidget);
+    expect(find.text('Portmore Pelicans'), findsOneWidget);
     expect(
-      find.text('Kingston Lions 82  ·  76 Montego Bay Waves'),
-      findsOneWidget,
-    );
-    expect(find.text('NEXT GAME'), findsOneWidget);
-    expect(
-      find.text('Spanish Town Sparks vs Portmore Pelicans'),
+      find.bySemanticsLabel(
+        RegExp(
+          r'LATEST RESULT\. Final\. Montego Bay Waves 76, away\. Kingston Lions 82, home\.',
+        ),
+      ),
       findsOneWidget,
     );
 
     final card = tester.widget<Container>(
       find.byKey(const Key('league-sneak-peek')),
     );
-    expect(
-      (card.decoration! as BoxDecoration).color,
-      AppSemanticColors.forBrightness(Brightness.light).warningContainer,
-    );
-    final browse = tester.widget<FilledButton>(
+    expect((card.decoration! as BoxDecoration).color, AppColors.darkBg);
+    final browse = tester.widget<InkWell>(
       find.byKey(const Key('browse-public-league-button')),
     );
-    expect(browse.onPressed, isNotNull);
+    expect(browse.onTap, isNotNull);
   });
 
   testWidgets('Return in password submits once and exposes pending state', (

@@ -523,79 +523,118 @@ class _LeagueSneakPeek extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final semanticColors = context.semanticColors;
     return Semantics(
       container: true,
-      label:
-          'League sneak peek. Public scores and schedule. No account needed.',
+      explicitChildNodes: true,
       child: Container(
         key: const Key('league-sneak-peek'),
         width: double.infinity,
-        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: semanticColors.warningContainer,
+          color: AppColors.darkBg,
           borderRadius: BorderRadius.circular(AppSizes.radiusLg),
-          border: Border.all(color: semanticColors.warning, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
+        clipBehavior: Clip.antiAlias,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.sports_basketball,
-                  color: semanticColors.warning,
-                  size: 28,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            Container(height: 4, color: AppColors.accent),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text(
-                        'League sneak peek',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: semanticColors.onWarningContainer,
-                          fontWeight: FontWeight.w800,
+                      const Icon(
+                        Icons.sports_basketball,
+                        color: AppColors.accent,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          'JBA Scoreboard',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.1,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 2),
                       Text(
-                        'Latest scores and what is coming up. No sign-in needed.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: semanticColors.onWarningContainer,
+                        'NO SIGN-IN',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: AppColors.accent,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.9,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            snapshot.when(
-              loading: () => Text(
-                'Loading the latest public league update…',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: semanticColors.onWarningContainer,
-                ),
+                  const SizedBox(height: 14),
+                  Divider(
+                    height: 1,
+                    color: Colors.white.withValues(alpha: 0.12),
+                  ),
+                  const SizedBox(height: 14),
+                  snapshot.when(
+                    loading: () => Text(
+                      'Loading the latest public league update…',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    error: (_, _) => Text(
+                      'Public updates are temporarily unavailable. Open the full scoreboard to try again.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    data: (data) => _LeaguePeekContent(snapshot: data),
+                  ),
+                ],
               ),
-              error: (_, _) => Text(
-                'Public updates are temporarily unavailable. You can still open the league page and try again.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: semanticColors.onWarningContainer,
-                ),
-              ),
-              data: (data) => _LeaguePeekContent(snapshot: data),
             ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                key: const Key('browse-public-league-button'),
-                onPressed: enabled ? onBrowse : null,
-                icon: const Icon(Icons.visibility_outlined),
-                label: const Text('View scores & schedule'),
+            Semantics(
+              button: true,
+              enabled: enabled,
+              excludeSemantics: true,
+              label: 'Full scores and schedule. No account needed.',
+              child: Material(
+                color: enabled
+                    ? AppColors.primaryDark
+                    : AppColors.textSecondary,
+                child: InkWell(
+                  key: const Key('browse-public-league-button'),
+                  onTap: enabled ? onBrowse : null,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Full scores & schedule',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           ],
@@ -640,18 +679,24 @@ class _LeaguePeekContent extends StatelessWidget {
         if (finals.isNotEmpty)
           _LeaguePeekGame(label: 'LATEST RESULT', game: finals.first),
         if (finals.isNotEmpty && scheduled.isNotEmpty)
-          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Divider(
+              height: 1,
+              color: Colors.white.withValues(alpha: 0.12),
+            ),
+          ),
         if (scheduled.isNotEmpty)
-          _LeaguePeekGame(label: 'NEXT GAME', game: scheduled.first),
+          _LeaguePeekGame(label: 'UP NEXT', game: scheduled.first),
       ],
     );
   }
 
   Widget _fallback(BuildContext context) => Text(
     'Published league updates will appear here as soon as they are available.',
-    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-      color: context.semanticColors.onWarningContainer,
-    ),
+    style: Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
   );
 }
 
@@ -664,45 +709,192 @@ class _LeaguePeekGame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final foreground = context.semanticColors.onWarningContainer;
     final home = game.homeTeamName ?? 'Home team';
     final away = game.awayTeamName ?? 'Away team';
     final isFinal = game.status == PublicGameStatus.finalResult;
-    final matchup = isFinal
-        ? '$home ${game.homeScore ?? '–'}  ·  ${game.awayScore ?? '–'} $away'
-        : '$home vs $away';
     final timing = isFinal
         ? LeagueTime.formatJamaicaDate(game.startTime, pattern: 'MMM d')
         : '${LeagueTime.formatJamaicaDate(game.startTime, pattern: 'EEE, MMM d')} · ${LeagueTime.formatJamaicaTime(game.startTime)}';
+    final spokenTiming = isFinal
+        ? timing
+        : '${LeagueTime.formatJamaicaDate(game.startTime, pattern: 'EEE, MMM d')} '
+              'at ${LeagueTime.formatJamaicaTime(game.startTime, includeZone: false)}';
+    final homeWon =
+        isFinal &&
+        game.homeScore != null &&
+        game.awayScore != null &&
+        game.homeScore! > game.awayScore!;
+    final awayWon =
+        isFinal &&
+        game.homeScore != null &&
+        game.awayScore != null &&
+        game.awayScore! > game.homeScore!;
+    final venue = game.venue?.trim();
+    final semanticLabel = isFinal
+        ? '$label. Final. $away ${game.awayScore ?? 'not available'}, away. '
+              '$home ${game.homeScore ?? 'not available'}, home. $spokenTiming.'
+        : '$label. $away, away, at $home, home. $spokenTiming Jamaica time.'
+              '${venue == null || venue.isEmpty ? '' : ' Venue: $venue.'}';
 
     return Semantics(
-      label: '$label. $matchup. $timing.',
+      label: semanticLabel,
+      excludeSemantics: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: foreground,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.8,
+          Row(
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: AppColors.accent,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.9,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  isFinal ? 'FINAL · $timing' : timing.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: AppColors.textMuted,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.25,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          if (isFinal) ...[
+            _ScoreboardTeamRow(
+              name: away,
+              score: game.awayScore,
+              isWinner: awayWon,
+            ),
+            const SizedBox(height: 7),
+            _ScoreboardTeamRow(
+              name: home,
+              score: game.homeScore,
+              isWinner: homeWon,
+            ),
+          ] else ...[
+            _UpcomingTeamRow(name: away, location: 'AWAY'),
+            const SizedBox(height: 7),
+            _UpcomingTeamRow(name: home, location: 'HOME'),
+            if (game.venue != null && game.venue!.trim().isNotEmpty) ...[
+              const SizedBox(height: 7),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.location_on_outlined,
+                    color: AppColors.textMuted,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      game.venue!,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScoreboardTeamRow extends StatelessWidget {
+  const _ScoreboardTeamRow({
+    required this.name,
+    required this.score,
+    required this.isWinner,
+  });
+
+  final String name;
+  final int? score;
+  final bool isWinner;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: 3,
+          height: 20,
+          color: isWinner ? AppColors.accent : Colors.transparent,
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: isWinner ? Colors.white : const Color(0xFFD1D5DB),
+              fontWeight: isWinner ? FontWeight.w800 : FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            matchup,
+        ),
+        const SizedBox(width: 12),
+        Text(
+          score?.toString() ?? '–',
+          style: theme.textTheme.titleLarge?.copyWith(
+            color: isWinner ? Colors.white : const Color(0xFFD1D5DB),
+            fontWeight: FontWeight.w800,
+            height: 1,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UpcomingTeamRow extends StatelessWidget {
+  const _UpcomingTeamRow({required this.name, required this.location});
+
+  final String name;
+  final String location;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodyLarge?.copyWith(
-              color: foreground,
+              color: Colors.white,
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 1),
-          Text(
-            timing,
-            style: theme.textTheme.bodySmall?.copyWith(color: foreground),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          location,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: AppColors.textMuted,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
