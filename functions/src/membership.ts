@@ -440,13 +440,27 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
     if (!associationSnap.exists) {
       throw new HttpsError("failed-precondition", "Invite association no longer exists.");
     }
-    let resolvedDivisionId = invite.divisionId;
+    const currentSeasonId = associationSnap.get("currentSeasonId");
+    if (typeof currentSeasonId !== "string" || !/^[A-Za-z0-9_-]+$/.test(currentSeasonId) ||
+        invite.seasonId !== currentSeasonId) {
+      throw new HttpsError("failed-precondition", "Invite season is no longer current for this association.");
+    }
+    const resolvedDivisionId = invite.divisionId;
     if (invite.teamId) {
       const teamSnap = await transaction.get(db.doc(`associations/${invite.associationId}/teams/${invite.teamId}`));
       if (!teamSnap.exists) {
         throw new HttpsError("failed-precondition", "Invite team no longer exists.");
       }
-      resolvedDivisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
+      const teamStatus = teamSnap.get("status");
+      const teamDivisionId = teamSnap.get("divisionId");
+      if (teamSnap.get("seasonId") !== currentSeasonId ||
+          (teamStatus !== undefined && teamStatus !== "active") || teamSnap.get("active") === false ||
+          typeof teamDivisionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(teamDivisionId) ||
+          invite.divisionId !== teamDivisionId) {
+        throw new HttpsError("failed-precondition", "Invite team is no longer active or no longer matches the invite scope.");
+      }
+    } else if (invite.divisionId !== null) {
+      throw new HttpsError("failed-precondition", "Invite division no longer matches its team scope.");
     }
     await requireDivisionAcceptsNewReferences(
       transaction,
@@ -477,7 +491,7 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
       status: "active",
       teamId: invite.teamId,
       divisionId: resolvedDivisionId,
-      seasonId: invite.seasonId ?? associationSnap.get("currentSeasonId") ?? null,
+      seasonId: invite.seasonId,
       competitionId: null,
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
       source: "privilegedInvite",

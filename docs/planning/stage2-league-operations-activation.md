@@ -122,7 +122,11 @@ guard. Membership and invite records remain client-immutable. These reads
 serialize new reference writers against guard acquisition so no reference can
 be added after the out-of-transaction inventory begins.
 Team-bound privileged invites additionally require the exact association
-current season and reject a team carrying any explicit non-active state.
+current season and reject a team carrying any explicit non-active state. The
+same association-season, team-state, and exact team/division bindings are
+revalidated transactionally at redemption before the invite is consumed or
+any authorization record is created; exact completed-operation replay remains
+receipt-based.
 An index/query/size failure persists `inventoryFailed`, releases the division
 guard, and fails closed. It must not be worked around by skipping a reference
 class. `divisionDeletion` must remain false until this exact inventory succeeds
