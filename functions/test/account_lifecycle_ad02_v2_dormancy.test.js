@@ -12,12 +12,12 @@ const baselineGitBlobHashes = Object.freeze({
   'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
   'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
+  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
   // Reviewed public deep-link transition: URL strategy only; AD02 stays absent.
   'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; AD02 candidate imports stay excluded.
-  'lib/app/router/app_router.dart': '32e9c991342d9da2d40185b634e3db0285b5200e',
+  'lib/app/router/app_router.dart': '8fd2f939210a7ce488747276e179e76d74ea2edb',
   'lib/services/notification_service.dart': 'd17c7c10ca2620d97adf56fae0408cec0647fba8',
   'lib/services/repositories/auth_repository.dart': '533f850d12b4b7d50428149f5c2af0c816717c0f',
   'lib/core/constants/firestore_paths.dart': '59571aec275caa239e4fc3bb6ffa259c1c12dcb7',
