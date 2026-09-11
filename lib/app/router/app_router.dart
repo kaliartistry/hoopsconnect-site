@@ -148,6 +148,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       final matchedRule = AppRouteContract.ruleFor(state.matchedLocation);
       final isPublic = matchedRule?.session == AppRouteSession.public;
       final isLoggedIn = authState.valueOrNull != null;
+      final loginRequested = state.matchedLocation == '/login'
+          ? AppRouteContract.safeRequestedLocation(
+              state.uri.queryParameters['from'],
+            )
+          : null;
+      if (!isLoggedIn && loginRequested != null) {
+        // Capture a bookmarked/shared sign-in URL even while the Auth streams
+        // are still loading. The value is re-authorized after sign-in.
+        ref.read(pendingRequestedLocationProvider.notifier).state =
+            loginRequested;
+      }
       if (!isLoggedIn &&
           accessStatus != AccountAccessStatus.loading &&
           !isPublic &&

@@ -40,6 +40,10 @@ void main() {
         AppRouteContract.safeRequestedLocation('https://evil.example/path'),
         isNull,
       );
+      expect(
+        AppRouteContract.safeRequestedLocation('/calendar?division=women'),
+        '/calendar?division=women',
+      );
     });
 
     test(
