@@ -36,10 +36,12 @@ class PublicDetailRouteScreen extends ConsumerWidget {
     return snapshotAsync.when(
       loading: () => _RouteState(
         title: _title,
+        backLocation: _backLocation,
         child: const AppLoadingState(label: 'Loading published details'),
       ),
       error: (_, _) => _RouteState(
         title: _title,
+        backLocation: _backLocation,
         child: AppStateMessage(
           title: 'Published details unavailable',
           message:
@@ -53,6 +55,7 @@ class PublicDetailRouteScreen extends ConsumerWidget {
         if (snapshot == null || !snapshot.version.isPublished) {
           return _RouteState(
             title: _title,
+            backLocation: _backLocation,
             child: AppStateMessage(
               title: 'Published details unavailable',
               message:
@@ -97,6 +100,7 @@ class PublicDetailRouteScreen extends ConsumerWidget {
 
   Widget _missing(BuildContext context) => _RouteState(
     title: _title,
+    backLocation: _backLocation,
     child: AppStateMessage(
       title: 'Published ${_noun.toLowerCase()} not found',
       message:
@@ -108,6 +112,12 @@ class PublicDetailRouteScreen extends ConsumerWidget {
 
   String get _title => '$_noun details';
 
+  String get _backLocation => switch (kind) {
+    PublicDetailRouteKind.game => PublicRoutePaths.games,
+    PublicDetailRouteKind.team => PublicRoutePaths.standings,
+    PublicDetailRouteKind.player => PublicRoutePaths.leaders,
+  };
+
   String get _noun => switch (kind) {
     PublicDetailRouteKind.game => 'Game',
     PublicDetailRouteKind.team => 'Team',
@@ -116,14 +126,26 @@ class PublicDetailRouteScreen extends ConsumerWidget {
 }
 
 class _RouteState extends StatelessWidget {
-  const _RouteState({required this.title, required this.child});
+  const _RouteState({
+    required this.title,
+    required this.backLocation,
+    required this.child,
+  });
 
   final String title;
+  final String backLocation;
   final Widget child;
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
+    appBar: AppBar(
+      leading: IconButton(
+        onPressed: () => context.go(backLocation),
+        tooltip: 'Back to public league',
+        icon: const Icon(Icons.arrow_back),
+      ),
+      title: Text(title),
+    ),
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),

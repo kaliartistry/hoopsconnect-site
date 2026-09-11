@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/artifact_downloader.dart';
 import '../../core/sharing/branded_share_payload.dart';
@@ -75,6 +77,11 @@ class _PublicGameDetailScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => context.go(PublicRoutePaths.games),
+          tooltip: 'Back to public games',
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: const Text('Game details'),
         actions: [
           if (_canShare)

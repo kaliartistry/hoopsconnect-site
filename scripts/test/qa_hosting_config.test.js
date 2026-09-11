@@ -41,6 +41,8 @@ test('QA Hosting CSP permits exact startup dependencies without broad origins', 
   assert.match(csp, /script-src[^;]*https:\/\/accounts\.google\.com\/gsi\/client/);
   assert.match(csp, /connect-src[^;]*http:\/\/127\.0\.0\.1:18080/);
   assert.match(csp, /connect-src[^;]*http:\/\/127\.0\.0\.1:15001/);
+  assert.match(csp, /font-src[^;]*https:\/\/fonts\.gstatic\.com/);
+  assert.match(csp, /connect-src[^;]*https:\/\/fonts\.gstatic\.com/);
   assert.doesNotMatch(csp, /(?:script-src|connect-src)[^;]*(?:\s\*|https:\/\/\*)/);
   assert.doesNotMatch(csp, /flutter-canvaskit/);
 });

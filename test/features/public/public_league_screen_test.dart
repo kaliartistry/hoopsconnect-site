@@ -12,7 +12,7 @@ void main() {
   testWidgets('guest discovers a result and opens public-only details', (
     tester,
   ) async {
-    await _pump(tester, _snapshot());
+    final router = await _pump(tester, _snapshot());
 
     expect(find.textContaining('Version aaaaaaaaaaaa'), findsOneWidget);
     expect(find.text('Home'), findsOneWidget);
@@ -21,6 +21,10 @@ void main() {
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();
 
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      PublicRoutePaths.game('game-1'),
+    );
     expect(find.text('Game details'), findsOneWidget);
     expect(find.text('Home Team won a close game.'), findsOneWidget);
     expect(find.text('Share published result'), findsOneWidget);
@@ -30,11 +34,15 @@ void main() {
   testWidgets('standings expose games played and team detail destination', (
     tester,
   ) async {
-    await _pump(tester, _snapshot());
+    final router = await _pump(tester, _snapshot());
 
     await tester.tap(find.text('Standings'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('1 GP'), findsOneWidget);
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      PublicRoutePaths.standings,
+    );
+    expect(find.text('Premier · 1 GP · PF 82 · PA 79'), findsOneWidget);
     expect(
       find.text('Winning percentage; tied ranks remain tied'),
       findsOneWidget,
@@ -42,6 +50,10 @@ void main() {
 
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      PublicRoutePaths.team('home'),
+    );
     expect(find.text('Team details'), findsOneWidget);
     expect(find.text('1 game played'), findsWidgets);
   });
@@ -195,7 +207,7 @@ void main() {
   });
 }
 
-Future<void> _pump(
+Future<GoRouter> _pump(
   WidgetTester tester,
   PublicLeagueSnapshot? snapshot, {
   Size size = const Size(900, 1200),
@@ -212,6 +224,14 @@ Future<void> _pump(
       GoRoute(
         path: PublicRoutePaths.games,
         builder: (_, _) => const PublicLeagueScreen(),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.standings,
+        builder: (_, _) => const PublicLeagueScreen(initialTab: 1),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.leaders,
+        builder: (_, _) => const PublicLeagueScreen(initialTab: 2),
       ),
       GoRoute(
         path: '${PublicRoutePaths.games}/:gameId',
@@ -249,6 +269,7 @@ Future<void> _pump(
     ),
   );
   await tester.pumpAndSettle();
+  return router;
 }
 
 PublicLeagueSnapshot _snapshot({

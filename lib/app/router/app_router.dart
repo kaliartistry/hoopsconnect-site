@@ -69,6 +69,14 @@ Uri? _absolutePublicUri(String path) {
 /// before it can be restored.
 final pendingRequestedLocationProvider = StateProvider<String?>((ref) => null);
 
+/// Keeps the browser's current route stable when auth-backed providers rebuild
+/// the router. This is essential for public deep links, which must not fall
+/// back to the signed-in default while Auth finishes restoring its state.
+final preservedRouterLocationProvider = StateProvider<String?>((ref) => null);
+
+String resolveRouterInitialLocation(String? preservedLocation) =>
+    AppRouteContract.safeRequestedLocation(preservedLocation) ?? '/board';
+
 String? resolvePendingRequestedLocation({
   required String? pendingLocation,
   required Uri currentLocation,
@@ -179,11 +187,18 @@ final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
   final currentUser = ref.watch(currentUserProvider);
   final accessStatus = ref.watch(accountAccessStatusProvider);
+  final initialLocation = resolveRouterInitialLocation(
+    ref.read(preservedRouterLocationProvider),
+  );
 
   return GoRouter(
-    initialLocation: '/board',
+    initialLocation: initialLocation,
     redirect: (context, state) {
       final matchedRule = AppRouteContract.ruleFor(state.matchedLocation);
+      if (matchedRule != null) {
+        ref.read(preservedRouterLocationProvider.notifier).state = state.uri
+            .toString();
+      }
       final isPublic = matchedRule?.session == AppRouteSession.public;
       final isLoggedIn = authState.valueOrNull != null;
       final loginRequested = state.matchedLocation == '/login'

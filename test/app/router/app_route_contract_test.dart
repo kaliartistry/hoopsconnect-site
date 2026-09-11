@@ -51,6 +51,13 @@ void main() {
         AppRouteContract.permits(PublicRoutePaths.game('game 1'), null),
         isTrue,
       );
+      expect(
+        resolveRouterInitialLocation(
+          '/public/teams/kingston-lions?division=premier',
+        ),
+        '/public/teams/kingston-lions?division=premier',
+      );
+      expect(resolveRouterInitialLocation('https://evil.example'), '/board');
     });
 
     test(

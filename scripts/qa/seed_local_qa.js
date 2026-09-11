@@ -98,6 +98,25 @@ function publicSnapshotBuilder() {
   ).buildPublicSnapshot;
 }
 
+function certifyQaLegacySnapshot(candidate) {
+  if (
+    candidate?.schemaVersion !== 1 ||
+    candidate?.contractVersion !== 'legacy-public-snapshot-v1.1' ||
+    candidate?.published !== true ||
+    candidate?.publication?.state !== 'published'
+  ) {
+    throw new Error('Only a published legacy v1.1 QA snapshot can be certified.');
+  }
+  return {
+    ...candidate,
+    certificationStatus: 'certified',
+    publication: {
+      ...candidate.publication,
+      verificationStatus: 'legacyApproved',
+    },
+  };
+}
+
 function identity(role, dataset) {
   const suffix = dataset === 'empty' ? '-empty' : '';
   return {
@@ -241,10 +260,10 @@ async function seedLeague(db, admin) {
     );
 
   const standings = [
-    {teamId: 'kingston-lions', teamName: 'Kingston Lions', divisionId: 'premier', wins: 7, losses: 2, pct: 0.778, gb: 0, streak: 'W3', lastTen: '7-2', pointsFor: 731, pointsAgainst: 668},
-    {teamId: 'montego-bay-waves', teamName: 'Montego Bay Waves', divisionId: 'premier', wins: 5, losses: 4, pct: 0.556, gb: 2, streak: 'L1', lastTen: '5-4', pointsFor: 705, pointsAgainst: 694},
-    {teamId: 'spanish-town-sparks', teamName: 'Spanish Town Sparks', divisionId: 'development', wins: 6, losses: 3, pct: 0.667, gb: 1, streak: 'W1', lastTen: '6-3', pointsFor: 712, pointsAgainst: 681},
-    {teamId: 'portmore-pelicans', teamName: 'Portmore Pelicans', divisionId: 'development', wins: 3, losses: 6, pct: 0.333, gb: 4, streak: 'L2', lastTen: '3-6', pointsFor: 649, pointsAgainst: 716},
+    {teamId: 'kingston-lions', teamName: 'Kingston Lions', divisionId: 'premier', rank: 1, rankStatus: 'ranked', wins: 7, losses: 2, pct: 0.778, gb: 0, streak: 'W3', lastTen: '7-2', pointsFor: 731, pointsAgainst: 668},
+    {teamId: 'montego-bay-waves', teamName: 'Montego Bay Waves', divisionId: 'premier', rank: 2, rankStatus: 'ranked', wins: 5, losses: 4, pct: 0.556, gb: 2, streak: 'L1', lastTen: '5-4', pointsFor: 705, pointsAgainst: 694},
+    {teamId: 'spanish-town-sparks', teamName: 'Spanish Town Sparks', divisionId: 'development', rank: 1, rankStatus: 'ranked', wins: 6, losses: 3, pct: 0.667, gb: 1, streak: 'W1', lastTen: '6-3', pointsFor: 712, pointsAgainst: 681},
+    {teamId: 'portmore-pelicans', teamName: 'Portmore Pelicans', divisionId: 'development', rank: 2, rankStatus: 'ranked', wins: 3, losses: 6, pct: 0.333, gb: 4, streak: 'L2', lastTen: '3-6', pointsFor: 649, pointsAgainst: 716},
   ];
 
   set(`associations/${ASSOCIATION_ID}`, {
@@ -571,7 +590,7 @@ async function publishQaPublicSnapshot(db) {
   const scopedLeaderboards = records(leaderboards).filter(
     (entry) => typeof entry.data.divisionId === 'string',
   );
-  const snapshot = publicSnapshotBuilder()({
+  const snapshot = certifyQaLegacySnapshot(publicSnapshotBuilder()({
     associationId: ASSOCIATION_ID,
     association: normalizePublicFixtureValue(association.data()),
     season: {id: season.id, data: normalizePublicFixtureValue(season.data())},
@@ -585,11 +604,14 @@ async function publishQaPublicSnapshot(db) {
     leaderboards: scopedLeaderboards,
     teams: records(teams),
     generatedAt: '2026-09-01T12:00:00.000Z',
-  });
+  }));
   if (
     snapshot.published !== true ||
     snapshot.schedule?.length !== 6 ||
     snapshot.standings?.length !== 4 ||
+    !snapshot.standings.every(
+      (row) => Number.isInteger(row.rank) && row.rankStatus === 'ranked',
+    ) ||
     snapshot.leaderboards?.length !== 10 ||
     !snapshot.leaderboards.every((board) => board.rankings?.length > 0)
   ) {
@@ -643,6 +665,7 @@ module.exports = {
   AUTHORIZATION_SCHEMA_VERSION,
   TEAM_FIXTURES,
   authorizationSchema,
+  certifyQaLegacySnapshot,
   identity,
   normalizePublicFixtureValue,
   probeCallable,

@@ -113,6 +113,20 @@ test('Hosting CSP permits exact Firebase client endpoints only', () => {
     allows('connect-src', 'https://firebasestorage.googleapis.com/v0/b/app/o'),
     true,
   );
+  assert.equal(
+    allows(
+      'connect-src',
+      'https://fonts.gstatic.com/s/notosanssymbols/v43/fallback.woff2',
+    ),
+    true,
+  );
+  assert.equal(
+    allows(
+      'font-src',
+      'https://fonts.gstatic.com/s/notosanssymbols/v43/fallback.woff2',
+    ),
+    true,
+  );
   assert.equal(allows('connect-src', 'https://evil.example/collect'), false);
   assertNoBroadNetworkSource('connect-src');
 });

@@ -20,7 +20,14 @@ class PublicTeamDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Team details')),
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => context.go(PublicRoutePaths.standings),
+          tooltip: 'Back to public standings',
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: const Text('Team details'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(AppSizes.paddingMd),
         children: [
@@ -59,7 +66,7 @@ class PublicTeamDetailScreen extends StatelessWidget {
                   onTap: () {
                     final gameDetail = snapshot.gameDetail(game.gameId);
                     if (gameDetail == null) return;
-                    context.push(PublicRoutePaths.game(game.gameId));
+                    context.go(PublicRoutePaths.game(game.gameId));
                   },
                   title: Text(
                     '${game.homeTeamName ?? 'Home'} vs ${game.awayTeamName ?? 'Away'}',
@@ -105,7 +112,7 @@ class PublicTeamDetailScreen extends StatelessWidget {
                       (leader) => ListTile(
                         onTap: leader.playerId == null
                             ? null
-                            : () => context.push(
+                            : () => context.go(
                                 PublicRoutePaths.player(leader.playerId!),
                               ),
                         title: Text(leader.displayName),

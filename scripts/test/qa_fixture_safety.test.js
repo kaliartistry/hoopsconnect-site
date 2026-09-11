@@ -9,6 +9,7 @@ const {
   AUTHORIZATION_SCHEMA_VERSION,
   TEAM_FIXTURES,
   authorizationSchema,
+  certifyQaLegacySnapshot,
   identity,
   normalizePublicFixtureValue,
   requireSafeEnvironment,
@@ -98,4 +99,30 @@ test('QA public data uses the reviewed pure projector without a deployable trigg
     startTime: '2026-09-10T20:00:00.000Z',
     nested: [{value: 1}],
   });
+});
+
+test('QA certifies only a published legacy snapshot for guest journey coverage', () => {
+  const candidate = {
+    schemaVersion: 1,
+    contractVersion: 'legacy-public-snapshot-v1.1',
+    published: true,
+    certificationStatus: 'compatibilityCandidate',
+    publication: {
+      state: 'published',
+      verificationStatus: 'compatibilityCandidate',
+    },
+  };
+  assert.deepEqual(certifyQaLegacySnapshot(candidate), {
+    ...candidate,
+    certificationStatus: 'certified',
+    publication: {
+      ...candidate.publication,
+      verificationStatus: 'legacyApproved',
+    },
+  });
+  assert.throws(
+    () => certifyQaLegacySnapshot({...candidate, published: false}),
+    /Only a published legacy v1\.1 QA snapshot can be certified/,
+  );
+  assert.equal(candidate.certificationStatus, 'compatibilityCandidate');
 });

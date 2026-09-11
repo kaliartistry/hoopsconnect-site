@@ -31,10 +31,20 @@ class PublicLeagueScreen extends ConsumerWidget {
               child: const Text('Sign in'),
             ),
           ],
-          bottom: const TabBar(
+          bottom: TabBar(
             labelColor: Colors.white,
             unselectedLabelColor: Color(0xB3FFFFFF),
             indicatorColor: AppColors.accent,
+            onTap: (index) {
+              final destination = switch (index) {
+                1 => PublicRoutePaths.standings,
+                2 => PublicRoutePaths.leaders,
+                _ => PublicRoutePaths.games,
+              };
+              if (GoRouterState.of(context).uri.path != destination) {
+                context.go(destination);
+              }
+            },
             tabs: [
               Tab(text: 'Games', icon: Icon(Icons.sports_basketball)),
               Tab(text: 'Standings', icon: Icon(Icons.emoji_events_outlined)),
@@ -244,7 +254,7 @@ class _GameCard extends StatelessWidget {
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(AppSizes.radiusMd),
-        onTap: () => context.push(PublicRoutePaths.game(game.gameId)),
+        onTap: () => context.go(PublicRoutePaths.game(game.gameId)),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -393,19 +403,25 @@ class _StandingsTabState extends State<_StandingsTab> {
             child: Column(
               children: standings
                   .map((row) {
+                    final divisionLabel = _divisionId == null
+                        ? widget.snapshot.divisionName(row.divisionId)
+                        : null;
+                    final recordDetails =
+                        '${_known(row.gamesPlayed)} GP · PF ${_known(row.pointsFor)} · PA ${_known(row.pointsAgainst)}';
                     return ListTile(
                       onTap: row.teamId == null
                           ? null
-                          : () => context.push(
-                              PublicRoutePaths.team(row.teamId!),
-                            ),
+                          : () =>
+                                context.go(PublicRoutePaths.team(row.teamId!)),
                       leading: CircleAvatar(child: Text(_rankLabel(row))),
                       title: Text(
                         row.teamName,
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       subtitle: Text(
-                        '${_known(row.gamesPlayed)} GP · PF ${_known(row.pointsFor)} · PA ${_known(row.pointsAgainst)}',
+                        divisionLabel == null
+                            ? recordDetails
+                            : '$divisionLabel · $recordDetails',
                       ),
                       trailing: Text(
                         _record(row.wins, row.losses),
@@ -542,7 +558,7 @@ class _LeadersTabState extends State<_LeadersTab> {
                         ListTile(
                           onTap: board.rankings[index].playerId == null
                               ? null
-                              : () => context.push(
+                              : () => context.go(
                                   PublicRoutePaths.player(
                                     board.rankings[index].playerId!,
                                   ),

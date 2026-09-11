@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/public_league_snapshot.dart';
 
@@ -16,7 +18,14 @@ class PublicPlayerDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Player details')),
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => context.go(PublicRoutePaths.leaders),
+          tooltip: 'Back to public leaders',
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: const Text('Player details'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(AppSizes.paddingMd),
         children: [

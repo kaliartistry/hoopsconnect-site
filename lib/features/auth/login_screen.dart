@@ -344,7 +344,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     child: OutlinedButton.icon(
                       onPressed: _loading
                           ? null
-                          : () => context.push(PublicRoutePaths.games),
+                          : () => context.go(PublicRoutePaths.games),
                       icon: const Icon(Icons.visibility_outlined),
                       label: const Text('Browse scores & schedule as a guest'),
                     ),
