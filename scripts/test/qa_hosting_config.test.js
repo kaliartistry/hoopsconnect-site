@@ -49,4 +49,8 @@ test('web bootstrap selects the engine-matched local renderer', () => {
   assert.match(bootstrap, /canvasKitBaseUrl:\s*'canvaskit\/'/);
   assert.doesNotMatch(bootstrap, /serviceWorkerVersion/);
   assert.doesNotMatch(bootstrap, /www\.gstatic\.com/);
+  assert.match(bootstrap, /navigator\.serviceWorker\.getRegistrations\(\)/);
+  assert.match(bootstrap, /navigator\.serviceWorker\.register\('flutter_service_worker\.js'/);
+  assert.match(bootstrap, /pathname\.endsWith\('\/flutter_service_worker\.js'/);
+  assert.doesNotMatch(bootstrap, /if \(registrations\.length > 0\)/);
 });

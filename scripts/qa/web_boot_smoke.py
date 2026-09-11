@@ -5,6 +5,7 @@ import contextlib
 import http.server
 import json
 import mimetypes
+import os
 import pathlib
 import shutil
 import subprocess
@@ -80,7 +81,21 @@ class HostingHandler(http.server.BaseHTTPRequestHandler):
     response_headers = None
 
     def do_GET(self):
-        requested = unquote(urlparse(self.path).path).lstrip("/")
+        parsed_request = urlparse(self.path)
+        requested = unquote(parsed_request.path).lstrip("/")
+        if requested == "flutter_service_worker.js" and parsed_request.query == "qa-stale=1":
+            data = (
+                "self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));"
+                "self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));"
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript")
+            self.send_header("Content-Length", str(len(data)))
+            for key, value in self.response_headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(data)
+            return
         candidate = (self.build_dir / requested).resolve()
         if self.build_dir not in candidate.parents and candidate != self.build_dir:
             self.send_error(404)
@@ -124,6 +139,7 @@ def serve(build_dir, headers):
 def find_chrome(explicit=None):
     candidates = [
         explicit,
+        os.environ.get("HOOPSCONNECT_QA_CHROME"),
         shutil.which("google-chrome"),
         shutil.which("google-chrome-stable"),
         shutil.which("chromium"),
@@ -151,6 +167,8 @@ def evaluate(websocket, identifier, expression, deadline):
 
 BOOT_STATE = r"""
 (() => ({
+  documentToken: window.__hoopsconnectQaDocumentToken ||= crypto.randomUUID(),
+  navigationTimeOrigin: performance.timeOrigin,
   readyState: document.readyState,
   title: document.title,
   flutterRoot: Boolean(
@@ -163,13 +181,23 @@ BOOT_STATE = r"""
 """
 
 
-def wait_for_flutter_frame(websocket, deadline, first_identifier):
+def wait_for_flutter_frame(websocket, deadline, first_identifier, previous_document=None):
     identifier = first_identifier
     last = None
     while time.monotonic() < deadline:
         identifier += 1
-        last = evaluate(websocket, identifier, BOOT_STATE, deadline)
-        if last and last.get("flutterRoot"):
+        try:
+            last = evaluate(websocket, identifier, BOOT_STATE, deadline)
+        except RuntimeError as error:
+            if "context" not in str(error).lower() and "navigation" not in str(error).lower():
+                raise
+            time.sleep(0.1)
+            continue
+        if (
+            last and
+            last.get("flutterRoot") and
+            (previous_document is None or last.get("documentToken") != previous_document)
+        ):
             resources = last.get("resources", [])
             if any("/flutter-canvaskit/" in resource for resource in resources):
                 raise RuntimeError("browser requested remote CanvasKit")
@@ -178,6 +206,48 @@ def wait_for_flutter_frame(websocket, deadline, first_identifier):
             return identifier, last
         time.sleep(0.1)
     raise RuntimeError(f"Flutter did not render a first frame; last browser state: {last}")
+
+
+INSTALL_STALE_WORKER = r"""
+navigator.serviceWorker.register('/flutter_service_worker.js?qa-stale=1', {scope: '/'})
+  .then((registration) => new Promise((resolve, reject) => {
+    const worker = registration.installing || registration.waiting || registration.active;
+    if (registration.active && registration.active.scriptURL.includes('qa-stale=1')) {
+      resolve({active: true, scriptURL: registration.active.scriptURL});
+      return;
+    }
+    const timeout = setTimeout(() => reject(new Error('stale worker activation timeout')), 10000);
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'activated') {
+        clearTimeout(timeout);
+        resolve({active: true, scriptURL: worker.scriptURL});
+      }
+    });
+  }))
+"""
+
+
+def wait_for_worker_cleanup(websocket, deadline, first_identifier):
+    identifier = first_identifier
+    last = None
+    while time.monotonic() < deadline:
+        identifier += 1
+        try:
+            last = evaluate(
+                websocket,
+                identifier,
+                "navigator.serviceWorker.getRegistrations().then((items) => items.length)",
+                deadline,
+            )
+        except RuntimeError as error:
+            if "context" not in str(error).lower() and "navigation" not in str(error).lower():
+                raise
+            time.sleep(0.1)
+            continue
+        if last == 0:
+            return identifier
+        time.sleep(0.1)
+    raise RuntimeError(f"stale app-shell worker remained registered; registrations={last}")
 
 
 def run_browser(chrome, page_url, timeout_seconds):
@@ -215,27 +285,32 @@ def run_browser(chrome, page_url, timeout_seconds):
                     raise RuntimeError(f"PWA metadata did not survive boot: {first}")
 
                 identifier += 1
+                stale = evaluate(websocket, identifier, INSTALL_STALE_WORKER, deadline)
+                if not stale or not stale.get("active") or "qa-stale=1" not in stale.get("scriptURL", ""):
+                    raise RuntimeError(f"failed to explicitly activate the stale worker: {stale}")
+
+                first_document = first.get("documentToken")
+                first_time_origin = first.get("navigationTimeOrigin")
+                identifier += 1
                 websocket.command(
                     identifier,
                     "Page.reload",
                     {"ignoreCache": True},
                     deadline=deadline,
                 )
-                identifier, second = wait_for_flutter_frame(websocket, deadline, identifier)
-                identifier += 1
-                registrations = evaluate(
-                    websocket,
-                    identifier,
-                    "navigator.serviceWorker.getRegistrations().then((items) => items.length)",
-                    deadline,
+                identifier, second = wait_for_flutter_frame(
+                    websocket, deadline, identifier, previous_document=first_document
                 )
-                if registrations != 0:
-                    raise RuntimeError(
-                        "Flutter 3.41 stale app-shell worker remained registered after update boot"
-                    )
+                if (
+                    second.get("documentToken") == first_document or
+                    second.get("navigationTimeOrigin") == first_time_origin
+                ):
+                    raise RuntimeError("cache-bypassing reload did not create a new document")
+                identifier = wait_for_worker_cleanup(websocket, deadline, identifier)
+                identifier, second = wait_for_flutter_frame(websocket, deadline, identifier)
                 print(
                     "HOOPSCONNECT_WEB_BOOT_OK "
-                    "fresh=true update=true staleWorker=false "
+                    "fresh=true update=true newDocument=true staleWorkerRemoved=true "
                     f"resources={len(second.get('resources', []))}"
                 )
             finally:
@@ -260,20 +335,11 @@ def main():
     parser.add_argument("--config", default="firebase.qa.json")
     parser.add_argument("--chrome")
     parser.add_argument("--timeout", type=int, default=30)
-    parser.add_argument(
-        "--reproduce-legacy-renderer",
-        action="store_true",
-        help="Run the pre-fix generated bootstrap to reproduce F-01.",
-    )
     args = parser.parse_args()
 
     build_dir = pathlib.Path(args.build_dir).resolve()
     headers = parse_headers(pathlib.Path(args.config).resolve())
-    validate_build(
-        build_dir,
-        headers,
-        require_bundled_renderer=not args.reproduce_legacy_renderer,
-    )
+    validate_build(build_dir, headers)
     with serve(build_dir, headers) as port:
         run_browser(find_chrome(args.chrome), f"http://127.0.0.1:{port}/", args.timeout)
 

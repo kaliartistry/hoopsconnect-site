@@ -6,7 +6,10 @@ hash-pinned. They were not applied by Workstream A.
 ## Production Hosting CSP
 
 `web/flutter_bootstrap.js` removes the remote CanvasKit dependency by selecting
-the renderer already emitted in `build/web/canvaskit`. FlutterFire 2.24.1 still
+the renderer already emitted in `build/web/canvaskit`. It also registers
+Flutter 3.41's unregister-only worker only when a legacy worker already exists,
+so update users escape old app-shell caches without giving fresh users a
+persistent cache. FlutterFire 2.24.1 still
 loads its JavaScript modules from this versioned path:
 
 ```text
@@ -44,7 +47,10 @@ an isolated staging project. Do not deploy as part of this patch.
 Install `public_functions` with `npm ci` and run `npm --prefix public_functions
 test`. Add `node scripts/run_local_qa.js` as a separate browser/emulator job so
 its dedicated ports and Java process are isolated from the existing security
-emulator suite. Pin Node 22 and Firebase CLI 15.8.0 as the current workflow does.
+emulator suite. Pin Node 22, Java 21, Flutter 3.41.2 and Firebase CLI 15.8.0 as
+the current workflow does. `scripts/qa/toolchain.json` is the Stage 0 executable
+contract; the runner fails with an exact mismatch instead of silently accepting
+a different local runtime.
 
 ## Pinned production entrypoint
 

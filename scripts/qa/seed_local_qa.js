@@ -8,23 +8,31 @@ const ASSOCIATION_ID = 'jba';
 const EMPTY_ASSOCIATION_ID = 'jba-empty';
 const PASSWORD = 'LocalQa-Only-42!';
 const LOOPBACK = /^(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/;
+const QA_FIXTURE_VERSION = 2;
+const AUTHORIZATION_SCHEMA_PATH = path.resolve(
+  __dirname,
+  '../../functions/src/authorization_schema_v1.json',
+);
+const authorizationSchema = require(AUTHORIZATION_SCHEMA_PATH);
+const AUTHORIZATION_SCHEMA_VERSION = authorizationSchema.schemaVersion;
+const roles = Object.freeze(
+  Object.entries(authorizationSchema.roles).map(([role, capabilities]) =>
+    Object.freeze([role, Object.freeze([...capabilities])])),
+);
 
-const roles = [
-  ['fan', []],
-  ['rep', ['posts.internal.read']],
-  ['statistician', ['posts.internal.read', 'stats.enter']],
-  ['media', ['press.read', 'stats.export']],
-  ['press', ['press.read', 'stats.export']],
-  ['admin', [
-    'invites.manage', 'members.manage', 'posts.create',
-    'posts.internal.read', 'schedule.manage', 'stats.approve', 'teams.manage',
-  ]],
-  ['superAdmin', [
-    'association.manage', 'invites.manage', 'members.manage', 'posts.create',
-    'posts.internal.read', 'posts.manage', 'press.read', 'schedule.manage',
-    'stats.approve', 'stats.enter', 'stats.export', 'teams.manage',
-  ]],
-];
+const TEAM_FIXTURES = Object.freeze([
+  {id: 'kingston-lions', name: 'Kingston Lions', divisionId: 'premier'},
+  {id: 'montego-bay-waves', name: 'Montego Bay Waves', divisionId: 'premier'},
+  {id: 'spanish-town-sparks', name: 'Spanish Town Sparks', divisionId: 'development'},
+  {id: 'portmore-pelicans', name: 'Portmore Pelicans', divisionId: 'development'},
+]);
+
+const PLAYER_NAMES = Object.freeze({
+  'kingston-lions': ['Andre Blake', 'Dwayne Campbell', 'Malik Grant', 'Omar Reid', 'Tevin Brown', 'Kemar Lewis'],
+  'montego-bay-waves': ['Jordan Clarke', 'Akeem Foster', 'Ricardo Hill', 'Noel Morgan', 'Shawn Powell', 'Troy Williams'],
+  'spanish-town-sparks': ['Dario Bennett', 'Javon Cole', 'Nico Davis', 'Rohan Ellis', 'Kadeem Francis', 'Marlon Green'],
+  'portmore-pelicans': ['Amari Henry', 'Joel Irving', 'Kevin James', 'Leon King', 'Micah Lawson', 'Nathan Miller'],
+});
 
 function requireSafeEnvironment(env = process.env) {
   if (env.GCLOUD_PROJECT !== PROJECT_ID) {
@@ -54,23 +62,30 @@ async function probeCallable(env = process.env) {
   const endpoint =
     `http://${env.FUNCTIONS_EMULATOR_HOST}/${PROJECT_ID}/us-central1/` +
     'inspectPrivilegedInvite';
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      data: {
-        code: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        authorizationSchemaVersion: 1,
-      },
-    }),
-  });
-  const body = await response.json();
-  if (response.ok || body?.error?.status !== 'NOT_FOUND') {
-    throw new Error(
-      `Functions emulator callable probe returned ${response.status} ` +
-      `${JSON.stringify(body)}`,
-    );
+  const deadline = Date.now() + 30000;
+  let last;
+  while (Date.now() < deadline) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        data: {
+          code: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+        },
+      }),
+    });
+    const responseText = await response.text();
+    try {
+      const body = JSON.parse(responseText);
+      if (!response.ok && body?.error?.status === 'NOT_FOUND') return;
+      last = `${response.status} ${JSON.stringify(body)}`;
+    } catch (_error) {
+      last = `${response.status} ${responseText.slice(0, 160)}`;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  throw new Error(`Functions emulator callable probe did not become ready: ${last}`);
 }
 
 function firebaseAdmin() {
@@ -114,7 +129,8 @@ function profile(user, role, associationId, teamId) {
       statReminders: false,
       newPosts: false,
     },
-    qaFixtureVersion: 1,
+    authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   };
 }
 
@@ -124,10 +140,10 @@ function membership(user, role, capabilities, associationId, teamId) {
     role,
     capabilities,
     status: 'active',
-    authorizationSchemaVersion: 1,
+    authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     teamId: teamId || null,
     divisionId: teamId ? 'premier' : null,
-    qaFixtureVersion: 1,
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   };
 }
 
@@ -153,81 +169,339 @@ async function seedIdentities(auth, db) {
 async function seedLeague(db, admin) {
   const timestamp = admin.firestore.Timestamp;
   const seasonId = 'qa-2026';
+  const competitionId = 'qa-nbl';
+  const updatedAt = timestamp.fromDate(new Date('2026-09-01T12:00:00.000Z'));
   const batch = db.batch();
   const set = (documentPath, value) => batch.set(db.doc(documentPath), value);
+
+  const players = TEAM_FIXTURES.flatMap((team, teamIndex) =>
+    PLAYER_NAMES[team.id].map((name, index) => ({
+      id: `${team.id}-p${index + 1}`,
+      name,
+      teamId: team.id,
+      teamName: team.name,
+      divisionId: team.divisionId,
+      jerseyNumber: index === 0 ? '0' : index === 1 ? '00' : String(index + 2),
+      position: ['PG', 'SG', 'SF', 'PF', 'C', 'G'][index],
+      gamesPlayed: 5,
+      ppg: 18.4 - teamIndex - index * 0.7,
+      rpg: 8.1 - index * 0.4 + teamIndex * 0.2,
+      apg: 6.8 - index * 0.5 + teamIndex * 0.1,
+    })),
+  );
+
+  const playersFor = (teamId) => players.filter((player) => player.teamId === teamId);
+  const playerLines = (teamIds, pointTargets) => {
+    const result = {};
+    teamIds.forEach((teamId, teamIndex) => {
+      const teamPlayers = playersFor(teamId);
+      const points = pointTargets[teamIndex];
+      const distribution = [points - 42, 13, 11, 9, 5, 4];
+      teamPlayers.forEach((player, index) => {
+        const oreb = index % 3;
+        const dreb = 2 + ((index + teamIndex) % 5);
+        result[player.id] = {
+          name: player.name,
+          teamId,
+          pts: distribution[index],
+          oreb,
+          dreb,
+          reb: oreb + dreb,
+          ast: Math.max(1, 6 - index),
+          stl: index % 3,
+          blk: index % 2,
+          fls: 1 + (index % 3),
+          min: 30 + (index % 4),
+        };
+      });
+    });
+    return result;
+  };
+
+  const standings = [
+    {teamId: 'kingston-lions', teamName: 'Kingston Lions', divisionId: 'premier', wins: 7, losses: 2, pct: 0.778, gb: 0, streak: 'W3', lastTen: '7-2', pointsFor: 731, pointsAgainst: 668},
+    {teamId: 'montego-bay-waves', teamName: 'Montego Bay Waves', divisionId: 'premier', wins: 5, losses: 4, pct: 0.556, gb: 2, streak: 'L1', lastTen: '5-4', pointsFor: 705, pointsAgainst: 694},
+    {teamId: 'spanish-town-sparks', teamName: 'Spanish Town Sparks', divisionId: 'development', wins: 6, losses: 3, pct: 0.667, gb: 1, streak: 'W1', lastTen: '6-3', pointsFor: 712, pointsAgainst: 681},
+    {teamId: 'portmore-pelicans', teamName: 'Portmore Pelicans', divisionId: 'development', wins: 3, losses: 6, pct: 0.333, gb: 4, streak: 'L2', lastTen: '3-6', pointsFor: 649, pointsAgainst: 716},
+  ];
 
   set(`associations/${ASSOCIATION_ID}`, {
     name: 'Jamaica Basketball Association QA',
     shortName: 'JBA QA',
     currentSeasonId: seasonId,
     primaryColor: '#2E7D32',
-    qaFixtureVersion: 1,
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/seasons/${seasonId}`, {
-    name: 'Synthetic 2026 Season',
-    status: 'active',
-    startDate: timestamp.fromDate(new Date('2026-01-01T05:00:00.000Z')),
-    endDate: timestamp.fromDate(new Date('2026-12-31T05:00:00.000Z')),
-    qaFixtureVersion: 1,
+
+  const seasonFixtures = [
+    {id: 'qa-2025-archived', name: 'Synthetic 2025 Archive', status: 'archived', start: '2025-01-01T05:00:00.000Z', end: '2025-12-31T05:00:00.000Z'},
+    {id: seasonId, name: 'Synthetic 2026 Season', status: 'active', start: '2026-01-01T05:00:00.000Z', end: '2026-12-31T05:00:00.000Z'},
+    {id: 'qa-2027-draft', name: 'Synthetic 2027 Draft', status: 'draft', start: '2027-01-01T05:00:00.000Z', end: '2027-12-31T05:00:00.000Z'},
+  ];
+  for (const season of seasonFixtures) {
+    set(`associations/${ASSOCIATION_ID}/seasons/${season.id}`, {
+      name: season.name,
+      status: season.status,
+      startDate: timestamp.fromDate(new Date(season.start)),
+      endDate: timestamp.fromDate(new Date(season.end)),
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+  for (const [id, name] of [['premier', 'Premier Division'], ['development', 'Development Division']]) {
+    set(`associations/${ASSOCIATION_ID}/divisions/${id}`, {
+      name, seasonId, qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+  for (const team of TEAM_FIXTURES) {
+    set(`associations/${ASSOCIATION_ID}/teams/${team.id}`, {
+      name: team.name,
+      divisionId: team.divisionId,
+      seasonId,
+      repIds: team.id === 'kingston-lions' ? ['qa-rep'] : [],
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+    set(`associations/${ASSOCIATION_ID}/teamSeasonStats/${team.id}_${seasonId}`, {
+      teamId: team.id,
+      teamName: team.name,
+      seasonId,
+      divisionId: team.divisionId,
+      gamesPlayed: 9,
+      totals: {pts: 700, oreb: 92, dreb: 211, reb: 303, ast: 148, stl: 61, blk: 33, to: 102, fls: 133, min: 1800},
+      averages: {ppg: 77.8, rpg: 33.7, apg: 16.4, spg: 6.8, bpg: 3.7, topg: 11.3, fpg: 14.8},
+      gameLog: [],
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+
+  for (const [index, player] of players.entries()) {
+    const totals = {
+      pts: Math.round(player.ppg * player.gamesPlayed),
+      reb: Math.round(player.rpg * player.gamesPlayed),
+      ast: Math.round(player.apg * player.gamesPlayed),
+      stl: 5 + (index % 8),
+      blk: 2 + (index % 5),
+      min: 150 + (index % 20),
+      fls: 8 + (index % 7),
+      oreb: 5 + (index % 6),
+      dreb: Math.max(0, Math.round(player.rpg * player.gamesPlayed) - (5 + (index % 6))),
+    };
+    set(`associations/${ASSOCIATION_ID}/playerSeasonStats/${player.id}_${seasonId}`, {
+      playerId: player.id,
+      playerName: player.name,
+      teamId: player.teamId,
+      teamName: player.teamName,
+      seasonId,
+      divisionId: player.divisionId,
+      jerseyNumber: player.jerseyNumber,
+      position: player.position,
+      registrationStatus: index % 6 === 5 ? 'pendingReview' : 'eligible',
+      gamesPlayed: player.gamesPlayed,
+      totals,
+      averages: {ppg: player.ppg, rpg: player.rpg, apg: player.apg, spg: totals.stl / 5, bpg: totals.blk / 5},
+      gameLog: [],
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+
+  const games = [
+    {id: 'qa-final-game', home: 'kingston-lions', away: 'montego-bay-waves', divisionId: 'premier', start: '2026-08-20T00:00:00.000Z', venue: 'National Indoor Sports Centre', statsStatus: 'approved', status: 'approved', score: [82, 76], quarters: [[21, 19, 20, 22], [18, 20, 19, 19]]},
+    {id: 'qa-overtime-final', home: 'spanish-town-sparks', away: 'portmore-pelicans', divisionId: 'development', start: '2026-08-27T00:00:00.000Z', venue: 'GC Foster College', statsStatus: 'approved', status: 'approved', score: [91, 88], quarters: [[18, 21, 24, 22, 6], [20, 19, 23, 23, 3]]},
+    {id: 'qa-awaiting-review', home: 'montego-bay-waves', away: 'kingston-lions', divisionId: 'premier', start: '2026-09-03T00:00:00.000Z', venue: 'Montego Bay Community Centre', statsStatus: 'submitted', status: 'submitted', score: [74, 78], quarters: [[17, 19, 20, 18], [20, 18, 21, 19]]},
+    {id: 'qa-changes-requested', home: 'portmore-pelicans', away: 'spanish-town-sparks', divisionId: 'development', start: '2026-09-05T22:00:00.000Z', venue: 'Portmore HEART Academy', statsStatus: 'submitted', status: 'rejected', score: [69, 72], quarters: [[16, 18, 17, 18], [18, 16, 20, 18]]},
+    {id: 'qa-in-progress', home: 'kingston-lions', away: 'spanish-town-sparks', divisionId: 'premier', start: '2026-09-10T23:00:00.000Z', venue: 'National Indoor Sports Centre', statsStatus: 'pending', status: 'inProgress', score: [38, 35], quarters: [[19, 19], [17, 18]]},
+    {id: 'qa-upcoming-game', home: 'montego-bay-waves', away: 'portmore-pelicans', divisionId: 'premier', start: '2026-10-15T23:00:00.000Z', venue: 'Montego Bay Community Centre', statsStatus: 'pending'},
+  ];
+  const teamsById = new Map(TEAM_FIXTURES.map((team) => [team.id, team]));
+  for (const game of games) {
+    const home = teamsById.get(game.home);
+    const away = teamsById.get(game.away);
+    const start = new Date(game.start);
+    set(`associations/${ASSOCIATION_ID}/events/${game.id}`, {
+      title: `${home.name} vs ${away.name}`,
+      type: 'game',
+      seasonId,
+      divisionId: game.divisionId,
+      startTime: timestamp.fromDate(start),
+      endTime: timestamp.fromDate(new Date(start.getTime() + 2 * 60 * 60 * 1000)),
+      location: game.venue,
+      teamIds: [game.home, game.away],
+      createdBy: 'qa-superadmin',
+      statsStatus: game.statsStatus,
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+    if (game.status) {
+      set(`associations/${ASSOCIATION_ID}/gameStats/${game.id}`, {
+        eventId: game.id,
+        seasonId,
+        divisionId: game.divisionId,
+        status: game.status,
+        homeTeamId: game.home,
+        homeTeamName: home.name,
+        homeScore: game.score[0],
+        awayTeamId: game.away,
+        awayTeamName: away.name,
+        awayScore: game.score[1],
+        entryMode: game.status === 'inProgress' ? 'live' : 'postGame',
+        playerLines: playerLines([game.home, game.away], game.score),
+        homeQuarterScores: Object.fromEntries(game.quarters[0].map((score, index) => [String(index + 1), score])),
+        awayQuarterScores: Object.fromEntries(game.quarters[1].map((score, index) => [String(index + 1), score])),
+        submittedBy: game.status === 'inProgress' ? null : 'qa-statistician',
+        submittedAt: game.status === 'inProgress' ? null : updatedAt,
+        approvedBy: game.status === 'approved' ? 'qa-admin' : null,
+        approvedAt: game.status === 'approved' ? updatedAt : null,
+        rejectedBy: game.status === 'rejected' ? 'qa-admin' : null,
+        rejectedAt: game.status === 'rejected' ? updatedAt : null,
+        rejectionNote: game.status === 'rejected' ? 'Confirm the third-quarter team total before resubmitting.' : null,
+        revisionNumber: game.status === 'rejected' ? 1 : 0,
+        qaFixtureVersion: QA_FIXTURE_VERSION,
+      });
+    }
+  }
+
+  for (const [divisionId, rows] of [
+    [null, standings],
+    ['premier', standings.filter((row) => row.divisionId === 'premier')],
+    ['development', standings.filter((row) => row.divisionId === 'development')],
+  ]) {
+    set(`associations/${ASSOCIATION_ID}/standings/${seasonId}_${divisionId || 'all'}`, {
+      seasonId,
+      divisionId,
+      updatedAt,
+      standings: rows,
+      rankingPolicy: 'qa-winning-percentage-v1',
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+  const categories = [['ppg', 'ppg'], ['rpg', 'rpg'], ['apg', 'apg'], ['spg', 'spg'], ['bpg', 'bpg']];
+  for (const divisionId of [null, 'premier', 'development']) {
+    const eligible = divisionId ? players.filter((player) => player.divisionId === divisionId) : players;
+    for (const [category, field] of categories) {
+      const rankings = [...eligible]
+        .sort((a, b) => (b[field] || (field === 'spg' ? 2 : 1)) - (a[field] || (field === 'spg' ? 2 : 1)))
+        .slice(0, 10)
+        .map((player, index) => ({
+          playerId: player.id,
+          name: player.name,
+          teamName: player.teamName,
+          value: field === 'spg' ? 2.2 - index * 0.1 : field === 'bpg' ? 1.8 - index * 0.1 : player[field],
+          gp: player.gamesPlayed,
+        }));
+      set(`associations/${ASSOCIATION_ID}/leaderboard/${seasonId}_${divisionId || 'all'}_${category}`, {
+        seasonId, divisionId, category, updatedAt, rankings, qaFixtureVersion: QA_FIXTURE_VERSION,
+      });
+    }
+  }
+
+  // Canonical v2-shaped records let Stage 1 exercise identity, roster,
+  // schedule-revision, assignment, stat-revision, and review journeys without
+  // manufacturing records ad hoc. They remain synthetic and emulator-only.
+  set(`associations/${ASSOCIATION_ID}/competitions/${competitionId}`, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId,
+    name: 'Synthetic National Basketball League', status: 'active',
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/divisions/premier`, {
-    name: 'Premier Division',
-    seasonId,
-    qaFixtureVersion: 1,
+  set(`associations/${ASSOCIATION_ID}/competitions/${competitionId}/seasons/${seasonId}`, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+    status: 'active', controlVersion: 1, rulesetVersion: 'qa-fiba-profile-unactivated-v1',
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/teams/kingston-lions`, {
-    name: 'Kingston Lions', divisionId: 'premier', seasonId,
-    repIds: ['qa-rep'], qaFixtureVersion: 1,
+  for (const team of TEAM_FIXTURES) {
+    const teamEntryId = `${team.id}-entry`;
+    set(`associations/${ASSOCIATION_ID}/teamIdentities/${team.id}`, {
+      dataSchemaVersion: 2, associationId: ASSOCIATION_ID, teamId: team.id,
+      identityVersionId: `${team.id}-identity-v1`, status: 'active', displayName: team.name,
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+    set(`associations/${ASSOCIATION_ID}/competitions/${competitionId}/seasons/${seasonId}/teamEntries/${teamEntryId}`, {
+      dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+      divisionId: team.divisionId, teamEntryId, teamId: team.id,
+      seasonalIdentityVersionId: `${team.id}-identity-v1`, registrationStatus: 'approved',
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+  for (const player of players) {
+    set(`associations/${ASSOCIATION_ID}/persons/${player.id}-person`, {
+      dataSchemaVersion: 2, associationId: ASSOCIATION_ID, personId: `${player.id}-person`,
+      identityVersionId: `${player.id}-name-v1`, status: 'active',
+      qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+    set(`associations/${ASSOCIATION_ID}/players/${player.id}`, {
+      dataSchemaVersion: 2, associationId: ASSOCIATION_ID, playerId: player.id,
+      personId: `${player.id}-person`, displayNameVersionId: `${player.id}-name-v1`,
+      displayName: player.name, status: 'active', qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+    const membershipId = `${player.teamId}-${player.id}`;
+    set(`associations/${ASSOCIATION_ID}/competitions/${competitionId}/seasons/${seasonId}/rosterMemberships/${membershipId}`, {
+      dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+      membershipId, membershipVersionId: `${membershipId}-v1`, playerId: player.id,
+      teamEntryId: `${player.teamId}-entry`, eligibilityStatus: 'eligible',
+      jerseyNumber: player.jerseyNumber, position: player.position,
+      effectiveFrom: timestamp.fromDate(new Date('2026-01-01T05:00:00.000Z')),
+      effectiveTo: null, recordedAt: updatedAt, qaFixtureVersion: QA_FIXTURE_VERSION,
+    });
+  }
+  const canonicalGamePath = `associations/${ASSOCIATION_ID}/competitions/${competitionId}/seasons/${seasonId}/games/qa-changes-requested`;
+  set(canonicalGamePath, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+    divisionId: 'development', phaseId: 'regular-season', gameId: 'qa-changes-requested',
+    homeTeamEntryId: 'portmore-pelicans-entry', awayTeamEntryId: 'spanish-town-sparks-entry',
+    playState: 'complete', reviewState: 'changesRequested', publicationState: 'withheld',
+    controlVersion: 1, qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/teams/montego-bay-waves`, {
-    name: 'Montego Bay Waves', divisionId: 'premier', seasonId,
-    repIds: [], qaFixtureVersion: 1,
+  set(`${canonicalGamePath}/scheduleRevisions/schedule-v1`, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+    gameId: 'qa-changes-requested', versionId: 'schedule-v1', predecessorVersionId: null,
+    scheduledStart: timestamp.fromDate(new Date('2026-09-05T22:00:00.000Z')),
+    scheduledEnd: timestamp.fromDate(new Date('2026-09-06T00:00:00.000Z')),
+    timezone: 'America/Jamaica', venueId: 'portmore-heart', courtId: 'main',
+    homeTeamEntryId: 'portmore-pelicans-entry', awayTeamEntryId: 'spanish-town-sparks-entry',
+    reasonCode: 'initialSchedule', qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/events/qa-final-game`, {
-    title: 'Kingston Lions vs Montego Bay Waves',
-    type: 'game', seasonId, divisionId: 'premier',
-    startTime: timestamp.fromDate(new Date('2026-08-20T00:00:00.000Z')),
-    endTime: timestamp.fromDate(new Date('2026-08-20T02:00:00.000Z')),
-    location: 'National Indoor Sports Centre',
-    teamIds: ['kingston-lions', 'montego-bay-waves'],
-    createdBy: 'qa-superadmin', statsStatus: 'approved', qaFixtureVersion: 1,
+  set(`${canonicalGamePath}/assignments/qa-statistician`, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+    gameId: 'qa-changes-requested', uid: 'qa-statistician', duties: ['stats.enter'],
+    status: 'active', assignmentVersion: 1, qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/events/qa-upcoming-game`, {
-    title: 'Montego Bay Waves vs Kingston Lions',
-    type: 'game', seasonId, divisionId: 'premier',
-    startTime: timestamp.fromDate(new Date('2026-10-15T23:00:00.000Z')),
-    endTime: timestamp.fromDate(new Date('2026-10-16T01:00:00.000Z')),
-    location: 'Montego Bay Community Centre',
-    teamIds: ['montego-bay-waves', 'kingston-lions'],
-    createdBy: 'qa-superadmin', statsStatus: 'pending', qaFixtureVersion: 1,
+  set(`${canonicalGamePath}/statRevisions/revision-1`, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+    divisionId: 'development', phaseId: 'regular-season', gameId: 'qa-changes-requested',
+    revisionId: 'revision-1', revisionNumber: 1, captureMode: 'postGame',
+    resultDisposition: 'played', statisticsDisposition: 'complete',
+    rulesetVersion: 'qa-fiba-profile-unactivated-v1', policyVersion: 'qa-policy-v1',
+    calculatorVersion: 'normalized-box-score-v2', scheduleRevisionId: 'schedule-v1',
+    rosterSnapshotId: 'roster-snapshot-v1', rosterSnapshotHash: 'a'.repeat(64),
+    sourceWorkspaceId: 'workspace-1', acceptedThroughSequence: 42,
+    journalHash: 'b'.repeat(64), inputParts: ['teamOnlyInputs', 'playerLines'],
+    inputHash: 'c'.repeat(64), derivedHash: 'd'.repeat(64),
+    validationReportHash: 'e'.repeat(64), createdBy: 'qa-statistician', createdAt: updatedAt,
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/gameStats/qa-final-game`, {
-    seasonId, divisionId: 'premier', status: 'approved',
-    homeTeamId: 'kingston-lions', homeTeamName: 'Kingston Lions', homeScore: 82,
-    awayTeamId: 'montego-bay-waves', awayTeamName: 'Montego Bay Waves', awayScore: 76,
-    playerStats: [], teamStats: {}, qaFixtureVersion: 1,
+  set(`${canonicalGamePath}/reviews/review-1`, {
+    dataSchemaVersion: 2, associationId: ASSOCIATION_ID, competitionId, seasonId,
+    gameId: 'qa-changes-requested', reviewId: 'review-1', revisionId: 'revision-1',
+    revisionHash: 'd'.repeat(64), reviewerAccountId: 'qa-admin', decision: 'changesRequested',
+    reasonCode: 'quarterTotalMismatch', evidenceRefs: ['qa-fixture://score-sheet'],
+    qaFixtureVersion: QA_FIXTURE_VERSION,
   });
-  set(`associations/${ASSOCIATION_ID}/standings/${seasonId}`, {
-    seasonId,
-    standings: [
-      {teamId: 'kingston-lions', teamName: 'Kingston Lions', divisionId: 'premier', wins: 1, losses: 0, pct: 1, gb: 0, streak: 'W1', lastTen: '1-0', pointsFor: 82, pointsAgainst: 76},
-      {teamId: 'montego-bay-waves', teamName: 'Montego Bay Waves', divisionId: 'premier', wins: 0, losses: 1, pct: 0, gb: 1, streak: 'L1', lastTen: '0-1', pointsFor: 76, pointsAgainst: 82},
-    ],
-    qaFixtureVersion: 1,
+  set(`associations/${ASSOCIATION_ID}/qaMetadata/stage1-dataset`, {
+    qaFixtureVersion: QA_FIXTURE_VERSION,
+    authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+    counts: {teams: TEAM_FIXTURES.length, players: players.length, games: games.length, seasons: seasonFixtures.length},
+    journeys: ['roster', 'player-card', 'stats-entry', 'standings', 'leaderboards', 'revision-review', 'season-lifecycle'],
   });
-  set(`associations/${ASSOCIATION_ID}/leaderboard/${seasonId}-pts`, {
-    seasonId, category: 'PTS', rankings: [], qaFixtureVersion: 1,
-  });
+
   set(`associations/${EMPTY_ASSOCIATION_ID}`, {
     name: 'JBA Empty Fixture', shortName: 'JBA Empty',
-    currentSeasonId: 'qa-empty-2026', qaFixtureVersion: 1,
+    currentSeasonId: 'qa-empty-2026', qaFixtureVersion: QA_FIXTURE_VERSION,
   });
   set(`associations/${EMPTY_ASSOCIATION_ID}/seasons/qa-empty-2026`, {
-    name: 'Empty Synthetic Season', status: 'active', qaFixtureVersion: 1,
+    name: 'Empty Synthetic Season', status: 'active', qaFixtureVersion: QA_FIXTURE_VERSION,
   });
   await batch.commit();
 
-  // The final source write deterministically exercises the public codebase.
+  // The first source write exercises the public codebase when it is already
+  // ready. waitForPublicSnapshot repeats this idempotent write so persistent
+  // mode also survives Functions emulator startup races.
   await db.doc(`associations/${ASSOCIATION_ID}/teams/kingston-lions`).set(
     {qaPublicProjectionProbe: true},
     {merge: true},
@@ -236,13 +510,27 @@ async function seedLeague(db, admin) {
 
 async function waitForPublicSnapshot(db) {
   const ref = db.doc(`publicData/${ASSOCIATION_ID}/snapshots/current`);
-  const deadline = Date.now() + 15000;
+  const sourceProbe = db.doc(`associations/${ASSOCIATION_ID}/teams/kingston-lions`);
+  const deadline = Date.now() + 30000;
+  let nextProbeAt = 0;
   while (Date.now() < deadline) {
     const snapshot = await ref.get();
-    if (snapshot.exists && snapshot.get('published') === true) return snapshot.data();
+    const data = snapshot.data();
+    if (
+      snapshot.exists &&
+      data.published === true &&
+      data.schedule?.length === 6 &&
+      data.standings?.length === 4 &&
+      data.leaderboards?.length === 5 &&
+      data.leaderboards.every((board) => board.rankings?.length > 0)
+    ) return data;
+    if (Date.now() >= nextProbeAt) {
+      await sourceProbe.set({qaPublicProjectionProbe: true}, {merge: true});
+      nextProbeAt = Date.now() + 1000;
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error('Public Functions emulator did not publish the QA snapshot.');
+  throw new Error('Public Functions emulator did not publish the complete Stage 1 QA snapshot.');
 }
 
 async function main() {
@@ -263,12 +551,10 @@ async function main() {
     {contentType: 'text/plain', resumable: false},
   );
   const publicSnapshot = await waitForPublicSnapshot(db);
-  if (publicSnapshot.schedule.length !== 2) {
-    throw new Error('Public QA snapshot did not contain both synthetic games.');
-  }
   console.log(
     `HOOPSCONNECT_QA_FIXTURES_OK users=${roles.length * 2} ` +
-    `publicGames=${publicSnapshot.schedule.length} callable=true storage=true ` +
+    `teams=${TEAM_FIXTURES.length} players=24 publicGames=${publicSnapshot.schedule.length} ` +
+    `leaderboards=${publicSnapshot.leaderboards.length} callable=true storage=true ` +
     `password=${PASSWORD}`,
   );
 }
@@ -280,4 +566,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = {identity, probeCallable, requireSafeEnvironment, roles};
+module.exports = {
+  AUTHORIZATION_SCHEMA_VERSION,
+  TEAM_FIXTURES,
+  authorizationSchema,
+  identity,
+  probeCallable,
+  requireSafeEnvironment,
+  roles,
+};

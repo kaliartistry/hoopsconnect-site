@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  AUTHORIZATION_SCHEMA_VERSION,
+  TEAM_FIXTURES,
+  authorizationSchema,
   identity,
   requireSafeEnvironment,
   roles,
@@ -39,7 +42,7 @@ test('QA fixture accepts only the recorded synthetic local target', () => {
 test('full and empty identities are deterministic and cover every app role', () => {
   assert.deepEqual(
     roles.map(([role]) => role),
-    ['fan', 'rep', 'statistician', 'media', 'press', 'admin', 'superAdmin'],
+    ['superAdmin', 'admin', 'statistician', 'rep', 'media', 'press', 'fan'],
   );
   const generated = roles.flatMap(([role]) => [
     identity(role, 'full'),
@@ -48,4 +51,27 @@ test('full and empty identities are deterministic and cover every app role', () 
   assert.equal(new Set(generated.map((entry) => entry.uid)).size, 14);
   assert.equal(identity('superAdmin', 'full').uid, 'qa-superadmin');
   assert.equal(identity('press', 'empty').email, 'press-empty@hoopsconnect.test');
+});
+
+test('QA role authority and schema version exactly match the canonical Functions schema', () => {
+  const canonical = require('../../functions/src/authorization_schema_v1.json');
+  assert.strictEqual(authorizationSchema, canonical);
+  assert.equal(AUTHORIZATION_SCHEMA_VERSION, canonical.schemaVersion);
+  assert.deepEqual(Object.fromEntries(roles), canonical.roles);
+  for (const [role, capabilities] of roles) {
+    assert.deepEqual(capabilities, canonical.roles[role]);
+  }
+});
+
+test('full dataset has four deterministic teams for roster and division journeys', () => {
+  assert.deepEqual(TEAM_FIXTURES.map((team) => team.id), [
+    'kingston-lions',
+    'montego-bay-waves',
+    'spanish-town-sparks',
+    'portmore-pelicans',
+  ]);
+  assert.deepEqual(new Set(TEAM_FIXTURES.map((team) => team.divisionId)), new Set([
+    'premier',
+    'development',
+  ]));
 });
