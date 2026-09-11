@@ -52,6 +52,7 @@
     "blocked-decision",
     "not-run"
   ],
+  "severities": ["none", "P0", "P1", "P2", "P3"],
   "findings": [
     {"id":"F-01","title":"Web boot / Hosting CSP","owners":["A"],"scenarioIds":["F01-WEB-BOOT"]},
     {"id":"F-02","title":"Statistician post-game route","owners":["A"],"scenarioIds":["F02-STATISTICIAN-ROUTES"]},
@@ -65,34 +66,34 @@
     {"id":"F-10","title":"Admin per-tool capability checks","owners":["A"],"scenarioIds":["F10-ADMIN-CAPABILITIES"]},
     {"id":"F-11","title":"Shooting and turnover statistics","owners":["D","E"],"scenarioIds":["F11-COMPLETE-STATS"]},
     {"id":"F-12","title":"Rules-aware duration and validation","owners":["D"],"scenarioIds":["F12-RULES-PROFILE"]},
-    {"id":"F-13","title":"Needs-stats queue","owners":["D"],"scenarioIds":["F13-WORKLIST"]},
+    {"id":"F-13","title":"Needs-stats queue","owners":["D"],"scenarioIds":["F13-WORKLIST","F13-POST-GAME-ONLY-MATCH"]},
     {"id":"F-14","title":"Rejection/revision state and reminders","owners":["D","C"],"scenarioIds":["F14-REVISION-N-NPLUS1"]},
-    {"id":"F-15","title":"Public discovery, scope and ranks","owners":["E"],"scenarioIds":["F15-PUBLIC-DISCOVERY"]},
-    {"id":"F-16","title":"Live-stat identity and start guidance","owners":["D","B"],"scenarioIds":["F16-LIVE-START"]},
-    {"id":"F-17","title":"Semantics and navigable detail routes","owners":["B","A"],"scenarioIds":["F17-ACCESSIBILITY","F17-DETAIL-ROUTES"]},
+    {"id":"F-15","title":"Public discovery, scope and ranks","owners":["E"],"scenarioIds":["F15-PUBLIC-DISCOVERY","F15-CSV-SAFETY"]},
+    {"id":"F-16","title":"Live-stat identity and start guidance","owners":["D","B"],"scenarioIds":["F16-LIVE-START","F16-COURTSIDE-INTERACTION"]},
+    {"id":"F-17","title":"Semantics and navigable detail routes","owners":["B","A"],"scenarioIds":["F17-ACCESSIBILITY","F17-DETAIL-ROUTES","F16-COURTSIDE-INTERACTION"]},
     {"id":"F-18","title":"Malformed data and consistent error states","owners":["A","B","C","D","E","F"],"scenarioIds":["F18-MALFORMED-DISPLAY","F18-FAIL-CLOSED"]},
     {"id":"F-19","title":"Role-aware copy/options","owners":["A","B","C"],"scenarioIds":["F19-MEDIA-ALIAS","F19-COPY-OPTIONS"]},
     {"id":"F-20","title":"Real app version/build","owners":["A"],"scenarioIds":["F20-VERSION-METADATA"]},
     {"id":"F-21","title":"Dark theme contrast","owners":["B","A","C","D","E","F"],"scenarioIds":["F21-DARK-CONTRAST"]},
     {"id":"F-22","title":"Invite UX and real callable integration","owners":["A"],"scenarioIds":["F22-INVITE-LIFECYCLE"]},
-    {"id":"F-23","title":"Teams/player registration","owners":["C","D"],"scenarioIds":["F23-LEAGUE-SETUP"]},
-    {"id":"F-24","title":"Generator progression and editability","owners":["C"],"scenarioIds":["F24-SCHEDULE-GENERATOR"]},
+    {"id":"F-23","title":"Teams/player registration","owners":["C","D"],"scenarioIds":["F23-LEAGUE-SETUP","F23-DIVISION-LIFECYCLE"]},
+    {"id":"F-24","title":"Generator progression and editability","owners":["C"],"scenarioIds":["F24-SCHEDULE-GENERATOR","F24-MANUAL-SCHEDULE"]},
     {"id":"F-25","title":"Admin labels, ack deadline, season consequences","owners":["C"],"scenarioIds":["F25-LABELS","F25-ACK-DEADLINE","F25-SEASON-CONSEQUENCES"]},
     {"id":"F-26","title":"Desktop role preview","owners":["A"],"scenarioIds":["F26-ROLE-PREVIEW"]},
-    {"id":"X-01","title":"Full account deletion","owners":["F"],"scenarioIds":["X01-DELETION-ROUTES","X01-PROVIDERS-CUSTODY","X01-DISPOSITION-PRIVACY","X01-RELEASE-GATES"]},
-    {"id":"X-02","title":"Courtside offline recovery","owners":["D"],"scenarioIds":["X02-OFFLINE-RECOVERY"]},
+    {"id":"X-01","title":"Full account deletion","owners":["F"],"scenarioIds":["X01-DELETION-ROUTES","X01-PROVIDERS-CUSTODY","X01-DISPOSITION-PRIVACY","X01-CLIENT-CLEANUP","X01-RELEASE-GATES"]},
+    {"id":"X-02","title":"Courtside offline recovery","owners":["D"],"scenarioIds":["X02-OFFLINE-RECOVERY","F16-COURTSIDE-INTERACTION"]},
     {"id":"X-03","title":"Functions and authorization gaps in audit","owners":["A","C","D","Q"],"scenarioIds":["X03-LOCAL-BACKEND"]},
     {"id":"X-04","title":"Integrated visual coverage","owners":["B","Q"],"scenarioIds":["X04-VISUAL-MATRIX"]},
     {"id":"X-05","title":"Staging, migration and release rehearsal","owners":["I","Q"],"scenarioIds":["X05-RELEASE-REHEARSAL"]}
   ],
   "journeys": [
     {"id":"role-route","scenarioIds":["F02-STATISTICIAN-ROUTES","F07-FAN-LANDING","F10-ADMIN-CAPABILITIES","F17-DETAIL-ROUTES","F26-ROLE-PREVIEW","X01-DELETION-ROUTES"]},
-    {"id":"error-retry","scenarioIds":["F03-ACK-FEEDBACK","F03-SHARE-FEEDBACK","F03-ROLE-CHANGE-FEEDBACK","F18-MALFORMED-DISPLAY","F18-FAIL-CLOSED","F22-INVITE-LIFECYCLE","F24-SCHEDULE-GENERATOR","X02-OFFLINE-RECOVERY"]},
-    {"id":"responsive-accessibility","scenarioIds":["F06-KEYBOARD-SIGNIN","F16-LIVE-START","F17-ACCESSIBILITY","F17-DETAIL-ROUTES","F19-COPY-OPTIONS","F21-DARK-CONTRAST","F26-ROLE-PREVIEW","X04-VISUAL-MATRIX"]},
-    {"id":"revision-n-nplus1","scenarioIds":["F04-RESULT-INTEGRITY","F11-COMPLETE-STATS","F12-RULES-PROFILE","F13-WORKLIST","F14-REVISION-N-NPLUS1","X02-OFFLINE-RECOVERY"]},
-    {"id":"public-privacy","scenarioIds":["F04-RESULT-INTEGRITY","F11-COMPLETE-STATS","F15-PUBLIC-DISCOVERY","F17-DETAIL-ROUTES","F18-FAIL-CLOSED","X01-DISPOSITION-PRIVACY"]},
-    {"id":"offline-recovery","scenarioIds":["F03-ACK-FEEDBACK","F14-REVISION-N-NPLUS1","X02-OFFLINE-RECOVERY"]},
-    {"id":"deletion-lifecycle","scenarioIds":["X01-DELETION-ROUTES","X01-PROVIDERS-CUSTODY","X01-DISPOSITION-PRIVACY","X01-RELEASE-GATES"]},
+    {"id":"error-retry","scenarioIds":["F03-ACK-FEEDBACK","F03-SHARE-FEEDBACK","F03-ROLE-CHANGE-FEEDBACK","F18-MALFORMED-DISPLAY","F18-FAIL-CLOSED","F22-INVITE-LIFECYCLE","F24-SCHEDULE-GENERATOR","F24-MANUAL-SCHEDULE","X02-OFFLINE-RECOVERY"]},
+    {"id":"responsive-accessibility","scenarioIds":["F06-KEYBOARD-SIGNIN","F16-LIVE-START","F16-COURTSIDE-INTERACTION","F17-ACCESSIBILITY","F17-DETAIL-ROUTES","F19-COPY-OPTIONS","F21-DARK-CONTRAST","F26-ROLE-PREVIEW","X04-VISUAL-MATRIX"]},
+    {"id":"revision-n-nplus1","scenarioIds":["F04-RESULT-INTEGRITY","F11-COMPLETE-STATS","F12-RULES-PROFILE","F13-WORKLIST","F13-POST-GAME-ONLY-MATCH","F14-REVISION-N-NPLUS1","X02-OFFLINE-RECOVERY"]},
+    {"id":"public-privacy","scenarioIds":["F04-RESULT-INTEGRITY","F11-COMPLETE-STATS","F15-PUBLIC-DISCOVERY","F15-CSV-SAFETY","F17-DETAIL-ROUTES","F18-FAIL-CLOSED","X01-DISPOSITION-PRIVACY","X01-CLIENT-CLEANUP"]},
+    {"id":"offline-recovery","scenarioIds":["F03-ACK-FEEDBACK","F14-REVISION-N-NPLUS1","F16-COURTSIDE-INTERACTION","X02-OFFLINE-RECOVERY","X01-CLIENT-CLEANUP"]},
+    {"id":"deletion-lifecycle","scenarioIds":["X01-DELETION-ROUTES","X01-PROVIDERS-CUSTODY","X01-DISPOSITION-PRIVACY","X01-CLIENT-CLEANUP","X01-RELEASE-GATES"]},
     {"id":"staging-release","scenarioIds":["F01-WEB-BOOT","X03-LOCAL-BACKEND","X04-VISUAL-MATRIX","X05-RELEASE-REHEARSAL"]}
   ],
   "scenarios": [
@@ -204,6 +205,13 @@
       "evidence":["state/worklist matrix","calendar and queue screenshots","source record readback"]
     },
     {
+      "id":"F13-POST-GAME-ONLY-MATCH","covers":["F-13"],"minimumStage":1,"driver":"hybrid","roles":["statistician","admin"],"platforms":["web-chrome","ios","android"],"dataStates":["future-scheduled","live-in-progress","final-awaiting-stats","submitted-awaiting-review","changes-requested","approved"],"mutationScope":"synthetic-emulator-only",
+      "preconditions":["The post-game-only matcher consumes explicit play and review state, never wall-clock inference alone."],
+      "steps":["Evaluate the same assigned game before start, while live, after explicit final awaiting stats, after submission, after changes requested and after approval.","Compare the matcher result with the Schedule action, statistician worklist, direct post-game route and backend query for each state."],
+      "assertions":["Post-game-only matches an assigned game only when explicit lifecycle state permits final entry or revision; a passed start time, future game or live game never matches by itself.","Client route, query and server authorization agree, and approved work cannot reappear as requiring post-game submission."],
+      "evidence":["matcher input/output table","play/review state readback","route and worklist screenshots","authorization trace"]
+    },
+    {
       "id":"F14-REVISION-N-NPLUS1","covers":["F-14"],"minimumStage":1,"driver":"hybrid","roles":["statistician","admin","media","press","fan","guest"],"platforms":["web-chrome","ios","android"],"dataStates":["revision-N","changes-requested","stale-approval","revision-N-plus-1","retry","duplicate-delivery"],"mutationScope":"synthetic-emulator-only",
       "preconditions":["Record the exact revision/result/publication contract before execution."],
       "steps":["Submit named revision N and record its revision ID/hash.","As admin request changes against N with a reason; attempt stale approval against N after a newer draft exists.","Resubmit N+1, retry the response-unknown command, approve exactly N+1, then replay delivery.","Read calendar, worklists, reminders, box score, standings, leaders, public detail, text/image share and CSV."],
@@ -218,11 +226,25 @@
       "evidence":["URL/navigation log","public network/read trace","ranking fixture comparison","phone/desktop screenshots"]
     },
     {
+      "id":"F15-CSV-SAFETY","covers":["F-15"],"minimumStage":2,"driver":"hybrid","roles":["guest","fan","media","press"],"platforms":["web-chrome","ios","android"],"dataStates":["formula-equals","formula-plus","formula-minus","formula-at","tab-and-newline","safe-value","accepted-version"],"mutationScope":"none",
+      "preconditions":["Export only the accepted public projection and use adversarial synthetic names/labels."],
+      "steps":["Export rows whose text fields begin with =, +, - and @, plus commas, quotes, tabs, CR/LF and leading whitespace before a formula prefix.","Open the CSV in a spreadsheet-capable test harness and compare the parsed cells with the accepted publication version."],
+      "assertions":["Every formula-capable cell is escaped as inert text, including a dangerous prefix after leading whitespace; CSV quoting preserves the intended value without executing a formula.","Safe numeric fields remain numeric, accepted-version provenance is retained, and no private or stale field appears in the export."],
+      "evidence":["adversarial fixture values","raw CSV bytes","parsed cell types and values","accepted publication/version hash"]
+    },
+    {
       "id":"F16-LIVE-START","covers":["F-16"],"minimumStage":1,"driver":"browser-native","roles":["statistician"],"platforms":["web-chrome","ios","android"],"dataStates":["five-ready-each","missing-starters","short-bench","continuation-after-injury","candidate-profile"],"mutationScope":"synthetic-emulator-only",
       "preconditions":["Start eligibility comes from the named candidate/adopted competition profile."],
       "steps":["Prepare five eligible ready players per team and start the game.","Repeat with one through four starters, a short bench, and a game already started before an injury/disqualification.","Navigate with keyboard at desktop width and inspect theme/identity on all widths."],
       "assertions":["A game cannot start without the profile-required ready players; the missing count and roster repair path are visible.","Start and continuation rules are distinct, and no universal under-five override is introduced.","The screen uses JBA/branded semantic colors and accessible control states."],
       "evidence":["eligibility inputs and rule result","disabled hint/repair screenshot","continuation result","theme/accessibility snapshots"]
+    },
+    {
+      "id":"F16-COURTSIDE-INTERACTION","covers":["F-16","F-17","X-02"],"minimumStage":2,"driver":"browser-screen-reader-native","roles":["statistician"],"platforms":["web-chrome","ios-voiceover","android-talkback"],"dataStates":["keyboard-shortcuts","field-edit","dialog-open","caret-selection","leave-reenter","queued-local","writer-conflict"],"mutationScope":"synthetic-emulator-only",
+      "preconditions":["Use a durable local journal fixture and a hardware keyboard for the web path."],
+      "steps":["Run each documented courtside shortcut with focus on the page, then repeat while editing a text/number field and while a confirmation dialog is open.","Open and cancel/confirm dialogs by keyboard, inspect initial focus and focus restoration, then edit a value with a mid-string caret and selection.","Leave the route and re-enter, rebuild during queued local work, and repeat through a writer conflict."],
+      "assertions":["Shortcuts fire exactly once only in their valid scope and never steal keystrokes from a field or active dialog; disabled commands remain inert and explained.","Dialogs trap focus, expose names/actions, close with the documented key and restore focus to the invoker.","Field value, caret/selection, current period/game context and honest queue state survive safe rebuild and leave/re-enter; conflicts fail closed without recording an unintended play."],
+      "evidence":["shortcut/action count matrix","focus and semantics trace","caret/selection snapshots","journal/queue readback","leave-reenter video"]
     },
     {
       "id":"F17-ACCESSIBILITY","covers":["F-17"],"minimumStage":3,"driver":"browser-screen-reader-native","roles":["guest","fan","rep","statistician","media","press","admin","superAdmin"],"platforms":["web-chrome","ios-voiceover","android-talkback"],"dataStates":["normal","loading","empty","error","disabled","selected","dialog"],"mutationScope":"synthetic-emulator-only",
@@ -296,11 +318,25 @@
       "evidence":["identity/registration IDs","before/after roster records","aggregate absence/diff","UI screenshots"]
     },
     {
+      "id":"F23-DIVISION-LIFECYCLE","covers":["F-23"],"minimumStage":1,"driver":"hybrid","roles":["admin","superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["unused-division","referenced-division","archive","restore","duplicate-action"],"mutationScope":"synthetic-emulator-only",
+      "preconditions":["Seed one unused division and one division referenced by teams, games, standings and historical public projections."],
+      "steps":["Delete the unused division with cancel, confirm, duplicate tap and lost-response retry.","Attempt to delete the referenced division, inspect every reported dependency, then archive and restore it.","Reload current and historical team/game/standings/public routes after each action."],
+      "assertions":["An unused division can be deleted only after explicit confirmation, and retry is idempotent with one final deletion.","A referenced division cannot be deleted; the UI names blocking references and offers the safe archive path without partial cleanup.","Archive is reversible, removes the division from new scheduling choices, and preserves existing/historical labels, routes and certified results."],
+      "evidence":["reference inventory","confirmation/error screenshots","operation IDs and retry result","division/team/game/public readback"]
+    },
+    {
       "id":"F24-SCHEDULE-GENERATOR","covers":["F-24"],"minimumStage":1,"driver":"hybrid","roles":["admin","superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["feasible","zero-slots","edit-prior-step","regenerated-preview","cancel","lost-response","duplicate-tap"],"mutationScope":"synthetic-emulator-only",
       "preconditions":["Start from a known event count and conflict-free synthetic season."],
       "steps":["Create a feasible setup, remove every slot, then attempt Next and tap step headers.","Restore feasibility, preview, revisit an earlier choice and confirm the old preview becomes invalid until regenerated.","Cancel from preview, then commit with duplicate tap and lost-response retry."],
       "assertions":["Impossible progression is blocked and never marked complete; earlier steps are editable and changed inputs invalidate the preview.","Cancel/empty preview writes nothing, and commit/retry is idempotent with truthful final counts and scope."],
       "evidence":["wizard screenshots","event counts before/after","operation IDs","conflict/readback report"]
+    },
+    {
+      "id":"F24-MANUAL-SCHEDULE","covers":["F-24"],"minimumStage":1,"driver":"hybrid","roles":["admin","superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["valid-matchup","cross-division","same-team","duplicate-game","team-time-conflict","venue-time-conflict","duplicate-tap","lost-response"],"mutationScope":"synthetic-emulator-only",
+      "preconditions":["Seed two divisions, overlapping team/venue times and a stable operation ID for manual creation."],
+      "steps":["Create a valid same-division game, then try teams from different divisions, the same team twice, an exact duplicate and separate team/venue conflicts.","Bypass client validation with direct local backend requests, then double tap and replay a lost response using the same operation ID."],
+      "assertions":["Client and server both require two distinct eligible teams in the selected division and reject duplicate, team-time and venue-time conflicts with field-specific recovery.","One logical operation creates at most one game across duplicate taps and receipt loss; failures and cancellation leave the schedule unchanged and retries never overwrite another game."],
+      "evidence":["validation matrix","before/after schedule query","operation/request IDs","conflict index or transaction logs","UI error screenshots"]
     },
     {
       "id":"F25-LABELS","covers":["F-25"],"minimumStage":1,"driver":"browser-native","roles":["admin","superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["navigation","read-only-ranking","delivery-pending","delivery-failed"],"mutationScope":"none",
@@ -350,6 +386,13 @@
       "steps":["Execute all 27 retention-registry adapter mappings and reconcile accepted, unaccepted and receipt-unknown journal work per device.","Advance privacy epoch for an unknown-minor/identity suppression case and inspect profile, rankings, press, raw reads, CSV, images and caches.","Restore a pre-deletion synthetic backup before traffic and run suppression/rebuild."],
       "assertions":["Certified sporting bytes/hashes and actor provenance are unchanged, while account authority and disallowed mutable identity presentation are suppressed.","No raw/public/press/export/cache fallback leaks stale identity; restore cannot recreate grants or stale projections; unknown minor status never defaults public."],
       "evidence":["27-row adapter disposition report","certified hash before/after","privacy epoch/public scan","restore suppression log","per-device journal manifests"]
+    },
+    {
+      "id":"X01-CLIENT-CLEANUP","covers":["X-01"],"minimumStage":2,"driver":"hybrid","roles":["fan","rep","statistician","media","press","admin","superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["active-session","second-device-session","live-listener","local-cache","service-worker-cache","notification-token","accepted-journal","unaccepted-journal","cleanup-retry"],"mutationScope":"synthetic-emulator-only",
+      "preconditions":["Use synthetic sessions/devices, user-scoped caches and notification tokens; retain the official-stat disposition distinction."],
+      "steps":["Begin deletion while two sessions, live listeners, IndexedDB/native caches, service-worker Cache Storage and notification tokens exist.","Observe fencing on both devices, listener teardown and token revocation, then restart/reload/offline-open each client.","Retry after interruption while accepted, unaccepted and receipt-unknown journal entries exist."],
+      "assertions":["All account sessions are fenced, active listeners stop, notification tokens are revoked and user-scoped caches cannot reopen private data on restart, reload or offline fallback.","Cleanup is idempotent and resumable; accepted official work follows server disposition while unaccepted and receipt-unknown local work is not silently uploaded or destroyed.","Shared public assets are not globally erased, and deletion status remains reachable while client cleanup is pending or partially failed."],
+      "evidence":["session/token inventory before and after","listener unsubscribe trace","IndexedDB/native/Cache Storage scan","per-device journal reconciliation","interrupted retry/status record"]
     },
     {
       "id":"X01-RELEASE-GATES","covers":["X-01"],"minimumStage":4,"driver":"review-provider","roles":["superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["G1-through-G11"],"mutationScope":"none",

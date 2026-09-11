@@ -93,22 +93,22 @@ rendered, backend and persistence evidence.
 | F-10 | `F10-ADMIN-CAPABILITIES` | Planned | Each menu/route/mutation follows its actual capability for admin and superAdmin |
 | F-11 | `F11-COMPLETE-STATS` | Planned | Client/server calculations and all consumers agree; missing historical fields remain unknown |
 | F-12 | `F12-RULES-PROFILE` | Blocked-decision for activation | Candidate-profile tests pass; JBA adoption evidence names exact profile and exceptions before activation |
-| F-13 | `F13-WORKLIST` | Planned | Preparation, live, completed, review, revision and approved states appear only in correct queues |
+| F-13 | `F13-WORKLIST`, `F13-POST-GAME-ONLY-MATCH` | Planned | Preparation, live, completed, review, revision and approved states appear only in correct queues; post-game matching uses explicit state rather than elapsed time |
 | F-14 | `F14-REVISION-N-NPLUS1` | Planned | N is sent back, stale approval fails, N+1 is approved and appears once in every consumer |
-| F-15 | `F15-PUBLIC-DISCOVERY` | Planned | Public direct URLs, division/ranking policy, stale/retracted states and public-only reads pass |
-| F-16 | `F16-LIVE-START` | Planned | JBA identity plus rule-correct start guidance and separate continuation behavior |
-| F-17 | `F17-ACCESSIBILITY`, `F17-DETAIL-ROUTES` | Partial Stage 0 primitives only | Keyboard, VoiceOver/TalkBack, semantics, direct URL, refresh and Back evidence |
+| F-15 | `F15-PUBLIC-DISCOVERY`, `F15-CSV-SAFETY` | Planned | Public direct URLs, division/ranking policy, stale/retracted states, public-only reads and formula-safe CSV pass |
+| F-16 | `F16-LIVE-START`, `F16-COURTSIDE-INTERACTION` | Planned | JBA identity, rule-correct start/continuation behavior, scoped shortcuts and durable leave/re-enter state pass |
+| F-17 | `F17-ACCESSIBILITY`, `F17-DETAIL-ROUTES`, `F16-COURTSIDE-INTERACTION` | Partial Stage 0 primitives only | Keyboard, dialog focus/caret, VoiceOver/TalkBack, semantics, direct URL, refresh and Back evidence |
 | F-18 | `F18-MALFORMED-DISPLAY`, `F18-FAIL-CLOSED` | Planned | Optional display faults recover; authority/scope/result/publication faults remain closed |
 | F-19 | `F19-MEDIA-ALIAS`, `F19-COPY-OPTIONS` | Planned, intentionally split | Legacy `press` remains compatible; one Media choice and role-appropriate copy/options pass |
 | F-20 | `F20-VERSION-METADATA` | Planned | About matches installed package and artifact metadata on each candidate |
 | F-21 | `F21-DARK-CONTRAST` | Partial Stage 0: theme/widget suite passes | All changed screens pass light/dark/high-contrast, custom-brand and rendered contrast review |
 | F-22 | `F22-INVITE-LIFECYCLE` | Planned | One issuance across retries, once-visible secret, team picker, callable errors and real local redemption |
-| F-23 | `F23-LEAGUE-SETUP` | Planned | Stable team/player/registration IDs, `0`/`00`, history and no fabricated aggregate records |
-| F-24 | `F24-SCHEDULE-GENERATOR` | Planned | Impossible progression blocked, steps editable, preview invalidated, cancel no-op and retry idempotent |
+| F-23 | `F23-LEAGUE-SETUP`, `F23-DIVISION-LIFECYCLE` | Planned | Stable team/player/registration IDs, `0`/`00`, history, no fabricated aggregates, and safe unused/referenced/archive division behavior |
+| F-24 | `F24-SCHEDULE-GENERATOR`, `F24-MANUAL-SCHEDULE` | Planned | Impossible progression blocked; generated and manual scheduling enforce division, distinct-team, duplicate/conflict and idempotency rules |
 | F-25 | `F25-LABELS`, `F25-ACK-DEADLINE`, `F25-SEASON-CONSEQUENCES` | Planned, intentionally split | Labels match outcomes; deadline policy is explicit; activation/archive consequences and cancellation are safe |
 | F-26 | `F26-ROLE-PREVIEW` | Planned | Preview works at 375/768/1440, stays visibly marked and grants no mutation authority |
-| X-01 | `X01-DELETION-ROUTES`, `X01-PROVIDERS-CUSTODY`, `X01-DISPOSITION-PRIVACY`, `X01-RELEASE-GATES` | Candidate contracts dormant; G1-G11 closed | Lifecycle/provider/custody/27-adapter/privacy/restore scenarios pass and every gate has real owner/evidence |
-| X-02 | `X02-OFFLINE-RECOVERY` | Journal contract dormant | Loss/restart/receipt/conflict/quota/revocation/correction/deletion cases pass with honest visible state |
+| X-01 | `X01-DELETION-ROUTES`, `X01-PROVIDERS-CUSTODY`, `X01-DISPOSITION-PRIVACY`, `X01-CLIENT-CLEANUP`, `X01-RELEASE-GATES` | Candidate contracts dormant; all G1-G11 remain closed | Lifecycle/provider/custody/27-adapter/privacy/restore plus session/listener/cache/token cleanup scenarios pass and every gate has real owner/evidence |
+| X-02 | `X02-OFFLINE-RECOVERY`, `F16-COURTSIDE-INTERACTION` | Journal contract dormant | Loss/restart/receipt/conflict/quota/revocation/correction/deletion plus courtside shortcut/caret/leave-reenter cases pass with honest visible state |
 | X-03 | `X03-LOCAL-BACKEND` | Partial Stage 0: complete isolated environment boots | Each repaired callable/rules/aggregation/delivery journey is driven with allowed and denied roles |
 | X-04 | `X04-VISUAL-MATRIX` | Partial Stage 0 primitives only | Every changed screen/state/role at 375/768/1440 plus representative native and assistive-technology evidence |
 | X-05 | `X05-RELEASE-REHEARSAL` | Planned for Stage 4 | Exact candidate, authorized isolated staging, dry run, restore/rollback and authoritative provider readback |
@@ -116,7 +116,7 @@ rendered, backend and persistence evidence.
 ## Executable scenario catalog
 
 The machine-readable catalog is
-`scripts/qa/acceptance_scenarios.v1.json`. It contains 41 scenarios covering all
+`scripts/qa/acceptance_scenarios.v1.json`. It contains 47 scenarios covering all
 31 findings and eight ordered cross-cutting journeys:
 
 - `role-route`
@@ -148,9 +148,9 @@ node scripts/qa/acceptance_scenarios.js runbook --checkpoint HEAD --journey role
 node scripts/qa/acceptance_scenarios.js runbook --checkpoint HEAD --scenario F14-REVISION-N-NPLUS1
 ```
 
-The runbook prints a stop warning when the requested checkpoint is not `HEAD`
-or the worktree is dirty. Such a run may diagnose, but it cannot close a
-finding.
+The runbook command exits nonzero and emits no runnable body when the requested
+checkpoint is not `HEAD` or the worktree is dirty. Check out the exact commit
+and make the worktree clean before generating instructions.
 
 ## Execution and evidence protocol
 
@@ -193,11 +193,18 @@ Evidence records are JSON objects or arrays with these required fields:
 }
 ```
 
-Validate an evidence file before attaching it to the integration ledger:
+Validate an evidence file from the exact clean checked-out commit before
+attaching it to the integration ledger:
 
 ```text
 node scripts/qa/acceptance_scenarios.js verify-evidence evidence.json
 ```
+
+Validation rejects evidence whose checkpoint is not current `HEAD`, a dirty
+worktree, an invalid UTC date, or a role, platform, data state, responsible
+workstream or severity outside the selected scenario. The catalog itself also
+fails closed on any non-loopback host, missing forbidden action, non-allowlisted
+automation command, driver, platform or stage.
 
 ## Release boundary
 
