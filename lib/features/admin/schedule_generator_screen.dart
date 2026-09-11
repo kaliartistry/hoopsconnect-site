@@ -44,6 +44,40 @@ List<(String, String)> generateRoundRobin(List<String> teamIds, int rounds) {
   return matchups;
 }
 
+class SchedulePreviewCapacity {
+  final int requestedGameCount;
+  final int feasibleGameCount;
+
+  const SchedulePreviewCapacity({
+    required this.requestedGameCount,
+    required this.feasibleGameCount,
+  });
+
+  bool get isComplete => feasibleGameCount >= requestedGameCount;
+
+  int get missingGameCount => feasibleGameCount >= requestedGameCount
+      ? 0
+      : requestedGameCount - feasibleGameCount;
+
+  String get blockingMessage =>
+      'Requested $requestedGameCount games, but only $feasibleGameCount fit '
+      'the selected dates and time slots. Add game days or time slots, extend '
+      'the end date, or reduce the number of rounds or teams.';
+}
+
+SchedulePreviewCapacity assessSchedulePreviewCapacity({
+  required int requestedGameCount,
+  required int feasibleGameCount,
+}) {
+  if (requestedGameCount < 0 || feasibleGameCount < 0) {
+    throw ArgumentError('Schedule preview counts must be nonnegative');
+  }
+  return SchedulePreviewCapacity(
+    requestedGameCount: requestedGameCount,
+    feasibleGameCount: feasibleGameCount,
+  );
+}
+
 /// Assigns matchups to date+time slots.
 List<_ScheduledGame> _assignSlots({
   required List<(String, String)> matchups,
@@ -124,6 +158,7 @@ class _ScheduleGeneratorScreenState
   final _customRoundsController = TextEditingController(
     text: '${AppDefaults.defaultRounds}',
   );
+  String? _customRoundsError;
 
   // Step 3: Dates & Times
   DateTime _startDate = LeagueTime.jamaicaDate(
@@ -140,6 +175,7 @@ class _ScheduleGeneratorScreenState
 
   // Step 5: Preview
   List<_ScheduledGame> _preview = [];
+  String? _previewBlockMessage;
 
   @override
   void dispose() {
@@ -152,7 +188,7 @@ class _ScheduleGeneratorScreenState
 
   int get _gameCount {
     final n = _selectedTeamIds.length;
-    if (n < 2) return 0;
+    if (n < 2 || _rounds < 1) return 0;
     return (n * (n - 1) ~/ 2) * _rounds;
   }
 
@@ -178,6 +214,19 @@ class _ScheduleGeneratorScreenState
     if (seasonId == null ||
         _divisionId == null ||
         !activeDivisionIds.contains(_divisionId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Choose an active season and division before previewing.',
+          ),
+        ),
+      );
+      return false;
+    }
+    if (_rounds < 1 || _customRoundsError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid number of rounds.')),
+      );
       return false;
     }
     final eligibleTeamIds = teamsEligibleForSchedule(
@@ -194,7 +243,10 @@ class _ScheduleGeneratorScreenState
           ),
         ),
       );
-      setState(() => _preview = []);
+      setState(() {
+        _preview = [];
+        _previewBlockMessage = null;
+      });
       return false;
     }
     final teamNames = <String, String>{};
@@ -216,8 +268,37 @@ class _ScheduleGeneratorScreenState
           : _venueController.text.trim(),
     );
 
-    setState(() => _preview = scheduled);
+    final capacity = assessSchedulePreviewCapacity(
+      requestedGameCount: _gameCount,
+      feasibleGameCount: scheduled.length,
+    );
+    if (!capacity.isComplete) {
+      setState(() {
+        _preview = scheduled;
+        _previewBlockMessage = capacity.blockingMessage;
+      });
+      return false;
+    }
+
+    setState(() {
+      _preview = scheduled;
+      _previewBlockMessage = null;
+    });
     return true;
+  }
+
+  void _setCustomRounds(String value) {
+    final parsed = int.tryParse(value.trim());
+    setState(() {
+      _previewBlockMessage = null;
+      if (parsed == null || parsed < 1 || parsed > 6) {
+        _rounds = 0;
+        _customRoundsError = 'Enter a whole number from 1 to 6.';
+      } else {
+        _rounds = parsed;
+        _customRoundsError = null;
+      }
+    });
   }
 
   // ── date/time pickers ──
@@ -230,7 +311,12 @@ class _ScheduleGeneratorScreenState
       firstDate: today,
       lastDate: today.add(AppDefaults.datePickerMaxFuture),
     );
-    if (date != null) setState(() => _startDate = date);
+    if (date != null) {
+      setState(() {
+        _startDate = date;
+        _previewBlockMessage = null;
+      });
+    }
   }
 
   Future<void> _pickEndDate() async {
@@ -240,7 +326,12 @@ class _ScheduleGeneratorScreenState
       firstDate: _startDate,
       lastDate: _startDate.add(AppDefaults.datePickerMaxFuture),
     );
-    if (date != null) setState(() => _endDate = date);
+    if (date != null) {
+      setState(() {
+        _endDate = date;
+        _previewBlockMessage = null;
+      });
+    }
   }
 
   Future<void> _addTimeSlot() async {
@@ -249,7 +340,10 @@ class _ScheduleGeneratorScreenState
       initialTime: AppDefaults.altGameTimeSlot,
     );
     if (time != null) {
-      setState(() => _timeSlots.add(time));
+      setState(() {
+        _timeSlots.add(time);
+        _previewBlockMessage = null;
+      });
     }
   }
 
@@ -266,6 +360,14 @@ class _ScheduleGeneratorScreenState
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Select at least 2 teams')));
+      return;
+    }
+    if (_currentStep == 1 &&
+        (_rounds < 1 ||
+            (_formatLabel == 'custom' && _customRoundsError != null))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a whole number from 1 to 6.')),
+      );
       return;
     }
     if (_currentStep == 3) {
@@ -371,6 +473,7 @@ class _ScheduleGeneratorScreenState
                           if (value == null) return;
                           setState(() {
                             _divisionId = value;
+                            _previewBlockMessage = null;
                             final divisionTeams = teamsEligibleForSchedule(
                               teams: allTeams,
                               seasonId: seasonId,
@@ -401,6 +504,7 @@ class _ScheduleGeneratorScreenState
                       selected: selected,
                       onSelected: (v) {
                         setState(() {
+                          _previewBlockMessage = null;
                           if (v) {
                             _selectedTeamIds.add(t.id);
                           } else {
@@ -440,17 +544,13 @@ class _ScheduleGeneratorScreenState
                       width: 120,
                       child: TextFormField(
                         controller: _customRoundsController,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Rounds',
                           isDense: true,
+                          errorText: _customRoundsError,
                         ),
                         keyboardType: TextInputType.number,
-                        onChanged: (v) {
-                          final n = int.tryParse(v);
-                          if (n != null && n >= 1 && n <= 6) {
-                            setState(() => _rounds = n);
-                          }
-                        },
+                        onChanged: _setCustomRounds,
                       ),
                     ),
                   ),
@@ -586,7 +686,7 @@ class _ScheduleGeneratorScreenState
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          '$_gameCount games → $_availableSlots available slots',
+                          '$_gameCount requested • $_availableSlots feasible slots',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: _availableSlots >= _gameCount
@@ -607,13 +707,27 @@ class _ScheduleGeneratorScreenState
             title: const Text('Venue'),
             isActive: _currentStep >= 3,
             state: _currentStep > 3 ? StepState.complete : StepState.indexed,
-            content: TextFormField(
-              controller: _venueController,
-              decoration: const InputDecoration(
-                labelText: 'Default Venue',
-                hintText: 'e.g. National Indoor Sports Centre',
-                prefixIcon: Icon(Icons.location_on_outlined),
-              ),
+            content: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(
+                  controller: _venueController,
+                  decoration: const InputDecoration(
+                    labelText: 'Default Venue',
+                    hintText: 'e.g. National Indoor Sports Centre',
+                    prefixIcon: Icon(Icons.location_on_outlined),
+                  ),
+                ),
+                if (_previewBlockMessage != null) ...[
+                  const SizedBox(height: 12),
+                  AppStateMessage(
+                    title: 'Schedule preview blocked',
+                    message: _previewBlockMessage!,
+                    tone: AppStateTone.error,
+                    compact: true,
+                  ),
+                ],
+              ],
             ),
           ),
 
@@ -646,8 +760,19 @@ class _ScheduleGeneratorScreenState
           _formatLabel = label;
           if (rounds != null) {
             _rounds = rounds;
+            _customRoundsError = null;
             _customRoundsController.text = rounds.toString();
+          } else {
+            final parsed = int.tryParse(_customRoundsController.text.trim());
+            if (parsed == null || parsed < 1 || parsed > 6) {
+              _rounds = 0;
+              _customRoundsError = 'Enter a whole number from 1 to 6.';
+            } else {
+              _rounds = parsed;
+              _customRoundsError = null;
+            }
           }
+          _previewBlockMessage = null;
         });
       },
     );
@@ -660,6 +785,7 @@ class _ScheduleGeneratorScreenState
       selected: selected,
       onSelected: (v) {
         setState(() {
+          _previewBlockMessage = null;
           if (v) {
             _gameDays.add(weekday);
           } else {

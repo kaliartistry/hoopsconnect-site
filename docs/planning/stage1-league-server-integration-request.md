@@ -147,6 +147,45 @@ unresolved, not name-matched automatically. The statistics workstream must read
 the canonical roster projection for new games before the legacy roster write
 path is retired.
 
+## Callable-only activation trust boundary
+
+Division deletion and every schedule mutation are server-authoritative
+operations. An enabled button is not a security boundary. Before either client
+action is activated, live Firestore rules must deny all direct client attempts
+to:
+
+- delete an association division, including attempts by an otherwise valid
+  administrator; and
+- create, update, reschedule, cancel, or delete legacy events, canonical games,
+  and their schedule revisions.
+
+The fixed-purpose callables below use verified auth context and the Admin SDK;
+they are the only write boundary for those operations. Reads may remain scoped
+by the existing authority contract. No compatibility rule may allow an old
+client to bypass the callable simply because its token contains a historical
+admin or scheduling permission.
+
+Activation must be atomic from the client's point of view:
+
+1. Release clients with division delete and schedule commit actions disabled
+   and gated by a server capability that defaults to closed. This is the
+   current client state.
+2. Deploy the callables without opening the capability and verify their
+   authorization, transactions, idempotency receipts, and failure behavior in
+   the emulator and a non-production environment.
+3. Deploy rules that deny every direct mutation listed above. Verify that the
+   trusted callables still work and that old-client direct writes fail.
+4. Publish the capability only after both the callable checks and deny rules
+   are read back as active. The client must require that server capability,
+   rather than relying only on app version or local UI state. Only the trusted
+   server deployment identity may write the capability state; clients may read
+   it but cannot open it.
+5. On rollback, close the capability first. Do not restore direct client write
+   rules; repair or roll back the callable behind the closed gate.
+
+There must be no activation order in which the UI is enabled before the deny
+rules and callables are both verified.
+
 ## Atomic division deletion
 
 The client now exposes archive and a read-only dependency inventory. It has no
@@ -239,6 +278,25 @@ a retry or validation failure. If the backend cannot provide one atomic batch,
 use a durable server job with idempotent item receipts and expose honest
 progress/recovery state before enabling the client action.
 
+Add a guarded `mutateScheduledGame` callable for later edit, reschedule, and
+cancel operations. Direct document updates remain denied. The request must
+contain `schemaVersion`, one stable `operationId`, `eventId`,
+`expectedScheduleVersion`, and an `action` of `edit`, `reschedule`, or `cancel`.
+An edit supplies only the allowlisted mutable metadata. A reschedule supplies
+the new UTC interval and any explicitly changed venue. A cancel supplies a
+reason and creates the retained cancellation/revision record; it must not erase
+the event or its history.
+
+For every action the server must derive actor and association, verify scope and
+lifecycle, compare the expected schedule version, and reject a changed payload
+under a replayed operation ID. Edit and reschedule must rerun the unordered-pair
+duplicate and either-team overlap checks in the same transaction or durable
+conflict lock used for creation. Cancel must reject states that the canonical
+game/stat contract makes immutable and preserve participant, approval, audit,
+and schedule-revision history. Exact retries return the original receipt.
+Racing creates/reschedules for the same team and interval must serialize so at
+most one succeeds.
+
 ## League-time consumer inventory
 
 Firestore and callable schedule instants are UTC. America/Jamaica is the sole
@@ -281,6 +339,20 @@ timestamps are not schedule consumers and remain outside this migration.
   cross-division teams, pair duplicates, and either-team overlap; an exact
   operation replay returns one event.
 - Batch scheduling cannot partially duplicate games after retry or failure.
+- An old admin client cannot directly delete a division or create/update/delete
+  an event after the callable cutover; each attempt returns permission denied.
+- A malicious client cannot directly reschedule or cancel a game, spoof an
+  association/actor, mutate an operation ID payload, or bypass an inactive
+  season/division or team-scope check.
+- Concurrent create/edit/reschedule requests that overlap either team produce
+  one success at most; stale schedule versions and replayed IDs with changed
+  semantics fail deterministically.
+- Cancel preserves the game and revision history and is denied once the
+  canonical lifecycle/stat state makes cancellation illegal.
+- The activation rehearsal proves this order: client gate closed, callables
+  verified, deny rules active and read back, old/malicious writes denied, then
+  capability opened. The rollback rehearsal closes the capability without
+  reopening direct writes.
 
 No production activation, migration, rule deployment, or real league-data
 change is part of this integration request.

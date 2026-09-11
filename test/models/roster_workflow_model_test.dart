@@ -137,6 +137,165 @@ void main() {
     expect(proposal.reason, 'Correct jersey');
   });
 
+  test('add proposal rejects client-assigned canonical identity', () {
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_add',
+        'kind': 'addPlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'New registration',
+        'requestedByName': 'Team Rep',
+        'after': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '00',
+        },
+      }),
+      throwsArgumentError,
+    );
+  });
+
+  test('update proposal requires identical canonical identities', () {
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_update',
+        'kind': 'updatePlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'Correct registration',
+        'requestedByName': 'Team Rep',
+        'before': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '0',
+        },
+        'after': {
+          'playerId': 'player_2',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '00',
+        },
+      }),
+      throwsArgumentError,
+    );
+
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_update_registration',
+        'kind': 'updatePlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'Correct registration',
+        'requestedByName': 'Team Rep',
+        'before': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '0',
+        },
+        'after': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_2',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '00',
+        },
+      }),
+      throwsArgumentError,
+    );
+  });
+
+  test('update proposal requires canonical IDs on both fact snapshots', () {
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_update_missing_ids',
+        'kind': 'updatePlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'Correct jersey',
+        'requestedByName': 'Team Rep',
+        'before': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '0',
+        },
+        'after': {'displayName': 'Aaliyah Brown', 'jerseyNumber': '00'},
+      }),
+      throwsArgumentError,
+    );
+  });
+
+  test('remove proposal requires canonical identity in before facts', () {
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_remove',
+        'kind': 'removePlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'No longer registered',
+        'requestedByName': 'Team Rep',
+        'before': {'displayName': 'Aaliyah Brown', 'jerseyNumber': '0'},
+      }),
+      throwsArgumentError,
+    );
+  });
+
+  test('direct proposal construction rejects one-sided canonical identity', () {
+    expect(
+      () => RosterProposalSummary(
+        proposalId: 'proposal_direct',
+        kind: RosterChangeKind.updatePlayer,
+        status: RosterApprovalStatus.pending,
+        teamId: 'team_1',
+        seasonId: 'season_1',
+        before: const RosterPlayerFacts(
+          playerId: 'player_1',
+          displayName: 'Aaliyah Brown',
+          jerseyNumber: '0',
+        ),
+        after: const RosterPlayerFacts(
+          playerId: 'player_1',
+          registrationId: 'registration_1',
+          displayName: 'Aaliyah Brown',
+          jerseyNumber: '00',
+        ),
+        reason: 'Correct jersey',
+        requestedByName: 'Team Rep',
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('proposal decoding rejects nested facts with the wrong shape', () {
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_wrong_shape',
+        'kind': 'updatePlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'Correct jersey',
+        'requestedByName': 'Team Rep',
+        'before': <Object>[],
+        'after': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '00',
+        },
+      }),
+      throwsFormatException,
+    );
+  });
+
   test('canonical registration count overrides stale legacy aggregates', () {
     expect(
       preferredRosterPlayerCount(

@@ -68,15 +68,32 @@ class RosterProposalSummary {
     if (reason.trim().isEmpty) {
       throw ArgumentError.value(reason, 'reason', 'must be nonempty');
     }
-    final validFacts = switch (kind) {
-      RosterChangeKind.addPlayer => before == null && after != null,
-      RosterChangeKind.updatePlayer => before != null && after != null,
-      RosterChangeKind.removePlayer => before != null && after == null,
-    };
-    if (!validFacts) {
-      throw ArgumentError(
-        'Proposal before/after facts do not match ${kind.name}',
-      );
+    _validateProposalFacts(before, fieldName: 'before');
+    _validateProposalFacts(after, fieldName: 'after');
+    switch (kind) {
+      case RosterChangeKind.addPlayer:
+        if (before != null || after == null || after!.hasCanonicalIdentity) {
+          throw ArgumentError(
+            'Add proposals require only after facts without canonical IDs',
+          );
+        }
+      case RosterChangeKind.updatePlayer:
+        if (before == null ||
+            after == null ||
+            !before!.hasCanonicalIdentity ||
+            !after!.hasCanonicalIdentity ||
+            before!.playerId != after!.playerId ||
+            before!.registrationId != after!.registrationId) {
+          throw ArgumentError(
+            'Update proposals require matching canonical before/after IDs',
+          );
+        }
+      case RosterChangeKind.removePlayer:
+        if (before == null || after != null || !before!.hasCanonicalIdentity) {
+          throw ArgumentError(
+            'Remove proposals require canonical before facts and no after facts',
+          );
+        }
     }
   }
 
@@ -112,6 +129,8 @@ class RosterPlayerFacts {
     this.position,
   });
 
+  bool get hasCanonicalIdentity => playerId != null && registrationId != null;
+
   factory RosterPlayerFacts.fromMap(Map<String, dynamic> map) {
     final playerId = _optionalText(map['playerId']);
     final registrationId = _optionalText(map['registrationId']);
@@ -139,6 +158,22 @@ class RosterPlayerFacts {
       jerseyNumber: _requiredJersey(map['jerseyNumber']),
       position: position,
     );
+  }
+}
+
+void _validateProposalFacts(
+  RosterPlayerFacts? facts, {
+  required String fieldName,
+}) {
+  if (facts == null) return;
+  if ((facts.playerId == null) != (facts.registrationId == null)) {
+    throw ArgumentError(
+      '$fieldName playerId and registrationId must both be present or absent',
+    );
+  }
+  if (facts.playerId != null) {
+    _requireId('$fieldName.playerId', facts.playerId);
+    _requireId('$fieldName.registrationId', facts.registrationId);
   }
 }
 
