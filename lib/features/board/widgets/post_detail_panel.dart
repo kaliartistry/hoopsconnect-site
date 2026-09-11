@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/time/league_time.dart';
+import '../../../core/utils/error_mapper.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../providers/auth_providers.dart';
 import '../../../providers/post_providers.dart';
@@ -36,6 +37,8 @@ class PostDetailPanel extends ConsumerWidget {
         }
 
         final userAcked = realUser != null && post.hasUserAcked(realUser.id);
+        final assignedToRealUser =
+            realUser != null && post.expectedAcks.containsKey(realUser.id);
         final canAcknowledge =
             currentUser?.hasCapability('posts.acknowledge') ?? false;
         final isOverdue = post.isAckOverdue();
@@ -47,7 +50,9 @@ class PostDetailPanel extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: post.urgent ? AppColors.urgentBg : Colors.white,
+                color: post.urgent
+                    ? AppColors.urgentBg
+                    : Theme.of(context).cardColor,
                 border: Border.all(
                   color: post.urgent ? AppColors.urgent : AppColors.border,
                 ),
@@ -71,24 +76,24 @@ class PostDetailPanel extends ConsumerWidget {
                   const SizedBox(height: 12),
                   Text(
                     post.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                      color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     post.body,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
-                      color: AppColors.textSecondary,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                       height: 1.5,
                     ),
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'Posted by ${post.authorName} on ${DateFormat('MMM d, yyyy').format(post.createdAt)}',
+                    'Posted by ${post.authorName} on ${LeagueTime.formatJamaicaDate(post.createdAt, pattern: 'MMM d, yyyy')} at ${LeagueTime.formatJamaicaTime(post.createdAt)}',
                     style: const TextStyle(
                       fontSize: 12,
                       color: AppColors.textMuted,
@@ -97,7 +102,7 @@ class PostDetailPanel extends ConsumerWidget {
                   if (post.ackDeadline != null) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'Deadline: ${DateFormat('MMM d, yyyy h:mm a').format(post.ackDeadline!)}',
+                      'Deadline: ${LeagueTime.formatJamaicaDate(post.ackDeadline!, pattern: 'MMM d, yyyy')} at ${LeagueTime.formatJamaicaTime(post.ackDeadline!)}',
                       style: TextStyle(
                         fontSize: 12,
                         color: isOverdue ? AppColors.urgent : AppColors.ack,
@@ -115,7 +120,7 @@ class PostDetailPanel extends ConsumerWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Theme.of(context).cardColor,
                   border: Border.all(color: AppColors.border),
                   borderRadius: BorderRadius.circular(AppSizes.radiusMd),
                 ),
@@ -165,6 +170,7 @@ class PostDetailPanel extends ConsumerWidget {
             if (post.requiresAck &&
                 !userAcked &&
                 realUser != null &&
+                assignedToRealUser &&
                 canAcknowledge) ...[
               SizedBox(
                 width: double.infinity,
@@ -223,7 +229,7 @@ class PostDetailPanel extends ConsumerWidget {
       loading: () => const Center(
         child: CircularProgressIndicator(color: AppColors.primary),
       ),
-      error: (e, _) => Center(child: Text('Error: $e')),
+      error: (e, _) => Center(child: Text(ErrorMapper.map(e))),
     );
   }
 

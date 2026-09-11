@@ -6,7 +6,6 @@ import 'package:hoops_connect/core/theme/app_theme.dart';
 import 'package:hoops_connect/features/admin/admin_panel_screen.dart';
 import 'package:hoops_connect/models/division_model.dart';
 import 'package:hoops_connect/models/event_model.dart';
-import 'package:hoops_connect/models/post_model.dart';
 import 'package:hoops_connect/models/team_model.dart';
 import 'package:hoops_connect/models/user_model.dart';
 import 'package:hoops_connect/providers/ack_providers.dart';
@@ -36,8 +35,8 @@ void main() {
           teamsStreamProvider.overrideWith(
             (ref) => Stream<List<TeamModel>>.value(const []),
           ),
-          postsRequiringAckProvider.overrideWith(
-            (ref) => Stream<List<PostModel>>.value(const []),
+          postsRequiringAckProvider.overrideWithValue(
+            const AsyncValue.data([]),
           ),
           gamesNeedingStatsProvider.overrideWith(
             (ref) => Stream<List<EventModel>>.value(const []),
@@ -63,11 +62,7 @@ void main() {
   ) async {
     // A forged local preview value must be ignored for a user who lacks the
     // real members.manage capability.
-    await pumpAdmin(
-      tester,
-      user: _admin(),
-      previewRole: UserRole.superAdmin,
-    );
+    await pumpAdmin(tester, user: _admin(), previewRole: UserRole.superAdmin);
 
     expect(find.text('Enter Game Stats'), findsOneWidget);
     expect(find.text('Acknowledgment Tracker'), findsOneWidget);

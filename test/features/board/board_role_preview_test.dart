@@ -52,7 +52,7 @@ void main() {
     expect(find.text('Internal action'), findsNothing);
     expect(find.byIcon(Icons.add_circle_outline), findsNothing);
     expect(find.byType(PopupMenuButton<String>), findsNothing);
-    expect(find.text('Tap to Acknowledge'), findsNothing);
+    expect(find.text('Acknowledge'), findsNothing);
     expect(find.text('FAN'), findsOneWidget);
   });
 
@@ -64,7 +64,7 @@ void main() {
     expect(find.text('Public update'), findsOneWidget);
     expect(find.text('Internal action'), findsOneWidget);
     expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
-    expect(find.text('Tap to Acknowledge'), findsOneWidget);
+    expect(find.text('Acknowledge'), findsOneWidget);
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(find.text('REP'), findsOneWidget);
   });

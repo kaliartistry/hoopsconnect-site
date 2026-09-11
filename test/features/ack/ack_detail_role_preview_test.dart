@@ -63,6 +63,39 @@ void main() {
       expect(repository.acknowledgeCalls, 0);
     },
   );
+
+  testWidgets('an unassigned user is not offered acknowledgment', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(
+            const AsyncValue<UserModel?>.data(
+              UserModel(
+                id: 'other-admin',
+                email: 'other@example.com',
+                displayName: 'Other Admin',
+                associationId: 'jba',
+                role: UserRole.admin,
+                capabilities: {'posts.acknowledge'},
+              ),
+            ),
+          ),
+          rolePreviewProvider.overrideWith((ref) => null),
+          postDetailProvider.overrideWith(
+            (ref, _) => Stream<PostModel?>.value(_internalPost),
+          ),
+        ],
+        child: const MaterialApp(home: AckDetailScreen(postId: 'internal')),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Acknowledgment Progress'), findsOneWidget);
+    expect(find.text('Acknowledge This Post'), findsNothing);
+  });
 }
 
 const _superAdmin = UserModel(
