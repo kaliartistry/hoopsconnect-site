@@ -26,11 +26,14 @@ the server-owned v2 certificate contract and still requires fresh authority,
 validation/evidence, separation of duties, and the activation gates.
 
 The review command envelope binds a stable command ID, actor, expected workflow
-version, and an exact revision ID/number/hash. Request-changes commands retain a
-stable reason code and human explanation. Resubmission binds both the rejected
-revision N and a distinct immutable successor N+1. The successor must first be
-opened locally and reach an accepted delivery receipt state. An approval for N
-after N+1 is submitted fails `staleRevision`.
+version, full game scope, and an exact revision ID/number/hash/predecessor fact.
+Request-changes commands retain a stable reason code and human explanation.
+Resubmission binds both the rejected revision N and a distinct immutable
+successor N+1 whose `supersedesRevisionId` is exactly N. The successor must
+first be opened locally and reach an accepted delivery receipt state. Retrying
+the identical successor is a no-op that preserves that receipt and workflow
+version; a different successor conflicts. An approval for N after N+1 is
+submitted fails `staleRevision`.
 
 Exact command replay returns the prior state. Reusing the same command ID with
 different immutable content fails `payloadKeyConflict`. Saved-on-device or a
@@ -49,6 +52,10 @@ from explicit assignment, play, and review state:
 - approved work is complete;
 - unassigned, cancelled, or postponed work is not actionable.
 
+A scheduled/postponed game carrying live capture or a non-draft review state,
+and an in-progress game carrying a review/approval state, is classified as
+inconsistent. It cannot leak into a review or complete queue.
+
 This candidate classifier must replace the legacy `statsStatus == pending`
 Firestore query only after the server schema and migration below are accepted.
 
@@ -63,7 +70,9 @@ Firestore query only after the server schema and migration below are accepted.
 Every call receives a named `CandidateRulesProfile` with association-scoped
 ruleset version/hash and one explicit decision state: unresolved, reference
 only, or adopted. Runtime dates select nothing. An adopted state cannot be
-constructed without adoption evidence.
+constructed without adoption evidence. The supplied canonical rules artifact
+must hash exactly to `rulesetVersion.sha256`; a changed duration, overtime,
+penalty, or exceptional-scoring value rejects before calculator invocation.
 
 Legacy evidence never reaches the calculator. The wrapper preserves its raw
 candidate hash, source payload hash, evidence classification, unmapped paths,
@@ -73,14 +82,13 @@ for candidate testing, including overtime and adjudicated/exceptional results,
 but every wrapper result keeps `activationAllowed` and
 `certificationAllowed` false.
 
-The legacy `StatsValidator` also now requires an explicit named/versioned
-profile. The current JBA compatibility caller uses
-`jba_rules_decision_pending_v1`, whose decision remains unresolved and which
-defines no universal 48-minute, five-foul, 240-team-minute, or box-score caps.
-Structural negative-value checks remain fail closed. This does not resolve the
-remaining five-foul and ten-minute assumptions inside the old live-capture UI;
-that screen must move to the accepted preparation package before it can be a
-v2 capture surface.
+The active legacy screens and `StatsValidator` remain byte-for-byte compatible
+with the Stage 1 baseline. Their existing universal 48-minute, five-foul,
+240-team-minute, and box-score assumptions are not reused by this candidate and
+are not claimed fixed. They must move together to the accepted preparation
+package and server contract before the candidate can replace the production
+flow. This packet does not claim that a client-only validation change can be
+activated independently.
 
 ## Candidate status UI
 
@@ -90,7 +98,9 @@ sending, server accepted, and needs attention. It also distinguishes draft,
 submitted, under review, changes requested, resubmitted, and approved, shows the
 exact revision number, retains the latest reviewer reason, offers retry only for
 delivery attention, and says explicitly that certification/publication are
-separate.
+separate. During correction it shows both the reviewed N identity and active
+N+1 identity, including the revision ID and a short hash, while delivery status
+tracks N+1.
 
 The widget is not imported by an app route in this packet.
 
@@ -140,12 +150,16 @@ The packet tests prove:
 - submit N, begin review N, send back N with retained reason, open and deliver
   N+1, resubmit N+1, reject stale approval of N, and approve exactly N+1;
 - exact retry idempotency and changed-payload conflict;
+- exact successor retry preservation, different-successor conflict, full-scope
+  rejection, and explicit predecessor rejection;
 - submission refusal before an accepted delivery receipt;
 - queue placement from explicit workflow state without a timestamp;
 - double overtime, played score separate from an administrative result,
   accidental own basket, defensive goaltending, and an alternate overtime
   penalty policy through their injected named fixture profiles;
 - mismatched rules profiles reject before calculator invocation;
+- canonical rules-artifact hash mismatch rejects before calculator invocation;
+- contradictory future/live review-state combinations classify as inconsistent;
 - legacy unknown shooting/turnover facts and unmapped source paths remain
   preserved and never invoke the calculator; and
 - rendered status copy distinguishes local persistence, server acceptance, and

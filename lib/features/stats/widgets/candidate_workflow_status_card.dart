@@ -21,7 +21,7 @@ class CandidateWorkflowStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final delivery = _deliveryPresentation(workflow.deliveryState);
+    final delivery = _deliveryPresentation(workflow);
     final review = _reviewPresentation(workflow);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -56,45 +56,46 @@ class CandidateWorkflowStatusCard extends StatelessWidget {
 }
 
 ({String title, String message, AppStateTone tone, IconData icon})
-_deliveryPresentation(JournalDeliveryState state) => switch (state) {
-  JournalDeliveryState.savedOnDevice => (
-    title: 'Saved on this device',
-    message: 'This work is not uploaded yet. Keep it on this device.',
-    tone: AppStateTone.warning,
-    icon: Icons.phone_android_outlined,
-  ),
-  JournalDeliveryState.queued => (
-    title: 'Queued for upload',
-    message: 'Keep the app open while the server accepts the saved work.',
-    tone: AppStateTone.info,
-    icon: Icons.cloud_upload_outlined,
-  ),
-  JournalDeliveryState.sending => (
-    title: 'Uploading saved work',
-    message: 'Waiting for an exact server receipt. Do not submit twice.',
-    tone: AppStateTone.info,
-    icon: Icons.sync,
-  ),
-  JournalDeliveryState.accepted => (
-    title: 'Accepted by the server',
-    message: 'The saved journal head has a durable server receipt.',
-    tone: AppStateTone.success,
-    icon: Icons.cloud_done_outlined,
-  ),
-  JournalDeliveryState.needsAttention => (
-    title: 'Upload needs attention',
-    message: 'Your work is still preserved on this device. Review the issue.',
-    tone: AppStateTone.error,
-    icon: Icons.cloud_off_outlined,
-  ),
-};
+_deliveryPresentation(CandidateStatsWorkflow workflow) {
+  final identity = _revisionIdentity(workflow.activeRevision);
+  return switch (workflow.deliveryState) {
+    JournalDeliveryState.savedOnDevice => (
+      title: 'Saved on this device',
+      message: '$identity is not uploaded yet. Keep it on this device.',
+      tone: AppStateTone.warning,
+      icon: Icons.phone_android_outlined,
+    ),
+    JournalDeliveryState.queued => (
+      title: 'Queued for upload',
+      message: 'Keep the app open while the server accepts $identity.',
+      tone: AppStateTone.info,
+      icon: Icons.cloud_upload_outlined,
+    ),
+    JournalDeliveryState.sending => (
+      title: 'Uploading saved work',
+      message: 'Waiting for an exact server receipt for $identity.',
+      tone: AppStateTone.info,
+      icon: Icons.sync,
+    ),
+    JournalDeliveryState.accepted => (
+      title: 'Accepted by the server',
+      message: '$identity has a durable server receipt.',
+      tone: AppStateTone.success,
+      icon: Icons.cloud_done_outlined,
+    ),
+    JournalDeliveryState.needsAttention => (
+      title: 'Upload needs attention',
+      message: '$identity is preserved on this device. Review the issue.',
+      tone: AppStateTone.error,
+      icon: Icons.cloud_off_outlined,
+    ),
+  };
+}
 
 ({String title, String message, AppStateTone tone, IconData icon})
 _reviewPresentation(CandidateStatsWorkflow workflow) {
   final revision = workflow.submittedRevision ?? workflow.activeRevision;
-  final revisionLabel = revision == null
-      ? 'No revision has been sealed.'
-      : 'Revision ${revision.revisionNumber} is the exact review target.';
+  final revisionLabel = '${_revisionIdentity(revision)} is the review target.';
   return switch (workflow.reviewState) {
     CandidateReviewState.draft => (
       title: 'Draft, not submitted',
@@ -116,7 +117,7 @@ _reviewPresentation(CandidateStatsWorkflow workflow) {
     ),
     CandidateReviewState.changesRequested => (
       title: 'Changes requested',
-      message: _latestChangeReason(workflow) ?? revisionLabel,
+      message: _changesRequestedMessage(workflow),
       tone: AppStateTone.warning,
       icon: Icons.rate_review_outlined,
     ),
@@ -133,6 +134,27 @@ _reviewPresentation(CandidateStatsWorkflow workflow) {
       icon: Icons.task_alt_outlined,
     ),
   };
+}
+
+String _changesRequestedMessage(CandidateStatsWorkflow workflow) {
+  final reviewed = _revisionIdentity(workflow.submittedRevision);
+  final active = _revisionIdentity(workflow.activeRevision);
+  final reason = _latestChangeReason(workflow);
+  final correction =
+      workflow.submittedRevision != null &&
+          workflow.activeRevision != null &&
+          !workflow.submittedRevision!.hasSameIdentity(workflow.activeRevision!)
+      ? ' Correction delivery tracks $active.'
+      : '';
+  return 'Feedback targets $reviewed.$correction'
+      '${reason == null ? '' : ' Reason: $reason'}';
+}
+
+String _revisionIdentity(CandidateRevisionReference? revision) {
+  if (revision == null) return 'No sealed revision';
+  final shortHash = revision.revisionHash.substring(0, 8);
+  return 'Revision ${revision.revisionNumber} · ${revision.revisionId} · '
+      '$shortHash…';
 }
 
 String? _latestChangeReason(CandidateStatsWorkflow workflow) {

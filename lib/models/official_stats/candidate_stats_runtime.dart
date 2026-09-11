@@ -17,9 +17,26 @@ final class CandidateRulesProfile {
     required this.rulesProfileId,
     required this.rulesetVersion,
     required this.decisionState,
+    required Map<String, Object?> rulesArtifact,
     List<String> adoptionEvidenceRefs = const [],
-  }) : adoptionEvidenceRefs = List.unmodifiable(adoptionEvidenceRefs) {
+  }) : adoptionEvidenceRefs = List.unmodifiable(adoptionEvidenceRefs),
+       rulesArtifactCanonicalJson = OfficialStatCanonicalEncoding.encode(
+         rulesArtifact,
+       ),
+       rulesArtifactHash = OfficialStatCanonicalEncoding.sha256Hex(
+         rulesArtifact,
+       ) {
     OfficialStatIdentifiers.requireValid('rulesProfileId', rulesProfileId);
+    if (rulesArtifact['rulesProfileId'] != rulesProfileId) {
+      throw const FormatException(
+        'The rules artifact must bind the named rules profile',
+      );
+    }
+    if (rulesArtifactHash != rulesetVersion.sha256) {
+      throw const FormatException(
+        'The ruleset version hash must match the canonical rules artifact',
+      );
+    }
     for (final reference in adoptionEvidenceRefs) {
       OfficialStatIdentifiers.requireValid('adoptionEvidenceRef', reference);
     }
@@ -39,6 +56,8 @@ final class CandidateRulesProfile {
   final VersionReference rulesetVersion;
   final RulesProfileDecisionState decisionState;
   final List<String> adoptionEvidenceRefs;
+  final String rulesArtifactCanonicalJson;
+  final String rulesArtifactHash;
 
   OfficialStatRulesProfilePin get legacyAdapterPin =>
       OfficialStatRulesProfilePin(
@@ -172,6 +191,12 @@ final class CandidateOfficialStatsRuntime {
         'Calculator rules do not match the named rules profile',
       );
     }
+    if (OfficialStatCanonicalEncoding.sha256Hex(rules) !=
+        profile.rulesArtifactHash) {
+      throw const FormatException(
+        'Calculator rules do not match the hash-bound rules artifact',
+      );
+    }
 
     final result = calculator(input);
     final accepted = result['status'] == 'accepted';
@@ -191,6 +216,7 @@ final class CandidateOfficialStatsRuntime {
       provenance: {
         'calculatorVersion': normalizedBoxScoreCalculatorVersion,
         'rulesProfileDecisionState': profile.decisionState.name,
+        'rulesArtifactHash': profile.rulesArtifactHash,
         'rulesProfileId': profile.rulesProfileId,
         'rulesetVersion': profile.rulesetVersion.toContractMap(),
       },

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/official_stats/candidate_stats_runtime.dart';
+import 'package:hoops_connect/models/official_stats/canonical_encoding.dart';
 import 'package:hoops_connect/models/official_stats/contract_versions.dart';
 import 'package:hoops_connect/models/official_stats/domain_contracts.dart';
 import 'package:hoops_connect/models/official_stats/fact.dart';
@@ -35,9 +36,10 @@ CandidateRulesProfile _profileFor(
     rulesetVersion: VersionReference(
       associationId: scope['associationId']! as String,
       versionId: provenance['rulesetVersion']! as String,
-      sha256: List.filled(64, 'a').join(),
+      sha256: OfficialStatCanonicalEncoding.sha256Hex(rules),
     ),
     decisionState: state,
+    rulesArtifact: rules,
   );
 }
 
@@ -50,15 +52,22 @@ GameScope _legacyScope() => GameScope(
   gameId: 'game_1',
 );
 
-CandidateRulesProfile _unresolvedJbaProfile() => CandidateRulesProfile(
-  rulesProfileId: 'jba_rules_decision_pending_v1',
-  rulesetVersion: VersionReference(
-    associationId: 'jba',
-    versionId: 'jba_rules_decision_pending_v1',
-    sha256: List.filled(64, 'b').join(),
-  ),
-  decisionState: RulesProfileDecisionState.unresolved,
-);
+CandidateRulesProfile _unresolvedJbaProfile() {
+  final artifact = <String, Object?>{
+    'decisionState': 'unresolved',
+    'rulesProfileId': 'jba_rules_decision_pending_v1',
+  };
+  return CandidateRulesProfile(
+    rulesProfileId: 'jba_rules_decision_pending_v1',
+    rulesetVersion: VersionReference(
+      associationId: 'jba',
+      versionId: 'jba_rules_decision_pending_v1',
+      sha256: OfficialStatCanonicalEncoding.sha256Hex(artifact),
+    ),
+    decisionState: RulesProfileDecisionState.unresolved,
+    rulesArtifact: artifact,
+  );
+}
 
 Map<String, Object?> _legacyDocument() => {
   'eventId': 'game_1',
@@ -115,9 +124,12 @@ void main() {
         rulesetVersion: VersionReference(
           associationId: 'association_fixture_1',
           versionId: 'rules_fixture_1',
-          sha256: List.filled(64, 'c').join(),
+          sha256: OfficialStatCanonicalEncoding.sha256Hex(const {
+            'rulesProfileId': 'different_profile_v1',
+          }),
         ),
         decisionState: RulesProfileDecisionState.referenceOnly,
+        rulesArtifact: const {'rulesProfileId': 'different_profile_v1'},
       );
       final runtime = CandidateOfficialStatsRuntime(
         profile: mismatched,
@@ -135,18 +147,58 @@ void main() {
     });
 
     test('adopted state cannot be asserted without evidence', () {
+      const artifact = {'rulesProfileId': 'claimed_adopted_v1'};
       expect(
         () => CandidateRulesProfile(
           rulesProfileId: 'claimed_adopted_v1',
           rulesetVersion: VersionReference(
             associationId: 'jba',
             versionId: 'claimed_adopted_v1',
-            sha256: List.filled(64, 'd').join(),
+            sha256: OfficialStatCanonicalEncoding.sha256Hex(artifact),
           ),
           decisionState: RulesProfileDecisionState.adopted,
+          rulesArtifact: artifact,
         ),
         throwsArgumentError,
       );
+    });
+
+    test('ruleset hash must bind the actual canonical artifact', () {
+      expect(
+        () => CandidateRulesProfile(
+          rulesProfileId: 'rules_fixture_v1',
+          rulesetVersion: VersionReference(
+            associationId: 'jba',
+            versionId: 'rules_fixture_v1',
+            sha256: List.filled(64, '0').join(),
+          ),
+          decisionState: RulesProfileDecisionState.referenceOnly,
+          rulesArtifact: const {'rulesProfileId': 'rules_fixture_v1'},
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('altered rule values reject before calculator invocation', () {
+      final input = _caseInput('legitimate_double_overtime_50_minutes');
+      final profile = _profileFor(input);
+      final changedRules = Map<String, Object?>.from(input['rules'] as Map);
+      changedRules['completedTiesAllowed'] =
+          changedRules['completedTiesAllowed'] != true;
+      input['rules'] = changedRules;
+      var calculatorCalls = 0;
+
+      expect(
+        () => CandidateOfficialStatsRuntime(
+          profile: profile,
+          calculator: (value) {
+            calculatorCalls += 1;
+            return const {'status': 'accepted'};
+          },
+        ).calculateReviewedV2Input(input),
+        throwsA(isA<FormatException>()),
+      );
+      expect(calculatorCalls, 0);
     });
   });
 

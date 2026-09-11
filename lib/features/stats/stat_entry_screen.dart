@@ -528,10 +528,7 @@ class _StatEntryScreenState extends ConsumerState<StatEntryScreen> {
   /// Source of truth lives in [StatsValidator] so live + post-game share rules.
   String? _validateStats() {
     if (_localStats == null) return 'No stats to validate';
-    final errors = StatsValidator.validate(
-      _localStats!,
-      rulesProfile: StatsValidationRulesProfile.pendingJbaAdoption,
-    );
+    final errors = StatsValidator.validate(_localStats!);
     return errors.isEmpty ? null : errors.first;
   }
 

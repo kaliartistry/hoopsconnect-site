@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/official_stats/candidate_review_workflow.dart';
 import 'package:hoops_connect/models/official_stats/domain_contracts.dart';
 import 'package:hoops_connect/models/official_stats/domain_enums.dart';
+import 'package:hoops_connect/models/official_stats/fact.dart';
 
 GameScope _scope() => GameScope(
   associationId: 'jba',
@@ -12,12 +13,21 @@ GameScope _scope() => GameScope(
   gameId: 'game_1',
 );
 
-CandidateRevisionReference _revision(int number, String hashCharacter) =>
-    CandidateRevisionReference(
-      revisionId: 'revision_$number',
-      revisionNumber: number,
-      revisionHash: List.filled(64, hashCharacter).join(),
-    );
+CandidateRevisionReference _revision(
+  int number,
+  String hashCharacter, {
+  GameScope? scope,
+  String? predecessorId,
+  String? revisionId,
+}) => CandidateRevisionReference(
+  scope: scope ?? _scope(),
+  revisionId: revisionId ?? 'revision_$number',
+  revisionNumber: number,
+  revisionHash: List.filled(64, hashCharacter).join(),
+  supersedesRevisionId: number == 1
+      ? const Fact.notApplicable(reasonCode: 'no_predecessor')
+      : Fact.known(predecessorId ?? 'revision_${number - 1}'),
+);
 
 CandidateReviewCommand _command({
   required String id,
@@ -116,6 +126,31 @@ void main() {
         expect(state.activeRevision!.hasSameIdentity(nPlusOne), isTrue);
         expect(state.deliveryState, JournalDeliveryState.savedOnDevice);
         state = _acceptActiveRevision(state);
+
+        final exactSuccessorRetry = state.openSuccessorDraft(nPlusOne);
+        expect(identical(exactSuccessorRetry, state), isTrue);
+        expect(exactSuccessorRetry.workflowVersion, 4);
+        expect(
+          exactSuccessorRetry.deliveryState,
+          JournalDeliveryState.accepted,
+        );
+        expect(
+          exactSuccessorRetry.acceptedDeliveryRevision!.hasSameIdentity(
+            nPlusOne,
+          ),
+          isTrue,
+        );
+
+        final conflictingSuccessor = _revision(
+          2,
+          'c',
+          predecessorId: n.revisionId,
+          revisionId: 'revision_2_alternate',
+        );
+        final successorConflict = _workflowError(
+          () => state.openSuccessorDraft(conflictingSuccessor),
+        );
+        expect(successorConflict.code, 'successorRevisionConflict');
 
         final resubmit = _command(
           id: 'resubmit_n_plus_1',
@@ -268,6 +303,62 @@ void main() {
       expect(error.code, 'playStateMismatch');
     });
 
+    test('revision scope and explicit predecessor binding fail closed', () {
+      final otherScope = GameScope(
+        associationId: 'jba',
+        competitionId: 'nbl',
+        seasonId: 'season_2026',
+        divisionId: 'division_2',
+        phaseId: 'regular',
+        gameId: 'game_1',
+      );
+      final workflow = CandidateStatsWorkflow.preparing(
+        scope: _scope(),
+        playState: PlayState.completed,
+      );
+      final scopeError = _workflowError(
+        () => workflow.openDraft(
+          revision: _revision(1, '1', scope: otherScope),
+          captureMode: CaptureMode.officialSheet,
+        ),
+      );
+      expect(scopeError.code, 'scopeMismatch');
+
+      final n = _revision(1, '2');
+      var state = workflow.openDraft(
+        revision: n,
+        captureMode: CaptureMode.officialSheet,
+      );
+      state = _acceptActiveRevision(state);
+      state = state.apply(
+        _command(
+          id: 'submit_for_bad_successor',
+          type: CandidateReviewCommandType.submit,
+          version: 0,
+          target: n,
+        ),
+      );
+      state = state.apply(
+        _command(
+          id: 'send_back_for_bad_successor',
+          type: CandidateReviewCommandType.requestChanges,
+          version: 1,
+          target: n,
+          reasonCode: 'revision_binding_check',
+          reason: 'Open a correctly bound successor.',
+        ),
+      );
+      final wrongPredecessor = _revision(
+        2,
+        '3',
+        predecessorId: 'revision_other',
+      );
+      final predecessorError = _workflowError(
+        () => state.openSuccessorDraft(wrongPredecessor),
+      );
+      expect(predecessorError.code, 'invalidSuccessorRevision');
+    });
+
     test('live draft keeps play and review states separate', () {
       final revision = _revision(1, '9');
       final state = CandidateStatsWorkflow.preparing(
@@ -299,11 +390,16 @@ void main() {
       required PlayState play,
       CandidateReviewState review = CandidateReviewState.draft,
       bool assigned = true,
+      CandidateCaptureStage? capture,
     }) => StatsWorkItem(
       gameId: 'game_1',
       isAssigned: assigned,
       playState: play,
-      captureStage: CandidateCaptureStage.preparation,
+      captureStage:
+          capture ??
+          (review == CandidateReviewState.draft
+              ? CandidateCaptureStage.preparation
+              : CandidateCaptureStage.sealed),
       reviewState: review,
     );
 
@@ -353,6 +449,51 @@ void main() {
       expect(
         item(play: PlayState.cancelled).queueSection,
         StatsWorkQueueSection.notActionable,
+      );
+    });
+
+    test('future games cannot appear reviewed, complete, or live', () {
+      expect(
+        item(
+          play: PlayState.scheduled,
+          review: CandidateReviewState.approved,
+        ).queueSection,
+        StatsWorkQueueSection.inconsistent,
+      );
+      expect(
+        StatsWorkItem(
+          gameId: 'game_1',
+          isAssigned: true,
+          playState: PlayState.scheduled,
+          captureStage: CandidateCaptureStage.liveDraft,
+          reviewState: CandidateReviewState.draft,
+        ).queueSection,
+        StatsWorkQueueSection.inconsistent,
+      );
+      expect(
+        item(
+          play: PlayState.inProgress,
+          review: CandidateReviewState.underReview,
+        ).queueSection,
+        StatsWorkQueueSection.inconsistent,
+      );
+      expect(
+        StatsWorkItem(
+          gameId: 'game_1',
+          isAssigned: true,
+          playState: PlayState.inProgress,
+          captureStage: CandidateCaptureStage.postGameDraft,
+          reviewState: CandidateReviewState.draft,
+        ).queueSection,
+        StatsWorkQueueSection.inconsistent,
+      );
+      expect(
+        item(
+          play: PlayState.completed,
+          review: CandidateReviewState.submitted,
+          capture: CandidateCaptureStage.preparation,
+        ).queueSection,
+        StatsWorkQueueSection.inconsistent,
       );
     });
   });

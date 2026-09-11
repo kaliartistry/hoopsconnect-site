@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'canonical_encoding.dart';
 import 'domain_contracts.dart';
 import 'domain_enums.dart';
+import 'fact.dart';
 
 /// Candidate-only review state used while v2 server commands remain dormant.
 ///
@@ -29,6 +30,7 @@ enum CandidateReviewCommandType {
 }
 
 enum StatsWorkQueueSection {
+  inconsistent,
   preparation,
   liveCapture,
   needsStats,
@@ -50,9 +52,11 @@ final class CandidateWorkflowException implements Exception {
 
 final class CandidateRevisionReference {
   CandidateRevisionReference({
+    required this.scope,
     required this.revisionId,
     required this.revisionNumber,
     required this.revisionHash,
+    required this.supersedesRevisionId,
   }) {
     OfficialStatIdentifiers.requireValid('revisionId', revisionId);
     if (revisionNumber <= 0) {
@@ -63,22 +67,55 @@ final class CandidateRevisionReference {
       );
     }
     OfficialStatIdentifiers.requireSha256('revisionHash', revisionHash);
+    if (revisionNumber == 1) {
+      if (supersedesRevisionId.state != FactState.notApplicable ||
+          supersedesRevisionId.reasonCode != 'no_predecessor') {
+        throw ArgumentError(
+          'Revision 1 requires notApplicable(no_predecessor)',
+        );
+      }
+    } else {
+      final predecessorId = supersedesRevisionId.valueOrNull;
+      if (supersedesRevisionId.state != FactState.known ||
+          predecessorId == null) {
+        throw ArgumentError('A successor revision requires its predecessor ID');
+      }
+      OfficialStatIdentifiers.requireValid(
+        'supersedesRevisionId',
+        predecessorId,
+      );
+      if (predecessorId == revisionId) {
+        throw ArgumentError('A revision cannot supersede itself');
+      }
+    }
   }
 
+  final GameScope scope;
   final String revisionId;
   final int revisionNumber;
   final String revisionHash;
+  final Fact<String> supersedesRevisionId;
 
   Map<String, Object?> toContractMap() => {
     'revisionHash': revisionHash,
     'revisionId': revisionId,
     'revisionNumber': revisionNumber,
+    'scope': scope.toContractMap(),
+    'supersedesRevisionId': supersedesRevisionId.toContractMap(
+      (value) => value,
+    ),
   };
 
   bool hasSameIdentity(CandidateRevisionReference other) =>
-      revisionId == other.revisionId &&
-      revisionNumber == other.revisionNumber &&
-      revisionHash == other.revisionHash;
+      OfficialStatCanonicalEncoding.encode(toContractMap()) ==
+      OfficialStatCanonicalEncoding.encode(other.toContractMap());
+
+  bool isSuccessorOf(CandidateRevisionReference predecessor) =>
+      _sameScope(scope, predecessor.scope) &&
+      revisionNumber == predecessor.revisionNumber + 1 &&
+      supersedesRevisionId.valueOrNull == predecessor.revisionId &&
+      revisionId != predecessor.revisionId &&
+      revisionHash != predecessor.revisionHash;
 }
 
 /// Exact, retryable command envelope for one candidate review transition.
@@ -224,6 +261,12 @@ final class CandidateStatsWorkflow {
     required CandidateRevisionReference revision,
     required CaptureMode captureMode,
   }) {
+    if (!_sameScope(revision.scope, scope)) {
+      throw const CandidateWorkflowException(
+        'scopeMismatch',
+        'The candidate revision is outside this exact game scope',
+      );
+    }
     if (captureStage != CandidateCaptureStage.preparation ||
         activeRevision != null) {
       throw const CandidateWorkflowException(
@@ -279,9 +322,15 @@ final class CandidateStatsWorkflow {
       );
     }
     final predecessor = submittedRevision!;
-    if (successor.revisionNumber != predecessor.revisionNumber + 1 ||
-        successor.revisionId == predecessor.revisionId ||
-        successor.revisionHash == predecessor.revisionHash) {
+    final current = activeRevision;
+    if (current != null && !current.hasSameIdentity(predecessor)) {
+      if (current.hasSameIdentity(successor)) return this;
+      throw const CandidateWorkflowException(
+        'successorRevisionConflict',
+        'A different successor revision is already open',
+      );
+    }
+    if (!successor.isSuccessorOf(predecessor)) {
       throw const CandidateWorkflowException(
         'invalidSuccessorRevision',
         'Correction work requires a distinct immutable N+1 revision',
@@ -404,10 +453,7 @@ final class CandidateStatsWorkflow {
         _requireExactRevision(command.targetRevision, submittedRevision!);
         _requireCompletedPlay();
         final successor = command.successorRevision!;
-        if (successor.revisionNumber !=
-                command.targetRevision.revisionNumber + 1 ||
-            successor.revisionId == command.targetRevision.revisionId ||
-            successor.revisionHash == command.targetRevision.revisionHash) {
+        if (!successor.isSuccessorOf(command.targetRevision)) {
           throw const CandidateWorkflowException(
             'invalidSuccessorRevision',
             'Resubmission requires a distinct immutable N+1 revision',
@@ -564,6 +610,45 @@ final class StatsWorkItem {
   final CandidateReviewState reviewState;
 
   StatsWorkQueueSection get queueSection {
+    final isFuturePreparation =
+        playState == PlayState.scheduled || playState == PlayState.postponed;
+    if (isFuturePreparation &&
+        (captureStage != CandidateCaptureStage.preparation ||
+            reviewState != CandidateReviewState.draft)) {
+      return StatsWorkQueueSection.inconsistent;
+    }
+    final playCanBeReviewed =
+        playState == PlayState.completed ||
+        playState == PlayState.administrativelyTerminated;
+    if (reviewState != CandidateReviewState.draft && !playCanBeReviewed) {
+      return StatsWorkQueueSection.inconsistent;
+    }
+    if (captureStage == CandidateCaptureStage.postGameDraft &&
+        !playCanBeReviewed) {
+      return StatsWorkQueueSection.inconsistent;
+    }
+    if (reviewState != CandidateReviewState.draft &&
+        captureStage == CandidateCaptureStage.preparation) {
+      return StatsWorkQueueSection.inconsistent;
+    }
+    if (const {
+          CandidateReviewState.submitted,
+          CandidateReviewState.underReview,
+          CandidateReviewState.resubmitted,
+          CandidateReviewState.approved,
+        }.contains(reviewState) &&
+        captureStage != CandidateCaptureStage.sealed) {
+      return StatsWorkQueueSection.inconsistent;
+    }
+    if (captureStage == CandidateCaptureStage.liveDraft &&
+        !const {
+          PlayState.inProgress,
+          PlayState.suspended,
+          PlayState.completed,
+          PlayState.administrativelyTerminated,
+        }.contains(playState)) {
+      return StatsWorkQueueSection.inconsistent;
+    }
     if (!isAssigned ||
         playState == PlayState.cancelled ||
         playState == PlayState.postponed) {
@@ -592,6 +677,10 @@ final class StatsWorkItem {
     return StatsWorkQueueSection.preparation;
   }
 }
+
+bool _sameScope(GameScope left, GameScope right) =>
+    OfficialStatCanonicalEncoding.encode(left.toContractMap()) ==
+    OfficialStatCanonicalEncoding.encode(right.toContractMap());
 
 void _requireReasonCode(String? value) {
   if (value == null || !RegExp(r'^[a-z][a-z0-9_]{0,63}$').hasMatch(value)) {
