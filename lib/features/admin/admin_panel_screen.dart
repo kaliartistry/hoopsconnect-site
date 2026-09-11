@@ -167,8 +167,8 @@ class AdminPanelScreen extends ConsumerWidget {
       if (displayAllows('posts.manage'))
         _AdminMenuItem(
           icon: Icons.campaign,
-          title: 'Create Announcement',
-          subtitle: 'Prepare an internal league announcement',
+          title: 'Create board post',
+          subtitle: 'Publish an announcement or league update',
           onTap: () => context.push(
             '/board/create',
             extra: {'pinned': true, 'urgent': true, 'requiresAck': true},
