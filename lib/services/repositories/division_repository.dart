@@ -158,11 +158,25 @@ class DivisionRepository {
     required String divisionId,
     required int expectedDivisionVersion,
   }) async {
+    if (expectedDivisionVersion < 0) {
+      throw ArgumentError.value(
+        expectedDivisionVersion,
+        'expectedDivisionVersion',
+        'must be non-negative',
+      );
+    }
     final saved = await _deleteOperationStore.load(
       actorId: actorId,
       associationId: associationId,
       divisionId: divisionId,
     );
+    if (saved?.definitiveStaleVersion != null) {
+      throw DivisionDeleteStaleVersionException(
+        expectedDivisionVersion: saved!.expectedDivisionVersion,
+        currentDivisionVersion: saved.definitiveStaleVersion!,
+        message: 'The division changed. Review it before deleting again.',
+      );
+    }
     if (saved != null &&
         saved.expectedDivisionVersion != expectedDivisionVersion) {
       throw StateError(
@@ -207,11 +221,83 @@ class DivisionRepository {
       await _deleteOperationStore.clear(operation);
       return receipt;
     } on FirebaseFunctionsException catch (error) {
+      final currentVersion = _definitiveStaleVersion(error, operation);
+      if (currentVersion != null) {
+        await _deleteOperationStore.replace(
+          operation,
+          operation.withDefinitiveStaleVersion(currentVersion),
+        );
+        throw DivisionDeleteStaleVersionException(
+          expectedDivisionVersion: operation.expectedDivisionVersion,
+          currentDivisionVersion: currentVersion,
+          message:
+              error.message ??
+              'The division changed. Reload it before deleting.',
+        );
+      }
       throw StateError(
         error.message ??
             'The division deletion service could not complete this request.',
       );
     }
+  }
+
+  int? _definitiveStaleVersion(
+    FirebaseFunctionsException error,
+    DivisionDeleteOperation operation,
+  ) {
+    if (error.code != 'aborted' || error.details is! Map) return null;
+    final details = Map<Object?, Object?>.from(error.details as Map);
+    final currentVersion = details['currentDivisionVersion'];
+    if (details['schemaVersion'] != 1 ||
+        details['reason'] != 'division-version-mismatch' ||
+        details['actorId'] != operation.actorId ||
+        details['associationId'] != operation.associationId ||
+        details['operationId'] != operation.operationId ||
+        details['divisionId'] != operation.divisionId ||
+        details['expectedDivisionVersion'] !=
+            operation.expectedDivisionVersion ||
+        currentVersion is! int ||
+        currentVersion < 0 ||
+        currentVersion == operation.expectedDivisionVersion) {
+      return null;
+    }
+    return currentVersion;
+  }
+
+  Future<DivisionDeleteOperation> rebaseDefinitiveStaleVersion({
+    required String actorId,
+    required String associationId,
+    required String divisionId,
+    required int currentDivisionVersion,
+  }) async {
+    if (currentDivisionVersion < 0) {
+      throw ArgumentError.value(
+        currentDivisionVersion,
+        'currentDivisionVersion',
+        'must be non-negative',
+      );
+    }
+    final saved = await _deleteOperationStore.load(
+      actorId: actorId,
+      associationId: associationId,
+      divisionId: divisionId,
+    );
+    if (saved == null ||
+        saved.definitiveStaleVersion != currentDivisionVersion) {
+      throw StateError(
+        'The saved deletion has no matching definitive stale-version proof.',
+      );
+    }
+    final replacement = DivisionDeleteOperation(
+      actorId: actorId,
+      associationId: associationId,
+      divisionId: divisionId,
+      expectedDivisionVersion: currentDivisionVersion,
+      operationId: newDeleteOperationId(),
+    );
+    await _deleteOperationStore.replace(saved, replacement);
+    return replacement;
   }
 
   Future<DivisionDeleteOperation?> pendingDeleteOperation({
@@ -235,6 +321,7 @@ class DivisionDeleteOperation {
   final String divisionId;
   final int expectedDivisionVersion;
   final String operationId;
+  final int? definitiveStaleVersion;
 
   const DivisionDeleteOperation({
     required this.actorId,
@@ -242,16 +329,24 @@ class DivisionDeleteOperation {
     required this.divisionId,
     required this.expectedDivisionVersion,
     required this.operationId,
+    this.definitiveStaleVersion,
   });
 
-  Map<String, Object> toMap() => {
-    'schemaVersion': schemaVersion,
-    'actorId': actorId,
-    'associationId': associationId,
-    'divisionId': divisionId,
-    'expectedDivisionVersion': expectedDivisionVersion,
-    'operationId': operationId,
-  };
+  Map<String, Object> toMap() {
+    final result = <String, Object>{
+      'schemaVersion': schemaVersion,
+      'actorId': actorId,
+      'associationId': associationId,
+      'divisionId': divisionId,
+      'expectedDivisionVersion': expectedDivisionVersion,
+      'operationId': operationId,
+    };
+    final rejectedVersion = definitiveStaleVersion;
+    if (rejectedVersion != null) {
+      result['definitiveStaleVersion'] = rejectedVersion;
+    }
+    return result;
+  }
 
   factory DivisionDeleteOperation.fromMap(Map<String, dynamic> map) {
     const allowedKeys = {
@@ -261,6 +356,7 @@ class DivisionDeleteOperation {
       'divisionId',
       'expectedDivisionVersion',
       'operationId',
+      'definitiveStaleVersion',
     };
     final actorId = map['actorId'];
     final associationId = map['associationId'];
@@ -268,15 +364,21 @@ class DivisionDeleteOperation {
     final operationId = map['operationId'];
     final scopeIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
     final operationIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$');
-    if (map.length != allowedKeys.length ||
+    final definitiveStaleVersion = map['definitiveStaleVersion'];
+    if ((map.length != allowedKeys.length &&
+            map.length != allowedKeys.length - 1) ||
         map.keys.any((key) => !allowedKeys.contains(key)) ||
         map['schemaVersion'] != schemaVersion ||
         map['actorId'] is! String ||
         map['associationId'] is! String ||
         map['divisionId'] is! String ||
         map['expectedDivisionVersion'] is! int ||
-        (map['expectedDivisionVersion'] as int) < 1 ||
+        (map['expectedDivisionVersion'] as int) < 0 ||
         map['operationId'] is! String ||
+        (definitiveStaleVersion != null &&
+            (definitiveStaleVersion is! int ||
+                definitiveStaleVersion < 0 ||
+                definitiveStaleVersion == map['expectedDivisionVersion'])) ||
         (actorId as String).isEmpty ||
         actorId.length > 128 ||
         !scopeIdPattern.hasMatch(associationId as String) ||
@@ -290,15 +392,42 @@ class DivisionDeleteOperation {
       divisionId: map['divisionId'] as String,
       expectedDivisionVersion: map['expectedDivisionVersion'] as int,
       operationId: map['operationId'] as String,
+      definitiveStaleVersion: definitiveStaleVersion as int?,
     );
   }
+
+  DivisionDeleteOperation withDefinitiveStaleVersion(int currentVersion) =>
+      DivisionDeleteOperation(
+        actorId: actorId,
+        associationId: associationId,
+        divisionId: divisionId,
+        expectedDivisionVersion: expectedDivisionVersion,
+        operationId: operationId,
+        definitiveStaleVersion: currentVersion,
+      );
 
   bool matches(DivisionDeleteOperation other) =>
       actorId == other.actorId &&
       associationId == other.associationId &&
       divisionId == other.divisionId &&
       expectedDivisionVersion == other.expectedDivisionVersion &&
-      operationId == other.operationId;
+      operationId == other.operationId &&
+      definitiveStaleVersion == other.definitiveStaleVersion;
+}
+
+class DivisionDeleteStaleVersionException implements Exception {
+  final int expectedDivisionVersion;
+  final int currentDivisionVersion;
+  final String message;
+
+  const DivisionDeleteStaleVersionException({
+    required this.expectedDivisionVersion,
+    required this.currentDivisionVersion,
+    required this.message,
+  });
+
+  @override
+  String toString() => message;
 }
 
 abstract interface class DivisionDeleteOperationStore {
@@ -311,6 +440,11 @@ abstract interface class DivisionDeleteOperationStore {
   Future<void> save(DivisionDeleteOperation operation);
 
   Future<void> clear(DivisionDeleteOperation operation);
+
+  Future<void> replace(
+    DivisionDeleteOperation current,
+    DivisionDeleteOperation replacement,
+  );
 }
 
 class SharedPreferencesDivisionDeleteOperationStore
@@ -362,6 +496,46 @@ class SharedPreferencesDivisionDeleteOperationStore
     );
     if (!saved) {
       throw StateError('The protected division deletion could not be saved');
+    }
+  }
+
+  @override
+  Future<void> replace(
+    DivisionDeleteOperation current,
+    DivisionDeleteOperation replacement,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final currentKey = _key(
+      current.actorId,
+      current.associationId,
+      current.divisionId,
+    );
+    final replacementKey = _key(
+      replacement.actorId,
+      replacement.associationId,
+      replacement.divisionId,
+    );
+    if (currentKey != replacementKey) {
+      throw StateError('A protected division deletion cannot change scope');
+    }
+    final raw = preferences.getString(currentKey);
+    if (raw == null) {
+      throw StateError('The protected division deletion operation was lost');
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map ||
+        !DivisionDeleteOperation.fromMap(
+          Map<String, dynamic>.from(decoded),
+        ).matches(current)) {
+      throw StateError('The protected division deletion operation changed');
+    }
+    DivisionDeleteOperation.fromMap(replacement.toMap());
+    final saved = await preferences.setString(
+      replacementKey,
+      jsonEncode(replacement.toMap()),
+    );
+    if (!saved) {
+      throw StateError('The protected division deletion could not be replaced');
     }
   }
 

@@ -104,10 +104,14 @@ for this boundary. At minimum the equality pairs `associationId + divisionId`
 must be reviewed for root collections `users`, `memberships`, and `inviteCodes`
 and for the collection groups `teamEntries`, `games`, `scheduleRevisions`,
 `assignments`, `rosterHeads`, `rosterMemberships`, `versions`,
-`rosterAssertions`, `rosterAssertionDecisions`, `rosterSnapshots`,
+`rosterAssertions`, `rosterAssertionDecisions`, `rosterOutstandingProposals`,
+`rosterProposalQueues`, `rosterSnapshots`,
 `participantSnapshots`, `operations`, `operationReceipts`, `statRevisions`,
 `officialResults`, `reviews`, `certificates`, `certificateActions`,
 `corrections`, `aggregateReleases`, `publicSelections`, and `projectionBuilds`.
+The bounded roster workspace also needs the reviewed active-registration
+`teamId + status` query and outstanding-queue `teamId + seasonId` query before
+activation.
 The association-local `posts.divisionFilter` query must also remain in the
 inventory for both current division IDs and the historical exact division-name
 format. New clients write division IDs; historical name values require a
@@ -117,6 +121,8 @@ read the referenced division and require it to be active and free of a deletion
 guard. Membership and invite records remain client-immutable. These reads
 serialize new reference writers against guard acquisition so no reference can
 be added after the out-of-transaction inventory begins.
+Team-bound privileged invites additionally require the exact association
+current season and reject a team carrying any explicit non-active state.
 An index/query/size failure persists `inventoryFailed`, releases the division
 guard, and fails closed. It must not be worked around by skipping a reference
 class. `divisionDeletion` must remain false until this exact inventory succeeds
@@ -132,7 +138,10 @@ is denied. Direct compatibility event writes remain denied.
 - Roster writes use canonical people, players, identity/display-name versions,
   season team entries, roster heads, memberships and immutable membership
   versions. Representative assertions and their decisions are separate
-  immutable records. No `playerSeasonStats` document is created.
+  immutable records. A server-owned per-team queue state serializes the
+  outstanding proposal count at 100, while the workspace reads only that
+  bounded active queue rather than unbounded proposal/decision history. No
+  `playerSeasonStats` document is created.
 - Schedule writes atomically maintain the compatibility event, canonical game,
   immutable schedule revision, per-team/day lock and unordered-pair/start lock.
   Batches are all-or-none and capped at 25 games. Larger previews stay visibly
@@ -147,7 +156,11 @@ is denied. Direct compatibility event writes remain denied.
   touching the prepared references. The client separately persists the pending
   operation ID in an account/association/division/version-bound local record,
   reuses it after app restart, and removes it only after a matching terminal
-  callable receipt. Server operation and receipt documents remain private.
+  callable receipt. A structured, scope-bound stale-version rejection is saved
+  as local proof and requires an explicit rebase to a new operation ID before
+  another delete attempt; uncertain failures continue to reuse the original
+  operation. Legacy version-zero divisions remain supported. Server operation
+  and receipt documents remain private.
 - Direct division create/edit/archive writes require exact integer versions:
   create at 1 and increment by exactly one with a server timestamp on every
   mutation.

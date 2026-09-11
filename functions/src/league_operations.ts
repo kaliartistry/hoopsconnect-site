@@ -455,6 +455,8 @@ function rosterRefs(
     registrations: db.collection(`${root}/rosterMemberships`),
     proposals: db.collection(`${root}/rosterAssertions`),
     decisions: db.collection(`${root}/rosterAssertionDecisions`),
+    outstandingProposals: db.collection(`${root}/rosterOutstandingProposals`),
+    proposalQueue: db.doc(`${root}/rosterProposalQueues/${teamEntryId}`),
   };
 }
 
@@ -814,25 +816,52 @@ export async function getRosterWorkspaceHandler(request: CallableRequest<unknown
     await requireActorWorkflowBinding(transaction, db, actor, authority, workflow);
     const rosterAuthority = await requireRosterAuthority(transaction, db, authority, workflow, team, teamId, seasonId);
     const refs = rosterRefs(db, authority.associationId, workflow.competitionId, rosterAuthority.teamEntryId, seasonId);
-    const [head, registrations, proposals, decisions] = await Promise.all([
+    const [head, registrations, outstanding, proposalQueue] = await Promise.all([
       transaction.get(refs.head),
-      transaction.get(refs.registrations.where("teamId", "==", teamId).where("seasonId", "==", seasonId)),
-      transaction.get(refs.proposals.where("teamId", "==", teamId).where("seasonId", "==", seasonId)),
-      transaction.get(refs.decisions.where("teamId", "==", teamId).where("seasonId", "==", seasonId)),
+      transaction.get(refs.registrations
+        .where("teamId", "==", teamId)
+        .where("status", "==", "active")
+        .limit(MAX_ROSTER_WORKSPACE_RECORDS + 1)),
+      transaction.get(refs.outstandingProposals
+        .where("teamId", "==", teamId)
+        .where("seasonId", "==", seasonId)
+        .limit(MAX_ROSTER_WORKSPACE_RECORDS + 1)),
+      transaction.get(refs.proposalQueue),
     ]);
-    const decisionsByProposal = new Map(decisions.docs.map((entry) => [entry.get("proposalId"), entry.data()]));
     const rosterVersion = head.exists ? counter(head.get("rosterVersion"), "stored rosterVersion") : 0;
-    if (registrations.size > MAX_ROSTER_WORKSPACE_RECORDS || proposals.size > MAX_ROSTER_WORKSPACE_RECORDS ||
-        decisions.size > MAX_ROSTER_WORKSPACE_RECORDS) {
+    const outstandingCount = proposalQueue.exists ? counter(
+      proposalQueue.get("outstandingCount"),
+      "stored outstanding proposal count",
+    ) : 0;
+    if ((proposalQueue.exists && (proposalQueue.get("schemaVersion") !== SCHEMA_VERSION ||
+        proposalQueue.get("associationId") !== authority.associationId ||
+        proposalQueue.get("competitionId") !== workflow.competitionId || proposalQueue.get("teamId") !== teamId ||
+        proposalQueue.get("teamEntryId") !== rosterAuthority.teamEntryId || proposalQueue.get("seasonId") !== seasonId ||
+        proposalQueue.get("divisionId") !== team.get("divisionId"))) ||
+        registrations.size > MAX_ROSTER_WORKSPACE_RECORDS || outstanding.size > MAX_ROSTER_WORKSPACE_RECORDS ||
+        outstandingCount > MAX_ROSTER_WORKSPACE_RECORDS || outstandingCount !== outstanding.size) {
       throw new HttpsError("resource-exhausted", "The roster workspace is too large for this reviewed read surface.");
     }
-    const activeRegistrations = registrations.docs.filter((entry) => entry.get("status") === "active");
-    for (const registration of activeRegistrations) {
+    const proposals = await Promise.all(outstanding.docs.map(async (marker) => {
+      const proposal = await transaction.get(refs.proposals.doc(marker.id));
+      if (!proposal.exists || marker.get("schemaVersion") !== SCHEMA_VERSION ||
+          marker.get("associationId") !== authority.associationId ||
+          marker.get("competitionId") !== workflow.competitionId || marker.get("teamId") !== teamId ||
+          marker.get("teamEntryId") !== rosterAuthority.teamEntryId || marker.get("seasonId") !== seasonId ||
+          proposal.get("schemaVersion") !== SCHEMA_VERSION || proposal.get("associationId") !== authority.associationId ||
+          proposal.get("competitionId") !== workflow.competitionId || proposal.get("teamId") !== teamId ||
+          proposal.get("teamEntryId") !== rosterAuthority.teamEntryId || proposal.get("seasonId") !== seasonId ||
+          proposal.get("divisionId") !== marker.get("divisionId") || proposal.get("status") !== "pending") {
+        throw new HttpsError("failed-precondition", "The outstanding roster proposal queue requires administrator recovery.");
+      }
+      return proposal;
+    }));
+    for (const registration of registrations.docs) {
       await requireRosterIdentity(transaction, db, authority, workflow, registration);
     }
     return {
       rosterVersion,
-      registrations: activeRegistrations.map((entry) => ({
+      registrations: registrations.docs.map((entry) => ({
         registrationId: entry.id,
         playerId: entry.get("playerId"),
         displayName: entry.get("displayName"),
@@ -842,13 +871,12 @@ export async function getRosterWorkspaceHandler(request: CallableRequest<unknown
         ...(typeof entry.get("position") === "string" ? {position: entry.get("position")} : {}),
         status: "active",
       })),
-      proposals: proposals.docs.map((entry) => {
-        const proposal = entry.data();
-        const decision = decisionsByProposal.get(entry.id);
+      proposals: proposals.map((entry) => {
+        const proposal = entry.data()!;
         return {
           proposalId: entry.id,
           kind: proposal.kind,
-          status: decision?.decision === "approve" ? "approved" : decision?.decision === "reject" ? "rejected" : "pending",
+          status: "pending",
           teamId,
           seasonId,
           before: proposal.before ?? null,
@@ -856,7 +884,7 @@ export async function getRosterWorkspaceHandler(request: CallableRequest<unknown
           reason: proposal.reason,
           requestedByName: proposal.requestedByName,
           requestedAt: proposal.requestedAt instanceof Timestamp ? proposal.requestedAt.toDate().toISOString() : null,
-          reviewNote: decision?.note ?? null,
+          reviewNote: null,
         };
       }),
     };
@@ -947,6 +975,25 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
     const normalizedAfter = after === null ? null : {...after, playerId: before?.playerId ?? null, registrationId: before?.registrationId ?? null};
     const manager = rosterAuthority.manager;
     if (!manager) {
+      const proposalQueue = await transaction.get(refs.proposalQueue);
+      const outstandingCount = proposalQueue.exists ? counter(
+        proposalQueue.get("outstandingCount"),
+        "stored outstanding proposal count",
+      ) : 0;
+      if ((proposalQueue.exists && (proposalQueue.get("schemaVersion") !== SCHEMA_VERSION ||
+          proposalQueue.get("associationId") !== authority.associationId ||
+          proposalQueue.get("competitionId") !== workflow.competitionId || proposalQueue.get("teamId") !== teamId ||
+          proposalQueue.get("teamEntryId") !== rosterAuthority.teamEntryId ||
+          proposalQueue.get("divisionId") !== team.get("divisionId") || proposalQueue.get("seasonId") !== seasonId)) ||
+          outstandingCount > MAX_ROSTER_WORKSPACE_RECORDS) {
+        throw new HttpsError("failed-precondition", "The roster proposal queue requires administrator recovery.");
+      }
+      if (outstandingCount >= MAX_ROSTER_WORKSPACE_RECORDS) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "This team already has the maximum number of outstanding roster proposals. A manager must review them first.",
+        );
+      }
       const proposalId = newOpaque("proposal");
       const requestedBy = await transaction.get(db.doc(`users/${actor.uid}`));
       const result = {operationId, proposalId, status: "pending", rosterVersion: currentVersion};
@@ -970,6 +1017,29 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
         expectedRosterVersion,
         reviewNote: null,
       });
+      transaction.create(refs.outstandingProposals.doc(proposalId), {
+        schemaVersion: SCHEMA_VERSION,
+        proposalId,
+        associationId: authority.associationId,
+        competitionId: workflow.competitionId,
+        teamId,
+        teamEntryId: rosterAuthority.teamEntryId,
+        divisionId: id(team.get("divisionId"), "divisionId"),
+        seasonId,
+        requestedBy: actor.uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      transaction.set(refs.proposalQueue, {
+        schemaVersion: SCHEMA_VERSION,
+        associationId: authority.associationId,
+        competitionId: workflow.competitionId,
+        teamId,
+        teamEntryId: rosterAuthority.teamEntryId,
+        divisionId: id(team.get("divisionId"), "divisionId"),
+        seasonId,
+        outstandingCount: outstandingCount + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, {merge: false});
       saveReceipt(transaction, receiptRef, {actorId: actor.uid, associationId: authority.associationId, operation: "roster.submit", operationId, requestFingerprint: fingerprint, result});
       return result;
     }
@@ -1032,8 +1102,10 @@ export async function reviewRosterProposalHandler(request: CallableRequest<unkno
     const refs = rosterRefs(db, authority.associationId, workflow.competitionId, rosterAuthority.teamEntryId, seasonId);
     const proposalRef = refs.proposals.doc(proposalId);
     const decisionRef = refs.decisions.doc(proposalId);
-    const [proposal, decision, head] = await Promise.all([
-      transaction.get(proposalRef), transaction.get(decisionRef), transaction.get(refs.head),
+    const outstandingRef = refs.outstandingProposals.doc(proposalId);
+    const [proposal, decision, outstanding, proposalQueue, head] = await Promise.all([
+      transaction.get(proposalRef), transaction.get(decisionRef), transaction.get(outstandingRef),
+      transaction.get(refs.proposalQueue), transaction.get(refs.head),
     ]);
     if (!proposal.exists || proposal.get("schemaVersion") !== SCHEMA_VERSION ||
         proposal.get("associationId") !== authority.associationId || proposal.get("competitionId") !== workflow.competitionId ||
@@ -1041,9 +1113,23 @@ export async function reviewRosterProposalHandler(request: CallableRequest<unkno
         proposal.get("divisionId") !== team.get("divisionId") || proposal.get("seasonId") !== seasonId) {
       throw new HttpsError("not-found", "Roster proposal not found.");
     }
-    if (proposal.get("status") !== "pending" || decision.exists) throw new HttpsError("failed-precondition", "This roster proposal has already been decided.");
+    if (proposal.get("status") !== "pending" || decision.exists || !outstanding.exists || !proposalQueue.exists ||
+        outstanding.get("schemaVersion") !== SCHEMA_VERSION || outstanding.get("proposalId") !== proposalId ||
+        outstanding.get("associationId") !== authority.associationId ||
+        outstanding.get("competitionId") !== workflow.competitionId || outstanding.get("teamId") !== teamId ||
+        outstanding.get("teamEntryId") !== rosterAuthority.teamEntryId ||
+        outstanding.get("divisionId") !== team.get("divisionId") || outstanding.get("seasonId") !== seasonId ||
+        proposalQueue.get("schemaVersion") !== SCHEMA_VERSION ||
+        proposalQueue.get("associationId") !== authority.associationId ||
+        proposalQueue.get("competitionId") !== workflow.competitionId || proposalQueue.get("teamId") !== teamId ||
+        proposalQueue.get("teamEntryId") !== rosterAuthority.teamEntryId ||
+        proposalQueue.get("divisionId") !== team.get("divisionId") || proposalQueue.get("seasonId") !== seasonId ||
+        counter(proposalQueue.get("outstandingCount"), "stored outstanding proposal count") < 1) {
+      throw new HttpsError("failed-precondition", "This roster proposal is no longer outstanding.");
+    }
     const currentVersion = head.exists ? counter(head.get("rosterVersion"), "stored rosterVersion") : 0;
-    if (currentVersion !== expectedRosterVersion || proposal.get("expectedRosterVersion") !== expectedRosterVersion) {
+    if (currentVersion !== expectedRosterVersion ||
+        (data.decision === "approve" && proposal.get("expectedRosterVersion") !== expectedRosterVersion)) {
       throw new HttpsError("aborted", "The roster changed. Reload before reviewing this proposal.");
     }
     let result: Json;
@@ -1078,6 +1164,19 @@ export async function reviewRosterProposalHandler(request: CallableRequest<unkno
       reviewOperationId: operationId,
       createdAt: FieldValue.serverTimestamp(),
     });
+    transaction.delete(outstandingRef);
+    const remainingOutstanding = counter(
+      proposalQueue.get("outstandingCount"),
+      "stored outstanding proposal count",
+    ) - 1;
+    if (remainingOutstanding === 0) {
+      transaction.delete(refs.proposalQueue);
+    } else {
+      transaction.update(refs.proposalQueue, {
+        outstandingCount: remainingOutstanding,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
     saveReceipt(transaction, receiptRef, {actorId: actor.uid, associationId: authority.associationId, operation: "roster.review", operationId, requestFingerprint: fingerprint, result});
     return result;
   });
@@ -1116,6 +1215,8 @@ function divisionReferenceQueries(
     {kind: "rosterMembershipVersion", query: limited(db.collectionGroup("versions").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "rosterAssertion", query: limited(db.collectionGroup("rosterAssertions").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "rosterAssertionDecision", query: limited(db.collectionGroup("rosterAssertionDecisions").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
+    {kind: "rosterOutstandingProposal", query: limited(db.collectionGroup("rosterOutstandingProposals").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
+    {kind: "rosterProposalQueue", query: limited(db.collectionGroup("rosterProposalQueues").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "rosterSnapshot", query: limited(db.collectionGroup("rosterSnapshots").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "participantSnapshot", query: limited(db.collectionGroup("participantSnapshots").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "journalOperation", query: limited(db.collectionGroup("operations").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
@@ -1153,6 +1254,26 @@ function divisionDeletionAuthorityBinding(
     custodyPolicyVersionV2: workflow.custodyPolicyVersionV2,
     privacyEpochV2: workflow.privacyEpochV2,
     divisionId,
+  });
+}
+
+function staleDivisionVersionError(input: {
+  authority: Authority;
+  operationId: string;
+  divisionId: string;
+  expectedDivisionVersion: number;
+  currentDivisionVersion: number;
+  message: string;
+}): HttpsError {
+  return new HttpsError("aborted", input.message, {
+    schemaVersion: SCHEMA_VERSION,
+    reason: "division-version-mismatch",
+    actorId: input.authority.uid,
+    associationId: input.authority.associationId,
+    operationId: input.operationId,
+    divisionId: input.divisionId,
+    expectedDivisionVersion: input.expectedDivisionVersion,
+    currentDivisionVersion: input.currentDivisionVersion,
   });
 }
 
@@ -1206,7 +1327,16 @@ async function executeDeleteDivisionIfUnreferenced(
     const [division, operation] = await Promise.all([transaction.get(divisionRef), transaction.get(operationRef)]);
     if (!division.exists) throw new HttpsError("not-found", "Division not found.");
     const version = counter(division.get("version") ?? 0, "division version");
-    if (version !== expectedDivisionVersion) throw new HttpsError("aborted", "The division changed. Reload it before deleting.");
+    if (version !== expectedDivisionVersion) {
+      throw staleDivisionVersionError({
+        authority,
+        operationId,
+        divisionId,
+        expectedDivisionVersion,
+        currentDivisionVersion: version,
+        message: "The division changed. Reload it before deleting.",
+      });
+    }
     if (operation.exists && (operation.get("requestFingerprint") !== fingerprint ||
         !["guarding", "inventoryFailed"].includes(operation.get("status")))) {
       throw new HttpsError("already-exists", "This deletion operation cannot be resumed with different state.");
@@ -1309,8 +1439,16 @@ async function executeDeleteDivisionIfUnreferenced(
         operation.get("requestFingerprint") !== fingerprint) {
       throw new HttpsError("aborted", "The division deletion recovery state changed.");
     }
-    if (division.get("version") !== expectedDivisionVersion) {
-      throw new HttpsError("aborted", "The division changed during reference inventory.");
+    const currentDivisionVersion = counter(division.get("version") ?? 0, "division version");
+    if (currentDivisionVersion !== expectedDivisionVersion) {
+      throw staleDivisionVersionError({
+        authority,
+        operationId,
+        divisionId,
+        expectedDivisionVersion,
+        currentDivisionVersion,
+        message: "The division changed during reference inventory.",
+      });
     }
     const pending = division.get("deletionPending");
     if (!pending || pending.operationId !== operationId || pending.actorId !== actor.uid ||

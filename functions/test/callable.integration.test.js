@@ -416,6 +416,103 @@ test('roster callables preserve exact jersey strings and representative proposal
   );
 });
 
+test('roster proposal queue rejects a hostile 101st request while managers retain bounded recovery access', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('roster-flood-rep@example.com', 'rep', [
+    'association.read', 'teams.represent',
+  ], 'team-c');
+  const root = 'associations/jba/competitions/nbl/seasons/s2026';
+  const batch = adminDb.batch();
+  const now = admin.firestore.Timestamp.now();
+  const proposalFacts = {
+    playerId: null,
+    registrationId: null,
+    displayName: 'Queued Player',
+    jerseyNumber: '1',
+    position: null,
+  };
+  for (let index = 0; index < 101; index += 1) {
+    const proposalId = `historical-proposal-${index}`;
+    batch.set(adminDb.doc(`${root}/rosterAssertions/${proposalId}`), {
+      schemaVersion: 1, proposalId, associationId: 'jba', competitionId: 'nbl',
+      teamId: 'team-c', teamEntryId: 'entry-c', divisionId: 'premier', seasonId: 's2026',
+      kind: 'addPlayer', status: 'pending', before: null, after: proposalFacts,
+      reason: 'Historical request', requestedBy: 'historical-rep', requestedByName: 'Historical Rep',
+      requestedAt: now, expectedRosterVersion: 0, reviewNote: null,
+    });
+    batch.set(adminDb.doc(`${root}/rosterAssertionDecisions/${proposalId}`), {
+      schemaVersion: 1, proposalId, associationId: 'jba', competitionId: 'nbl',
+      teamId: 'team-c', teamEntryId: 'entry-c', divisionId: 'premier', seasonId: 's2026',
+      decision: 'reject', actorId: 'historical-manager', createdAt: now,
+    });
+  }
+  for (let index = 0; index < 100; index += 1) {
+    const proposalId = `outstanding-proposal-${index}`;
+    batch.set(adminDb.doc(`${root}/rosterAssertions/${proposalId}`), {
+      schemaVersion: 1, proposalId, associationId: 'jba', competitionId: 'nbl',
+      teamId: 'team-c', teamEntryId: 'entry-c', divisionId: 'premier', seasonId: 's2026',
+      kind: 'addPlayer', status: 'pending', before: null, after: proposalFacts,
+      reason: 'Outstanding request', requestedBy: 'queue-rep', requestedByName: 'Queue Rep',
+      requestedAt: now, expectedRosterVersion: 0, reviewNote: null,
+    });
+    batch.set(adminDb.doc(`${root}/rosterOutstandingProposals/${proposalId}`), {
+      schemaVersion: 1, proposalId, associationId: 'jba', competitionId: 'nbl',
+      teamId: 'team-c', teamEntryId: 'entry-c', divisionId: 'premier', seasonId: 's2026',
+      requestedBy: 'queue-rep', createdAt: now,
+    });
+  }
+  batch.set(adminDb.doc(`${root}/rosterProposalQueues/entry-c`), {
+    schemaVersion: 1, associationId: 'jba', competitionId: 'nbl', teamId: 'team-c',
+    teamEntryId: 'entry-c', divisionId: 'premier', seasonId: 's2026',
+    outstandingCount: 100, updatedAt: now,
+  });
+  await batch.commit();
+
+  const submit = leagueCallable('submitRosterChange');
+  await assert.rejects(submit({
+    schemaVersion: 1, operationId: 'roster_hostile_101st_1', teamId: 'team-c', seasonId: 's2026',
+    expectedRosterVersion: 0, kind: 'addPlayer', requestedOutcome: 'propose',
+    displayName: 'Blocked Flood', jerseyNumber: '101', reason: 'Must remain bounded',
+  }), (error) => error.code === 'functions/resource-exhausted');
+  assert.equal((await adminDb.collection(`${root}/rosterOutstandingProposals`).get()).size, 100);
+
+  await createLeagueOperator('roster-flood-manager@example.com', 'admin', [
+    'association.read', 'teams.manage',
+  ]);
+  const workspace = leagueCallable('getRosterWorkspace');
+  const loaded = await workspace({schemaVersion: 1, teamId: 'team-c', seasonId: 's2026'});
+  assert.equal(loaded.data.proposals.length, 100);
+  assert.ok(loaded.data.proposals.every((entry) => entry.status === 'pending'));
+  const review = leagueCallable('reviewRosterProposal');
+  const approved = await review({
+    schemaVersion: 1, operationId: 'roster_queue_recovery_1', proposalId: 'outstanding-proposal-0',
+    teamId: 'team-c', seasonId: 's2026', expectedRosterVersion: 0,
+    decision: 'approve',
+  });
+  assert.equal(approved.data.rosterVersion, 1);
+  await review({
+    schemaVersion: 1, operationId: 'roster_queue_recovery_2', proposalId: 'outstanding-proposal-1',
+    teamId: 'team-c', seasonId: 's2026', expectedRosterVersion: 1,
+    decision: 'reject', note: 'A stale proposal can still leave the active queue',
+  });
+  const recovered = await workspace({schemaVersion: 1, teamId: 'team-c', seasonId: 's2026'});
+  assert.equal(recovered.data.proposals.length, 98);
+  assert.equal((await adminDb.doc(`${root}/rosterProposalQueues/entry-c`).get()).get('outstandingCount'), 98);
+
+  await createLeagueOperator('roster-queue-race-rep@example.com', 'rep', [
+    'association.read', 'teams.represent',
+  ], 'team-c');
+  const raced = await Promise.allSettled([0, 1, 2].map((index) => submit({
+    schemaVersion: 1, operationId: `roster_queue_race_${index}`, teamId: 'team-c', seasonId: 's2026',
+    expectedRosterVersion: 1, kind: 'addPlayer', requestedOutcome: 'propose',
+    displayName: `Race Player ${index}`, jerseyNumber: `R${index}`, reason: 'Concurrent bound test',
+  })));
+  assert.equal(raced.filter((entry) => entry.status === 'fulfilled').length, 2);
+  assert.equal(raced.filter((entry) => entry.status === 'rejected' &&
+    entry.reason.code === 'functions/resource-exhausted').length, 1);
+  assert.equal((await adminDb.doc(`${root}/rosterProposalQueues/entry-c`).get()).get('outstandingCount'), 100);
+});
+
 test('schedule callables serialize conflicts, replay exactly, and preserve cancellation history', async () => {
   await seedLeagueOperations();
   await createLeagueOperator('scheduler@example.com', 'superAdmin', [
@@ -517,6 +614,40 @@ test('division deletion returns malformed references as blockers and replays the
   });
   assert.equal(deleted.data.status, 'deleted');
   assert.equal((await adminDb.doc('associations/jba/divisions/empty').get()).exists, false);
+  await adminDb.doc('associations/jba/divisions/legacy-zero').set({
+    name: 'Legacy Zero', status: 'active',
+  });
+  const legacyDeleted = await remove({
+    schemaVersion: 1,
+    operationId: 'division_delete_zero_1',
+    divisionId: 'legacy-zero',
+    expectedDivisionVersion: 0,
+  });
+  assert.equal(legacyDeleted.data.status, 'deleted');
+  assert.equal(legacyDeleted.data.divisionVersion, 0);
+  assert.equal((await adminDb.doc('associations/jba/divisions/legacy-zero').get()).exists, false);
+  await adminDb.doc('associations/jba/divisions/stale-delete').set({
+    name: 'Stale Delete', status: 'active', version: 2,
+  });
+  await assert.rejects(remove({
+    schemaVersion: 1,
+    operationId: 'division_delete_stale_1',
+    divisionId: 'stale-delete',
+    expectedDivisionVersion: 1,
+  }), (error) => {
+    assert.equal(error.code, 'functions/aborted');
+    assert.deepEqual(error.details, {
+      schemaVersion: 1,
+      reason: 'division-version-mismatch',
+      actorId: auth.currentUser.uid,
+      associationId: 'jba',
+      operationId: 'division_delete_stale_1',
+      divisionId: 'stale-delete',
+      expectedDivisionVersion: 1,
+      currentDivisionVersion: 2,
+    });
+    return true;
+  });
 });
 
 test('v2 scheduling requires the exact scoped grant and never falls back to legacy capability strings', async () => {

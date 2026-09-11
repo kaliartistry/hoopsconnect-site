@@ -219,6 +219,12 @@ test('league operations remain callable-only even for a super administrator', as
   await assertFails(setDoc(doc(root, 'associations/jba/leagueActorQuotas/root'), {minuteCount: 0}));
   await assertFails(setDoc(doc(root, 'associations/jba/leagueIdentityAuthorities/player-1'), {rosterReadable: true}));
   await assertFails(setDoc(doc(root, 'associations/jba/divisionDeletionOperations/op-1'), {status: 'deleted'}));
+  await assertFails(setDoc(doc(root,
+    'associations/jba/competitions/nbl/seasons/s2026/rosterOutstandingProposals/proposal-1'),
+  {teamId: 'team-1', status: 'pending'}));
+  await assertFails(setDoc(doc(root,
+    'associations/jba/competitions/nbl/seasons/s2026/rosterProposalQueues/team-entry-1'),
+  {teamId: 'team-1', outstandingCount: 1}));
   await assertFails(updateDoc(doc(root, 'associations/jba/playerSeasonStats/player-1'), {points: 999}));
 });
 

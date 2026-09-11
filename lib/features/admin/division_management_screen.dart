@@ -9,6 +9,7 @@ import '../../models/division_model.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/league_workflow_providers.dart';
+import '../../services/repositories/division_repository.dart';
 
 class DivisionManagementScreen extends ConsumerWidget {
   const DivisionManagementScreen({super.key});
@@ -359,6 +360,31 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
           ],
         ),
       );
+    } on DivisionDeleteStaleVersionException catch (error) {
+      try {
+        await ref
+            .read(divisionRepositoryProvider)
+            .rebaseDefinitiveStaleVersion(
+              actorId: actorId,
+              associationId: associationId,
+              divisionId: widget.division.id,
+              currentDivisionVersion: error.currentDivisionVersion,
+            );
+        if (!mounted) return;
+        if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'The division changed. Review the latest details, then confirm deletion again.',
+            ),
+          ),
+        );
+      } catch (rebaseError) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(ErrorMapper.map(rebaseError))));
+      }
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(

@@ -168,7 +168,9 @@ test('invite issuance is high-entropy, hash-addressed, idempotent, and never per
   await db.doc('associations/jba/divisions/division-1').set({
     name: 'Division 1', status: 'active', version: 1,
   });
-  await db.doc('associations/jba/teams/team-1').set({name: 'Team', divisionId: 'division-1'});
+  await db.doc('associations/jba/teams/team-1').set({
+    name: 'Team', divisionId: 'division-1', seasonId: 'season-1', status: 'active',
+  });
   const payload = {
     role: 'rep', teamId: 'team-1', daysValid: 7,
     operationId: 'create_operation_00000001',
@@ -202,6 +204,41 @@ test('invite issuance is high-entropy, hash-addressed, idempotent, and never per
     })),
     (error) => error.code === 'failed-precondition',
   );
+});
+
+test('representative invite team must remain active in the association current season', async () => {
+  await seedMember('root', 'superAdmin');
+  await db.doc('associations/jba/divisions/division-1').set({
+    name: 'Division 1', status: 'active', version: 1,
+  });
+  const createForTeam = (operationId) => createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'rep', teamId: 'team-hostile', daysValid: 7, operationId,
+  }));
+  await db.doc('associations/jba/teams/team-hostile').set({
+    name: 'Old Team', divisionId: 'division-1', seasonId: 'season-old', status: 'active',
+  });
+  await assert.rejects(
+    createForTeam('create_wrong_season_000001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  assert.equal((await db.collection('inviteCodes').get()).empty, true);
+
+  await db.doc('associations/jba/teams/team-hostile').set({
+    name: 'Archived Team', divisionId: 'division-1', seasonId: 'season-1', status: 'archived',
+  });
+  await assert.rejects(
+    createForTeam('create_archived_team_00001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  assert.equal((await db.collection('inviteCodes').get()).empty, true);
+
+  await db.doc('associations/jba/teams/team-hostile').set({
+    name: 'Current Team', divisionId: 'division-1', seasonId: 'season-1', status: 'active',
+  });
+  const issued = await createForTeam('create_current_team_000001');
+  const invite = await db.doc(`inviteCodes/${issued.inviteId}`).get();
+  assert.equal(invite.get('seasonId'), 'season-1');
+  assert.equal(invite.get('teamId'), 'team-hostile');
 });
 
 test('inspection never echoes a bearer and redemption retries return the original success', async () => {
