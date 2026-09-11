@@ -1,10 +1,14 @@
 # HoopsConnect local game journal v1
 
-Status: **implemented but dormant; no UI, provider, Firebase, Function, Rules, router, endpoint, or production-data integration**
+Status: **durable journal implemented; Stage 2 candidate orchestration, notifier, and recovery status UI are implemented but dormant; no Firebase, Function, Rules, router, endpoint, shared-provider, or production-data integration**
 
 Architecture source: HoopsConnect Stat Integrity Architecture Plan, SHA-256 `8399812d7ff524c3a0b9f5b2d76e7a044c8ae478db641cf21760c09cf7038205`
 
 Base: `0567450423cd839e8524f28271bd6cddb35636f0`
+
+The Stage 2 candidate bridge is `lib/services/local_game_journal/courtside_recovery.dart`. It composes the journal without weakening it: the assigned-game bootstrap, assignment version, writer epoch, named rules profile, competition policy, calculator, roster snapshot reference/hash, and accepted server head/hash build one exact preparation package. Capture is serialized and publishes `savedOnDevice` only after `append` returns or an ambiguous local transaction is reconciled by exact replay. Delivery is injected through `CourtsideOperationServerAdapter`; the candidate contains no Firebase calls.
+
+Foreground recovery moves stranded `sending` entries to response-unknown retry, reuses the immutable command/request hash after a lost response, accepts duplicate or out-of-order receipts only through the repository's exact validator, and preserves stale-authority/writer conflicts. Individual accepted operations do not impersonate a submitted revision: `queueRevisionSubmission` first closes capture, and revision delivery becomes accepted only after every operation has a receipt and the workspace is durably `submitted`. Sign-out closes the account-bound handle without cleanup. Account deletion can enumerate an exact manifest/consent-bound reconciliation plan, but the candidate exposes no purge and never treats reconciliation consent as discard authority. The status widget states that a closed PWA does not continue uploading. The candidate is not imported by the router, provider graph, or either main entrypoint.
 
 The executable boundary is under `lib/services/local_game_journal/`; the compact machine-readable inventory is `contracts/local_game_journal/v1/contract.json`. Packet 01 remains the authority for canonical encoding, operation semantic/request hashes, operation kinds, delivery states, receipts, identifiers, and explicit facts.
 

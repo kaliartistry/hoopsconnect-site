@@ -1,0 +1,35 @@
+# Stage 2 courtside recovery integration request
+
+Status: candidate complete and dormant. No deploy or production activation requested.
+
+Baseline: `6682f06`
+
+## Candidate delivered
+
+- `CourtsidePreparationMaterial` converts one exact assigned-game result plus authoritative assignment, rules, calculator, policy, roster-snapshot, and accepted-head references into the existing `PreparedGameRecoveryPackage`.
+- `CourtsideRecoveryOrchestrator` serializes capture for one account/device/writer epoch, appends before publishing saved state, reconciles ambiguous local commits by exact replay, and exposes immutable operation status. Explicit revision submission closes capture before delivery and becomes accepted only after every operation has a receipt and the workspace is durably submitted.
+- `CourtsideOperationServerAdapter` is the only network seam. It receives the immutable operation plus the preparation checksum and assignment/roster binding. It returns either an exact receipt, a typed rejection, or an explicit response-unknown result.
+- Foreground recovery publishes `savedOnDevice`, `queued`, `sending`, `accepted`, and `needsAttention` separately. It recovers a stranded `sending` operation after restart, retries a lost response with the same command/request hash, accepts exact duplicate/out-of-order receipts, and preserves stale assignment or writer conflicts.
+- `CourtsideCandidateBridge` binds delivery to the exact active candidate revision. Correction work must use a distinct N+1 bridge; N remains the review target until N+1 is durably accepted and resubmitted.
+- `CourtsideRecoveryNotifier` and `CourtsideRecoveryStatusCard` are dormant integration components. The card uses ordinary focusable buttons rather than a global key listener and explicitly says delivery stops when the web app closes.
+- Sign-out closes storage without deleting it. Deletion reconciliation requires the exact account, device, manifest, checksum, and consent. It never grants local discard authority.
+
+## Integration seams required
+
+1. The assigned-game server read must return, in one authoritative boundary, the existing bootstrap plus `assignmentId`, a server-established `workspaceId`/`deviceSessionId`/writer epoch, named journal reducer and calculator, adopted rules-profile and competition-policy versions, exact roster snapshot ID/hash, and accepted server sequence/head/hash. The client must not invent or combine these from unrelated reads.
+2. A reviewed fixed-purpose operation callable and exact status lookup must implement semantic idempotency and return `OperationReceiptContract` byte-for-byte bindings. Direct client writes to journals, receipts, immutable revisions, review, certification, and releases must remain denied.
+3. Only after the official-stat capability cutover is proven may the integration owner register an account-bound repository/notifier, mount the status surface on the assigned-game route, call `recoverForeground` from a foreground lifecycle signal, and call `closeForSignOut` before replacing account scope.
+4. The capture reducer must create `CourtsideCaptureCommand` from the existing stat action semantics and must restore field focus/caret after rebuilds. This packet deliberately does not edit the live stat screen or its notifier.
+5. Account lifecycle integration must create the journal manifest before device cleanup, collect fresh consent for that exact manifest, reconcile every opaque identity, and continue server deletion independently. No logout or deletion completion path may clear the journal implicitly.
+
+## Activation blockers
+
+- JBA rules-profile adoption evidence is still required. A reference profile is not an adopted production rule.
+- The operation append/status callables, direct-write denials, capability document, and server receipt conformance are outside this packet.
+- The authoritative writer-session allocation/transfer flow and second-device operator resolution must be integrated server-side.
+- The live stat screen, app lifecycle, auth sign-out, and account deletion shared-root seams need integration review.
+- Physical iOS/Android and iOS Safari/PWA interruption evidence remains a release gate. VM widget tests do not replace it.
+
+## Candidate verification
+
+Focused tests cover loss before and after the local commit, exact state publication, lost server response and exact retry, restart with stranded sending state, duplicate/out-of-order receipts, concurrent capture serialization, second-device writer conflict, assignment revocation/retry, unavailable/quota-constrained/corrupt storage, sign-out preservation, deletion manifest/consent binding, N/N+1 review identity, closed-PWA copy, and keyboard focus safety. Existing journal, Flutter, analyze, dormancy, and repository-safety commands must remain green when this packet is integrated.
