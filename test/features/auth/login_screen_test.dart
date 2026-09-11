@@ -1,168 +1,242 @@
+import 'dart:async';
+import 'dart:ui' show Tristate;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-/// Tests for the login screen's email validation logic.
-///
-/// Because the actual LoginScreen depends on Riverpod, go_router, and Firebase,
-/// we extract and test the validation logic in isolation to avoid heavy mocking.
-/// The email regex and validator below are copied directly from login_screen.dart.
-
-// Extracted validator matching login_screen.dart line 199-205.
-String? emailValidator(String? v) {
-  if (v == null || v.trim().isEmpty) return 'Enter your email';
-  final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-  if (!emailRegex.hasMatch(v.trim())) {
-    return 'Enter a valid email address';
-  }
-  return null;
-}
-
-String? passwordValidator(String? v) {
-  return v == null || v.isEmpty ? 'Enter your password' : null;
-}
-
-String? nameValidator(String? v, {required bool isSignUp}) {
-  return isSignUp && (v == null || v.trim().isEmpty) ? 'Enter your name' : null;
-}
-
-// Extracted from LoginScreen._friendlyError (lines 98-106).
-String friendlyError(String error) {
-  if (error.contains('user-not-found')) return 'No account found with that email';
-  if (error.contains('wrong-password')) return 'Incorrect password';
-  if (error.contains('email-already-in-use')) {
-    return 'An account already exists with that email';
-  }
-  if (error.contains('weak-password')) {
-    return 'Password must be at least 6 characters';
-  }
-  if (error.contains('invalid-email')) {
-    return 'Please enter a valid email address';
-  }
-  if (error.contains('invalid-credential')) return 'Invalid email or password';
-  return error.replaceAll(RegExp(r'\[.*?\]'), '').trim();
-}
+import 'package:hoops_connect/core/theme/app_theme.dart';
+import 'package:hoops_connect/features/auth/login_screen.dart';
 
 void main() {
-  group('Email validation', () {
-    test('rejects null', () {
-      expect(emailValidator(null), 'Enter your email');
-    });
+  Future<void> pumpLogin(
+    WidgetTester tester, {
+    ThemeData? theme,
+    Size size = const Size(375, 844),
+    LoginEmailPasswordHandler? onSubmit,
+    TextScaler textScaler = TextScaler.noScaling,
+  }) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = size;
+    addTearDown(tester.view.reset);
 
-    test('rejects empty string', () {
-      expect(emailValidator(''), 'Enter your email');
-    });
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          theme: theme ?? AppTheme.light,
+          home: MediaQuery(
+            data: MediaQueryData(size: size, textScaler: textScaler),
+            child: LoginScreen(onEmailPasswordSubmit: onSubmit),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
 
-    test('rejects whitespace-only string', () {
-      expect(emailValidator('   '), 'Enter your email');
-    });
+  testWidgets('renders the real sign-in screen with useful semantics', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await pumpLogin(tester);
 
-    test('rejects missing @ sign', () {
-      expect(emailValidator('userexample.com'), 'Enter a valid email address');
-    });
+    expect(find.text('Jamaica HoopsConnect'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Jamaica Basketball Association logo'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('login-email-field')), findsOneWidget);
+    expect(find.byKey(const Key('login-password-field')), findsOneWidget);
+    expect(find.text('Browse scores & schedule as a guest'), findsOneWidget);
 
-    test('rejects missing domain', () {
-      expect(emailValidator('user@'), 'Enter a valid email address');
-    });
-
-    test('rejects missing TLD', () {
-      expect(emailValidator('user@example'), 'Enter a valid email address');
-    });
-
-    test('accepts valid email', () {
-      expect(emailValidator('user@example.com'), isNull);
-    });
-
-    test('accepts email with subdomain', () {
-      expect(emailValidator('user@mail.example.co.uk'), isNull);
-    });
-
-    test('trims leading/trailing whitespace before validating', () {
-      expect(emailValidator('  user@example.com  '), isNull);
-    });
-
-    test('rejects email with spaces in local part', () {
-      expect(
-        emailValidator('us er@example.com'),
-        'Enter a valid email address',
-      );
-    });
+    final headingSemantics = tester.getSemantics(
+      find.text('Jamaica HoopsConnect'),
+    );
+    expect(headingSemantics.flagsCollection.isHeader, isTrue);
+    semantics.dispose();
   });
 
-  group('Password validation', () {
-    test('rejects null', () {
-      expect(passwordValidator(null), 'Enter your password');
-    });
+  testWidgets('Return in password submits once and exposes pending state', (
+    tester,
+  ) async {
+    final pending = Completer<void>();
+    final submissions = <({String email, String password, String? name})>[];
+    await pumpLogin(
+      tester,
+      onSubmit: ({required email, required password, displayName}) {
+        submissions.add((email: email, password: password, name: displayName));
+        return pending.future;
+      },
+    );
 
-    test('rejects empty string', () {
-      expect(passwordValidator(''), 'Enter your password');
-    });
+    await tester.enterText(
+      find.byKey(const Key('login-email-field')),
+      ' member@example.com ',
+    );
+    await tester.enterText(
+      find.byKey(const Key('login-password-field')),
+      'correct horse',
+    );
+    await tester.showKeyboard(find.byKey(const Key('login-password-field')));
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
 
-    test('accepts any non-empty string', () {
-      expect(passwordValidator('p'), isNull);
-    });
+    expect(submissions, [
+      (email: 'member@example.com', password: 'correct horse', name: null),
+    ]);
+    expect(find.text('Signing in'), findsOneWidget);
+    expect(find.bySemanticsLabel('Signing in'), findsOneWidget);
+
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(submissions, hasLength(1));
+
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Sign In'), findsNWidgets(2));
   });
 
-  group('Name validation (sign up mode)', () {
-    test('rejects empty name during sign up', () {
-      expect(nameValidator('', isSignUp: true), 'Enter your name');
-    });
+  testWidgets('field actions move focus in the expected order', (tester) async {
+    await pumpLogin(tester);
 
-    test('accepts empty name during sign in', () {
-      expect(nameValidator('', isSignUp: false), isNull);
-    });
+    await tester.showKeyboard(find.byKey(const Key('login-email-field')));
+    expect(
+      _editable(tester, const Key('login-email-field')).focusNode.hasFocus,
+      isTrue,
+    );
 
-    test('accepts valid name during sign up', () {
-      expect(nameValidator('John Doe', isSignUp: true), isNull);
-    });
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pump();
+    expect(
+      _editable(tester, const Key('login-password-field')).focusNode.hasFocus,
+      isTrue,
+    );
+
+    await tester.tap(find.text('Create Account').first);
+    await tester.pump();
+    expect(
+      _editable(tester, const Key('login-name-field')).focusNode.hasFocus,
+      isTrue,
+    );
+
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pump();
+    expect(
+      _editable(tester, const Key('login-email-field')).focusNode.hasFocus,
+      isTrue,
+    );
   });
 
-  group('friendlyError mapping', () {
-    test('maps user-not-found', () {
-      expect(
-        friendlyError('[firebase_auth/user-not-found] No user.'),
-        'No account found with that email',
-      );
-    });
+  testWidgets('auth mode controls support keyboard activation', (tester) async {
+    await pumpLogin(tester);
 
-    test('maps wrong-password', () {
-      expect(
-        friendlyError('[firebase_auth/wrong-password] Bad password.'),
-        'Incorrect password',
-      );
-    });
+    final createAccount = tester.widget<InkWell>(
+      find.byKey(const Key('login-mode-create-account')),
+    );
+    createAccount.focusNode!.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
 
-    test('maps email-already-in-use', () {
-      expect(
-        friendlyError('[firebase_auth/email-already-in-use] Dup.'),
-        'An account already exists with that email',
-      );
-    });
-
-    test('maps weak-password', () {
-      expect(
-        friendlyError('[firebase_auth/weak-password] Weak.'),
-        'Password must be at least 6 characters',
-      );
-    });
-
-    test('maps invalid-email', () {
-      expect(
-        friendlyError('[firebase_auth/invalid-email] Bad email.'),
-        'Please enter a valid email address',
-      );
-    });
-
-    test('maps invalid-credential', () {
-      expect(
-        friendlyError('[firebase_auth/invalid-credential] Fail.'),
-        'Invalid email or password',
-      );
-    });
-
-    test('fallback strips bracket tags', () {
-      expect(
-        friendlyError('[firebase_auth/something] Some error message'),
-        'Some error message',
-      );
-    });
+    expect(find.byKey(const Key('login-name-field')), findsOneWidget);
+    final createModeSemantics = tester.getSemantics(
+      find.byKey(const Key('login-mode-create-account')),
+    );
+    expect(createModeSemantics.flagsCollection.isSelected, Tristate.isTrue);
   });
+
+  testWidgets('validation and transport errors are rendered and announced', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await pumpLogin(
+      tester,
+      onSubmit: ({required email, required password, displayName}) async {
+        throw Exception('[firebase_auth/wrong-password] rejected');
+      },
+    );
+
+    await tester.tap(find.byKey(const Key('login-submit-button')));
+    await tester.pump();
+    expect(find.text('Enter your email'), findsOneWidget);
+    expect(find.text('Enter your password'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('login-email-field')),
+      'member@example.com',
+    );
+    await tester.enterText(
+      find.byKey(const Key('login-password-field')),
+      'wrong',
+    );
+    await tester.tap(find.byKey(const Key('login-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Incorrect password'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('We could not sign you in. Incorrect password'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('login-password-field')),
+      'corrected',
+    );
+    await tester.pump();
+    expect(find.text('Incorrect password'), findsNothing);
+    semantics.dispose();
+  });
+
+  testWidgets('phone, desktop, dark mode, and large text remain usable', (
+    tester,
+  ) async {
+    await pumpLogin(
+      tester,
+      theme: AppTheme.dark,
+      size: const Size(1440, 1000),
+      textScaler: const TextScaler.linear(1.5),
+    );
+
+    final contentSize = tester.getSize(
+      find.byKey(const Key('login-form-content')),
+    );
+    expect(contentSize.width, lessThanOrEqualTo(480));
+    expect(tester.takeException(), isNull);
+
+    final heading = tester.widget<Text>(find.text('Jamaica HoopsConnect'));
+    expect(heading.style?.color, AppTheme.dark.colorScheme.onSurface);
+    expect(
+      _contrastRatio(
+        heading.style!.color!,
+        AppTheme.dark.scaffoldBackgroundColor,
+      ),
+      greaterThanOrEqualTo(4.5),
+    );
+
+    await pumpLogin(tester, size: const Size(375, 844));
+    expect(
+      tester.getSize(find.byKey(const Key('login-form-content'))).width,
+      lessThanOrEqualTo(375 - 48),
+    );
+    expect(tester.takeException(), isNull);
+  });
+}
+
+EditableText _editable(WidgetTester tester, Key fieldKey) {
+  return tester.widget<EditableText>(
+    find.descendant(
+      of: find.byKey(fieldKey),
+      matching: find.byType(EditableText),
+    ),
+  );
+}
+
+double _contrastRatio(Color foreground, Color background) {
+  final lighter = foreground.computeLuminance() > background.computeLuminance()
+      ? foreground.computeLuminance()
+      : background.computeLuminance();
+  final darker = foreground.computeLuminance() > background.computeLuminance()
+      ? background.computeLuminance()
+      : foreground.computeLuminance();
+  return (lighter + 0.05) / (darker + 0.05);
 }

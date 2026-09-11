@@ -1,12 +1,29 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../core/constants/app_constants.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_form_controls.dart';
+import '../../core/widgets/app_state_message.dart';
 import '../../providers/auth_providers.dart';
 import '../public/public_league_screen.dart';
 
+typedef LoginEmailPasswordHandler =
+    Future<void> Function({
+      required String email,
+      required String password,
+      String? displayName,
+    });
+
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.onEmailPasswordSubmit});
+
+  /// Optional transport seam used by screen-level tests and embedders. Normal
+  /// application routing uses [authRepositoryProvider].
+  final LoginEmailPasswordHandler? onEmailPasswordSubmit;
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
@@ -17,6 +34,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _nameFocus = FocusNode(debugLabel: 'login-name');
+  final _emailFocus = FocusNode(debugLabel: 'login-email');
+  final _passwordFocus = FocusNode(debugLabel: 'login-password');
+  final _signInModeFocus = FocusNode(debugLabel: 'login-mode-sign-in');
+  final _createAccountModeFocus = FocusNode(
+    debugLabel: 'login-mode-create-account',
+  );
   bool _loading = false;
   String? _error;
   bool _isSignUp = false;
@@ -26,11 +50,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _nameFocus.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
+    _signInModeFocus.dispose();
+    _createAccountModeFocus.dispose();
     super.dispose();
   }
 
+  void _clearTransportError() {
+    if (_error != null) setState(() => _error = null);
+  }
+
+  void _setSignUp(bool value) {
+    if (_loading || value == _isSignUp) return;
+    setState(() {
+      _isSignUp = value;
+      _error = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      (_isSignUp ? _nameFocus : _emailFocus).requestFocus();
+    });
+  }
+
   Future<void> _submitEmailPassword() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_loading || !(_formKey.currentState?.validate() ?? false)) return;
 
     setState(() {
       _loading = true;
@@ -38,8 +83,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      if (_isSignUp) {
-        // Create account
+      final handler = widget.onEmailPasswordSubmit;
+      if (handler != null) {
+        await handler(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          displayName: _isSignUp ? _nameController.text.trim() : null,
+        );
+      } else if (_isSignUp) {
         await ref
             .read(authRepositoryProvider)
             .signUpFan(
@@ -48,7 +99,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               displayName: _nameController.text.trim(),
             );
       } else {
-        // Sign in
         await ref
             .read(authRepositoryProvider)
             .signIn(
@@ -56,9 +106,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               password: _passwordController.text,
             );
       }
-    } catch (e) {
+    } catch (error) {
       if (mounted) {
-        setState(() => _error = _friendlyError(e.toString()));
+        setState(() => _error = _friendlyError(error.toString()));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -66,15 +116,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _signInWithGoogle() async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       await ref.read(authRepositoryProvider).signInWithGoogle();
-    } catch (e) {
+    } catch (error) {
       if (mounted) {
-        setState(() => _error = _friendlyError(e.toString()));
+        setState(() => _error = _friendlyError(error.toString()));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -82,15 +133,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _signInWithApple() async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       await ref.read(authRepositoryProvider).signInWithApple();
-    } catch (e) {
+    } catch (error) {
       if (mounted) {
-        setState(() => _error = _friendlyError(e.toString()));
+        setState(() => _error = _friendlyError(error.toString()));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -119,172 +171,174 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return Scaffold(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSizes.paddingLg),
+            padding: EdgeInsets.symmetric(
+              horizontal: ((MediaQuery.sizeOf(context).width - 480) / 2).clamp(
+                AppSizes.paddingLg,
+                double.infinity,
+              ),
+              vertical: AppSizes.paddingLg,
+            ),
             child: Form(
               key: _formKey,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
               child: Column(
+                key: const Key('login-form-content'),
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppSizes.radiusLg),
-                    child: Image.asset(
-                      'assets/images/jba_logo.png',
-                      width: 100,
-                      height: 100,
-                    ),
+                  Image.asset(
+                    'assets/images/jba_logo.png',
+                    width: 100,
+                    height: 100,
+                    semanticLabel: 'Jamaica Basketball Association logo',
                   ),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'HoopsConnect',
-                    style: TextStyle(
-                      fontSize: 16,
+                    style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: AppColors.accent,
+                      color: context.semanticColors.warning,
                       letterSpacing: 1.2,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Jamaica HoopsConnect',
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Jamaica HoopsConnect',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     'Stay connected with your league',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 14,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 32),
-
-                  // Sign In / Sign Up toggle
                   Row(
                     children: [
                       Expanded(
-                        child: _tabButton('Sign In', !_isSignUp, () {
-                          setState(() => _isSignUp = false);
-                        }),
+                        child: _tabButton(
+                          'Sign In',
+                          !_isSignUp,
+                          () => _setSignUp(false),
+                          focusNode: _signInModeFocus,
+                          key: const Key('login-mode-sign-in'),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: _tabButton('Create Account', _isSignUp, () {
-                          setState(() => _isSignUp = true);
-                        }),
+                        child: _tabButton(
+                          'Create Account',
+                          _isSignUp,
+                          () => _setSignUp(true),
+                          focusNode: _createAccountModeFocus,
+                          key: const Key('login-mode-create-account'),
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 24),
-
-                  // Name field (sign up only)
                   if (_isSignUp) ...[
                     TextFormField(
+                      key: const Key('login-name-field'),
                       controller: _nameController,
+                      focusNode: _nameFocus,
+                      textInputAction: TextInputAction.next,
+                      autofillHints: const [AutofillHints.name],
                       decoration: const InputDecoration(
                         labelText: 'Full Name',
                         prefixIcon: Icon(Icons.person_outlined),
                       ),
-                      validator: (v) =>
-                          _isSignUp && (v == null || v.trim().isEmpty)
+                      validator: (value) =>
+                          _isSignUp && (value == null || value.trim().isEmpty)
                           ? 'Enter your name'
                           : null,
+                      onChanged: (_) => _clearTransportError(),
+                      onFieldSubmitted: (_) => _emailFocus.requestFocus(),
                     ),
                     const SizedBox(height: 12),
                   ],
-
-                  // Email
                   TextFormField(
+                    key: const Key('login-email-field'),
                     controller: _emailController,
+                    focusNode: _emailFocus,
                     keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    autofillHints: const [
+                      AutofillHints.username,
+                      AutofillHints.email,
+                    ],
                     decoration: const InputDecoration(
                       labelText: 'Email',
                       prefixIcon: Icon(Icons.email_outlined),
                     ),
-                    validator: (v) {
-                      if (v == null || v.trim().isEmpty) {
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
                         return 'Enter your email';
                       }
                       final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-                      if (!emailRegex.hasMatch(v.trim())) {
+                      if (!emailRegex.hasMatch(value.trim())) {
                         return 'Enter a valid email address';
                       }
                       return null;
                     },
+                    onChanged: (_) => _clearTransportError(),
+                    onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
                   ),
                   const SizedBox(height: 12),
-
-                  // Password
                   TextFormField(
+                    key: const Key('login-password-field'),
                     controller: _passwordController,
+                    focusNode: _passwordFocus,
                     obscureText: true,
+                    textInputAction: TextInputAction.done,
+                    autofillHints: const [AutofillHints.password],
                     decoration: const InputDecoration(
                       labelText: 'Password',
                       prefixIcon: Icon(Icons.lock_outlined),
                     ),
-                    validator: (v) =>
-                        v == null || v.isEmpty ? 'Enter your password' : null,
+                    validator: (value) => value == null || value.isEmpty
+                        ? 'Enter your password'
+                        : null,
+                    onChanged: (_) => _clearTransportError(),
+                    onFieldSubmitted: (_) {
+                      if (!_loading) unawaited(_submitEmailPassword());
+                    },
                   ),
-
                   if (_error != null) ...[
                     const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppColors.urgentBg,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: AppColors.urgent.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.error_outline,
-                            color: AppColors.urgent,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _error!,
-                              style: const TextStyle(
-                                color: AppColors.urgent,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                    AppStateMessage(
+                      title: _isSignUp
+                          ? 'We could not create your account'
+                          : 'We could not sign you in',
+                      message: _error!,
+                      tone: AppStateTone.error,
+                      compact: true,
                     ),
                   ],
-
                   const SizedBox(height: 20),
-
-                  // Submit button
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: _loading ? null : _submitEmailPassword,
-                      child: _loading
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Text(_isSignUp ? 'Create Account' : 'Sign In'),
+                    child: AppAsyncActionButton(
+                      key: const Key('login-submit-button'),
+                      label: _isSignUp ? 'Create Account' : 'Sign In',
+                      busyLabel: _isSignUp ? 'Creating account' : 'Signing in',
+                      isBusy: _loading,
+                      onPressed: _submitEmailPassword,
                     ),
                   ),
                   const SizedBox(height: 14),
@@ -300,33 +354,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                       icon: const Icon(Icons.visibility_outlined),
                       label: const Text('Browse scores & schedule as a guest'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  // Divider
-                  const Row(
+                  Row(
                     children: [
-                      Expanded(child: Divider()),
+                      const Expanded(child: Divider()),
                       Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Text(
                           'or continue with',
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 12,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ),
-                      Expanded(child: Divider()),
+                      const Expanded(child: Divider()),
                     ],
                   ),
                   const SizedBox(height: 16),
-
-                  // Social auth buttons
                   Row(
                     children: [
                       Expanded(
@@ -341,9 +387,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           ),
                           label: const Text('Google'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -352,55 +395,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           onPressed: _loading ? null : _signInWithApple,
                           icon: const Icon(Icons.apple, size: 22),
                           label: const Text('Apple'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 20),
-
-                  // Invite code link
                   TextButton(
-                    onPressed: () => context.go('/join'),
-                    child: const Text(
-                      'Have an invite code? Join your team',
-                      style: TextStyle(color: AppColors.primary),
-                    ),
+                    onPressed: _loading ? null : () => context.go('/join'),
+                    child: const Text('Have an invite code? Join your team'),
                   ),
-
-                  // Terms and Privacy
                   const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       TextButton(
-                        onPressed: () => context.push('/legal/terms'),
-                        child: const Text(
-                          'Terms of Use',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
+                        onPressed: _loading
+                            ? null
+                            : () => context.push('/legal/terms'),
+                        child: const Text('Terms of Use'),
                       ),
-                      const Text(
-                        ' | ',
-                        style: TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 11,
-                        ),
+                      Text(
+                        '•',
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
                       ),
                       TextButton(
-                        onPressed: () => context.push('/legal/privacy'),
-                        child: const Text(
-                          'Privacy Policy',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
+                        onPressed: _loading
+                            ? null
+                            : () => context.push('/legal/privacy'),
+                        child: const Text('Privacy Policy'),
                       ),
                     ],
                   ),
@@ -413,21 +436,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _tabButton(String label, bool active, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: active ? AppColors.primary : AppColors.surface,
-          borderRadius: BorderRadius.circular(8),
-          border: active ? null : Border.all(color: AppColors.border),
-        ),
-        child: Center(
+  Widget _tabButton(
+    String label,
+    bool active,
+    VoidCallback onTap, {
+    required FocusNode focusNode,
+    required Key key,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      selected: active,
+      label: label,
+      excludeSemantics: true,
+      child: InkWell(
+        key: key,
+        focusNode: focusNode,
+        onTap: _loading ? null : onTap,
+        borderRadius: BorderRadius.circular(AppSizes.radiusSm),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          decoration: BoxDecoration(
+            color: active
+                ? colorScheme.primary
+                : colorScheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(AppSizes.radiusSm),
+            border: Border.all(
+              color: active ? colorScheme.primary : colorScheme.outlineVariant,
+            ),
+          ),
           child: Text(
             label,
             style: TextStyle(
-              color: active ? Colors.white : AppColors.textSecondary,
+              color: active
+                  ? colorScheme.onPrimary
+                  : colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w600,
               fontSize: 13,
             ),
