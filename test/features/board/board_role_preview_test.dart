@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
 import 'package:hoops_connect/features/board/board_screen.dart';
+import 'package:hoops_connect/features/board/widgets/post_detail_panel.dart';
 import 'package:hoops_connect/models/post_model.dart';
 import 'package:hoops_connect/models/user_model.dart';
 import 'package:hoops_connect/providers/auth_providers.dart';
@@ -11,9 +12,13 @@ import 'package:hoops_connect/providers/post_providers.dart';
 import 'package:hoops_connect/providers/role_preview_provider.dart';
 
 void main() {
-  Future<void> pumpBoard(WidgetTester tester, UserRole previewRole) async {
+  Future<void> pumpBoard(
+    WidgetTester tester,
+    UserRole? previewRole, {
+    Size size = const Size(390, 844),
+  }) async {
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = size;
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
@@ -27,6 +32,9 @@ void main() {
           postsStreamProvider(
             null,
           ).overrideWith((ref) => Stream<List<PostModel>>.value(_posts)),
+          postDetailProvider.overrideWith(
+            (ref, postId) => Stream<PostModel?>.value(_postById(postId)),
+          ),
         ],
         child: MaterialApp(theme: AppTheme.light, home: const BoardScreen()),
       ),
@@ -60,6 +68,60 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(find.text('REP'), findsOneWidget);
   });
+
+  testWidgets(
+    'desktop selection cannot retain an internal post after Fan preview',
+    (tester) async {
+      await pumpBoard(tester, null, size: const Size(1200, 900));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Internal action').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Acknowledgment Progress'), findsOneWidget);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(BoardScreen)),
+      );
+      container.read(rolePreviewProvider.notifier).state = UserRole.fan;
+      await tester.pumpAndSettle();
+
+      expect(find.text('Internal action'), findsNothing);
+      expect(find.text('Acknowledgment Progress'), findsNothing);
+      expect(find.text('Public update'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets('direct detail state enforces the preview visibility filter', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(
+            AsyncValue<UserModel?>.data(_superAdmin()),
+          ),
+          rolePreviewProvider.overrideWith((ref) => UserRole.fan),
+          postDetailProvider.overrideWith(
+            (ref, _) => Stream<PostModel?>.value(_posts.last),
+          ),
+        ],
+        child: const MaterialApp(home: PostDetailPanel(postId: 'internal')),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Post hidden in this role preview'), findsOneWidget);
+    expect(find.text('Internal action'), findsNothing);
+    expect(find.text('Acknowledgment Progress'), findsNothing);
+  });
+}
+
+PostModel? _postById(String postId) {
+  for (final post in _posts) {
+    if (post.id == postId) return post;
+  }
+  return null;
 }
 
 final _posts = [

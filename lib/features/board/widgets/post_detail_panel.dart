@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/widgets/empty_state.dart';
 import '../../../providers/auth_providers.dart';
 import '../../../providers/post_providers.dart';
 import '../../../providers/role_preview_provider.dart';
+import '../board_post_visibility.dart';
 
 /// Embeddable post detail panel for the desktop 2-column board layout.
 /// Shows the same content as [AckDetailScreen] but without a Scaffold/AppBar.
@@ -24,6 +26,13 @@ class PostDetailPanel extends ConsumerWidget {
       data: (post) {
         if (post == null) {
           return const Center(child: Text('Post not found'));
+        }
+        if (!postIsVisibleInBoardPresentation(post, currentUser)) {
+          return const EmptyState(
+            icon: Icons.visibility_off_outlined,
+            title: 'Post hidden in this role preview',
+            subtitle: 'Choose a post that is visible to the previewed role.',
+          );
         }
 
         final userAcked = realUser != null && post.hasUserAcked(realUser.id);
