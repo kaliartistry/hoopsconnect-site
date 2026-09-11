@@ -232,6 +232,20 @@ async function getAuthorityInTransaction(
   return authorityFromSnapshot(snapshot, requiredCapability);
 }
 
+async function requireDivisionAcceptsNewReferences(
+  transaction: Transaction,
+  associationId: string,
+  divisionId: string | null,
+): Promise<void> {
+  if (divisionId === null) return;
+  const division = await transaction.get(admin.firestore().doc(
+    `associations/${associationId}/divisions/${divisionId}`,
+  ));
+  if (!division.exists || division.get("status") !== "active" || division.get("deletionPending")) {
+    throw new HttpsError("failed-precondition", "The invite division is unavailable for new assignments.");
+  }
+}
+
 function validMembershipAuthority(snapshot: DocumentSnapshot): Authority | null {
   if (!snapshot.exists) return null;
   const data = snapshot.data() ?? {};
@@ -434,6 +448,11 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
       }
       resolvedDivisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
     }
+    await requireDivisionAcceptsNewReferences(
+      transaction,
+      invite.associationId,
+      resolvedDivisionId,
+    );
 
     const serverNow = FieldValue.serverTimestamp();
     const result = {role: invite.role, associationId: invite.associationId, teamId: invite.teamId};
@@ -557,6 +576,11 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
       }
       divisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
     }
+    await requireDivisionAcceptsNewReferences(
+      transaction,
+      authority.associationId,
+      divisionId,
+    );
     const serverNow = FieldValue.serverTimestamp();
     const semanticResult = {
       inviteId,

@@ -28,6 +28,10 @@ const MAX_ROSTER_WORKSPACE_RECORDS = 100;
 const MAX_DIVISION_REFERENCES = 500;
 const ACTOR_QUOTA_PER_MINUTE = 120;
 const ACTOR_QUOTA_PER_DAY = 2_000;
+const QUOTA_STATE_SCHEMA_VERSION = 2;
+const QUOTA_TOKEN_SCALE = 1_000;
+const MINUTE_QUOTA_WINDOW_MS = 60_000;
+const DAY_QUOTA_WINDOW_MS = 86_400_000;
 const DIVISION_DELETE_LEASE_MS = 5 * 60 * 1000;
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const operationPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
@@ -247,24 +251,33 @@ async function enforceActorQuota(
   const ref = db.doc(`associations/${authority.associationId}/leagueActorQuotas/${hash({uid: authority.uid})}`);
   const snapshot = await transaction.get(ref);
   const data = snapshot.data() ?? {};
-  const minuteStart = data.minuteStartedAt instanceof Timestamp &&
-    now.toMillis() - data.minuteStartedAt.toMillis() < 60_000 ? data.minuteStartedAt : now;
-  const dayStart = data.dayStartedAt instanceof Timestamp &&
-    now.toMillis() - data.dayStartedAt.toMillis() < 86_400_000 ? data.dayStartedAt : now;
-  const minuteCount = minuteStart === data.minuteStartedAt && safeStoredCounter(data.minuteCount) ? data.minuteCount : 0;
-  const dayCount = dayStart === data.dayStartedAt && safeStoredCounter(data.dayCount) ? data.dayCount : 0;
-  if (cost < 1 || cost > MAX_BATCH_GAMES || minuteCount + cost > ACTOR_QUOTA_PER_MINUTE ||
-      dayCount + cost > ACTOR_QUOTA_PER_DAY) {
+  if (snapshot.exists && (data.schemaVersion !== QUOTA_STATE_SCHEMA_VERSION ||
+      data.associationId !== authority.associationId || data.actorId !== authority.uid)) {
+    throw new HttpsError("failed-precondition", "The league operation quota state requires administrator recovery.");
+  }
+  const refill = (tokens: unknown, refilledAt: unknown, capacity: number, windowMs: number): number => {
+    if (!snapshot.exists) return capacity * QUOTA_TOKEN_SCALE;
+    if (!safeStoredCounter(tokens) || tokens > capacity * QUOTA_TOKEN_SCALE || !(refilledAt instanceof Timestamp)) {
+      throw new HttpsError("failed-precondition", "The league operation quota state requires administrator recovery.");
+    }
+    const elapsedMs = Math.max(0, Math.min(windowMs, now.toMillis() - refilledAt.toMillis()));
+    const replenished = Math.floor(elapsedMs * capacity * QUOTA_TOKEN_SCALE / windowMs);
+    return Math.min(capacity * QUOTA_TOKEN_SCALE, tokens + replenished);
+  };
+  const minuteTokens = refill(data.minuteTokens, data.minuteRefilledAt, ACTOR_QUOTA_PER_MINUTE, MINUTE_QUOTA_WINDOW_MS);
+  const dayTokens = refill(data.dayTokens, data.dayRefilledAt, ACTOR_QUOTA_PER_DAY, DAY_QUOTA_WINDOW_MS);
+  const tokenCost = cost * QUOTA_TOKEN_SCALE;
+  if (cost < 1 || cost > MAX_BATCH_GAMES || minuteTokens < tokenCost || dayTokens < tokenCost) {
     throw new HttpsError("resource-exhausted", "The league operation quota has been reached. Try again later.");
   }
   transaction.set(ref, {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: QUOTA_STATE_SCHEMA_VERSION,
     associationId: authority.associationId,
     actorId: authority.uid,
-    minuteStartedAt: minuteStart,
-    minuteCount: minuteCount + cost,
-    dayStartedAt: dayStart,
-    dayCount: dayCount + cost,
+    minuteTokens: minuteTokens - tokenCost,
+    minuteRefilledAt: now,
+    dayTokens: dayTokens - tokenCost,
+    dayRefilledAt: now,
     updatedAt: FieldValue.serverTimestamp(),
   }, {merge: false});
 }
@@ -318,10 +331,37 @@ async function authorityInTransaction(
   return authority;
 }
 
-async function consumeInvocationQuota(db: Firestore, actor: Caller, cost = 1): Promise<void> {
-  await db.runTransaction(async (transaction) => {
+interface ReceiptQuotaCheck {
+  operation: string;
+  operationId: string;
+  fingerprint: string;
+}
+
+async function consumeInvocationQuota(
+  db: Firestore,
+  actor: Caller,
+  cost = 1,
+  receiptCheck?: ReceiptQuotaCheck,
+): Promise<Json | null> {
+  return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
+    if (receiptCheck) {
+      const receipt = await transaction.get(operationReceiptRef(
+        db,
+        actor.uid,
+        receiptCheck.operation,
+        receiptCheck.operationId,
+      ));
+      const replay = receiptReplay(receipt, receiptCheck.fingerprint, {
+        actorId: actor.uid,
+        associationId: authority.associationId,
+        operation: receiptCheck.operation,
+        operationId: receiptCheck.operationId,
+      });
+      if (replay) return replay;
+    }
     await enforceActorQuota(transaction, db, authority, cost);
+    return null;
   });
 }
 
@@ -869,7 +909,10 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
   };
   const fingerprint = hash(semanticRequest);
   const db = admin.firestore();
-  await consumeInvocationQuota(db, actor);
+  const earlyReplay = await consumeInvocationQuota(db, actor, 1, {
+    operation: "roster.submit", operationId, fingerprint,
+  });
+  if (earlyReplay) return earlyReplay;
   return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const [control, team] = await Promise.all([
@@ -966,7 +1009,10 @@ export async function reviewRosterProposalHandler(request: CallableRequest<unkno
     note,
   });
   const db = admin.firestore();
-  await consumeInvocationQuota(db, actor);
+  const earlyReplay = await consumeInvocationQuota(db, actor, 1, {
+    operation: "roster.review", operationId, fingerprint,
+  });
+  if (earlyReplay) return earlyReplay;
   return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const [control, team] = await Promise.all([
@@ -1037,13 +1083,23 @@ export async function reviewRosterProposalHandler(request: CallableRequest<unkno
   });
 }
 
-function divisionReferenceQueries(db: Firestore, associationId: string, divisionId: string): Array<{kind: string; query: Query}> {
+function divisionReferenceQueries(
+  db: Firestore,
+  associationId: string,
+  divisionId: string,
+  legacyDivisionName: string | null,
+): Array<{kind: string; query: Query}> {
   const root = `associations/${associationId}`;
   const limited = (query: Query) => query.limit(MAX_DIVISION_REFERENCES + 1);
   return [
     {kind: "userAssignment", query: limited(db.collection("users").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "membershipAssignment", query: limited(db.collection("memberships").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
     {kind: "inviteAssignment", query: limited(db.collection("inviteCodes").where("associationId", "==", associationId).where("divisionId", "==", divisionId))},
+    {kind: "boardPost", query: limited(db.collection(`${root}/posts`).where("divisionFilter", "==", divisionId))},
+    ...(legacyDivisionName !== null && legacyDivisionName !== divisionId ? [{
+      kind: "boardPostLegacyName",
+      query: limited(db.collection(`${root}/posts`).where("divisionFilter", "==", legacyDivisionName)),
+    }] : []),
     {kind: "legacyTeam", query: limited(db.collection(`${root}/teams`).where("divisionId", "==", divisionId))},
     {kind: "legacyEvent", query: limited(db.collection(`${root}/events`).where("divisionId", "==", divisionId))},
     {kind: "legacyGameStats", query: limited(db.collection(`${root}/gameStats`).where("divisionId", "==", divisionId))},
@@ -1076,6 +1132,34 @@ function divisionReferenceQueries(db: Firestore, associationId: string, division
   ];
 }
 
+function divisionDeletionAuthorityBinding(
+  authority: Authority,
+  workflow: WorkflowControl,
+  divisionId: string,
+): string {
+  return hash({
+    actorId: authority.uid,
+    associationId: authority.associationId,
+    authorizationSchemaVersion: authority.schemaVersion,
+    accountGenerationV2: authority.accountGenerationV2,
+    accountLifecycleEpochV2: authority.accountLifecycleEpochV2,
+    role: authority.role,
+    capabilities: [...authority.capabilities].sort(),
+    teamId: authority.teamId,
+    competitionId: workflow.competitionId,
+    seasonId: workflow.seasonId,
+    phaseId: workflow.phaseId,
+    authorityMode: workflow.authorityMode,
+    custodyPolicyVersionV2: workflow.custodyPolicyVersionV2,
+    privacyEpochV2: workflow.privacyEpochV2,
+    divisionId,
+  });
+}
+
+interface DivisionDeletionTestHooks {
+  afterInventory?: () => Promise<void>;
+}
+
 function referenceName(data: DocumentData): string | null {
   for (const key of ["displayName", "name", "title"]) {
     if (typeof data[key] === "string" && data[key].trim().length > 0) return data[key].trim();
@@ -1083,7 +1167,10 @@ function referenceName(data: DocumentData): string | null {
   return null;
 }
 
-export async function deleteDivisionIfUnreferencedHandler(request: CallableRequest<unknown>) {
+async function executeDeleteDivisionIfUnreferenced(
+  request: CallableRequest<unknown>,
+  testHooks: DivisionDeletionTestHooks,
+) {
   const actor = caller(request);
   const data = object(request.data);
   exactKeys(data, ["schemaVersion", "operationId", "divisionId", "expectedDivisionVersion"]);
@@ -1093,7 +1180,10 @@ export async function deleteDivisionIfUnreferencedHandler(request: CallableReque
   const expectedDivisionVersion = counter(data.expectedDivisionVersion, "expectedDivisionVersion");
   const fingerprint = hash({schemaVersion: SCHEMA_VERSION, operationId, divisionId, expectedDivisionVersion});
   const db = admin.firestore();
-  await consumeInvocationQuota(db, actor);
+  const earlyReplay = await consumeInvocationQuota(db, actor, 1, {
+    operation: "division.delete", operationId, fingerprint,
+  });
+  if (earlyReplay) return earlyReplay;
   const prepared = await db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const control = await transaction.get(workflowRef(db, authority.associationId));
@@ -1146,10 +1236,23 @@ export async function deleteDivisionIfUnreferencedHandler(request: CallableReque
       updatedAt: FieldValue.serverTimestamp(),
       ...(operation.exists ? {} : {createdAt: FieldValue.serverTimestamp()}),
     }, {merge: operation.exists});
-    return {authority, divisionRef, receiptRef, operationRef};
+    return {
+      authority,
+      authorityBinding: divisionDeletionAuthorityBinding(authority, workflow, divisionId),
+      legacyDivisionName: typeof division.get("name") === "string" && division.get("name").trim().length > 0 ?
+        division.get("name").trim() as string : null,
+      divisionRef,
+      receiptRef,
+      operationRef,
+    };
   });
   if ("replay" in prepared) return prepared.replay;
-  const queries = divisionReferenceQueries(db, prepared.authority.associationId, divisionId);
+  const queries = divisionReferenceQueries(
+    db,
+    prepared.authority.associationId,
+    divisionId,
+    prepared.legacyDivisionName,
+  );
   let snapshots: Awaited<ReturnType<Query["get"]>>[];
   try {
     snapshots = await Promise.all(queries.map((entry) => entry.query.get()));
@@ -1181,11 +1284,16 @@ export async function deleteDivisionIfUnreferencedHandler(request: CallableReque
     throw new HttpsError("unavailable", "The division inventory could not be completed; the guard was safely released for retry.");
   }
 
+  await testHooks.afterInventory?.();
+
   return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const control = await transaction.get(workflowRef(db, authority.associationId));
     const workflow = requireWorkflowReady(control, authority.associationId, "divisionDeletion");
     await requireActorWorkflowBinding(transaction, db, actor, authority, workflow);
+    if (divisionDeletionAuthorityBinding(authority, workflow, divisionId) !== prepared.authorityBinding) {
+      throw new HttpsError("permission-denied", "The division deletion authority or scope changed during inventory.");
+    }
     if (workflow.authorityMode !== "legacyV1" || authority.schemaVersion !== 1) {
       throw new HttpsError("failed-precondition", "Division deletion remains closed until a v2 division-management capability is adopted.");
     }
@@ -1200,6 +1308,9 @@ export async function deleteDivisionIfUnreferencedHandler(request: CallableReque
     if (!division.exists || !operation.exists || operation.get("status") !== "guarding" ||
         operation.get("requestFingerprint") !== fingerprint) {
       throw new HttpsError("aborted", "The division deletion recovery state changed.");
+    }
+    if (division.get("version") !== expectedDivisionVersion) {
+      throw new HttpsError("aborted", "The division changed during reference inventory.");
     }
     const pending = division.get("deletionPending");
     if (!pending || pending.operationId !== operationId || pending.actorId !== actor.uid ||
@@ -1227,6 +1338,20 @@ export async function deleteDivisionIfUnreferencedHandler(request: CallableReque
     });
     return result;
   });
+}
+
+export async function deleteDivisionIfUnreferencedHandler(request: CallableRequest<unknown>) {
+  return executeDeleteDivisionIfUnreferenced(request, {});
+}
+
+export async function deleteDivisionIfUnreferencedHandlerForTest(
+  request: CallableRequest<unknown>,
+  testHooks: DivisionDeletionTestHooks,
+) {
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    throw new HttpsError("failed-precondition", "Division deletion test hooks require the Firestore emulator.");
+  }
+  return executeDeleteDivisionIfUnreferenced(request, testHooks);
 }
 
 function parseSchedule(data: Json): ScheduleInput {
@@ -1478,7 +1603,10 @@ export async function scheduleGameHandler(request: CallableRequest<unknown>) {
   const input = parseSchedule(data);
   const fingerprint = hash({schemaVersion: SCHEMA_VERSION, operationId, ...scheduleSemantic(input)});
   const db = admin.firestore();
-  await consumeInvocationQuota(db, actor);
+  const earlyReplay = await consumeInvocationQuota(db, actor, 1, {
+    operation: "schedule.create", operationId, fingerprint,
+  });
+  if (earlyReplay) return earlyReplay;
   return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const control = await transaction.get(workflowRef(db, authority.associationId));
@@ -1530,7 +1658,10 @@ export async function createScheduleBatchHandler(request: CallableRequest<unknow
     games: parsed.map((entry) => ({itemKey: entry.itemKey, ...scheduleSemantic(entry.input)})),
   });
   const db = admin.firestore();
-  await consumeInvocationQuota(db, actor, parsed.length);
+  const earlyReplay = await consumeInvocationQuota(db, actor, parsed.length, {
+    operation: "schedule.batch", operationId, fingerprint,
+  });
+  if (earlyReplay) return earlyReplay;
   return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const control = await transaction.get(workflowRef(db, authority.associationId));
@@ -1625,7 +1756,10 @@ export async function mutateScheduledGameHandler(request: CallableRequest<unknow
   }
   const fingerprint = hash(semanticMutation);
   const db = admin.firestore();
-  await consumeInvocationQuota(db, actor);
+  const earlyReplay = await consumeInvocationQuota(db, actor, 1, {
+    operation: "schedule.mutate", operationId, fingerprint,
+  });
+  if (earlyReplay) return earlyReplay;
   return db.runTransaction(async (transaction) => {
     const authority = await authorityInTransaction(transaction, db, actor);
     const control = await transaction.get(workflowRef(db, authority.associationId));

@@ -1,15 +1,20 @@
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'dart:math';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../core/constants/firestore_paths.dart';
 import '../../models/division_model.dart';
 
 class DivisionRepository {
-  final FirebaseFirestore _db;
+  final FirebaseFirestore? _configuredFirestore;
   final FirebaseFunctions? _functions;
   final Future<Map<String, dynamic>> Function(String, Map<String, Object?>)?
   _callable;
   final Random _random;
+  final DivisionDeleteOperationStore _deleteOperationStore;
 
   DivisionRepository({
     FirebaseFirestore? firestore,
@@ -17,10 +22,17 @@ class DivisionRepository {
     Future<Map<String, dynamic>> Function(String, Map<String, Object?>)?
     callable,
     Random? random,
-  }) : _db = firestore ?? FirebaseFirestore.instance,
+    DivisionDeleteOperationStore? deleteOperationStore,
+  }) : _configuredFirestore = firestore,
        _functions = functions,
        _callable = callable,
-       _random = random ?? Random.secure();
+       _random = random ?? Random.secure(),
+       _deleteOperationStore =
+           deleteOperationStore ??
+           SharedPreferencesDivisionDeleteOperationStore();
+
+  FirebaseFirestore get _db =>
+      _configuredFirestore ?? FirebaseFirestore.instance;
 
   String newDeleteOperationId({DateTime? now}) {
     final entropy = List.generate(
@@ -141,13 +153,35 @@ class DivisionRepository {
   }
 
   Future<DivisionDeleteReceipt> deleteIfUnreferenced({
-    required String operationId,
+    required String actorId,
+    required String associationId,
     required String divisionId,
     required int expectedDivisionVersion,
   }) async {
+    final saved = await _deleteOperationStore.load(
+      actorId: actorId,
+      associationId: associationId,
+      divisionId: divisionId,
+    );
+    if (saved != null &&
+        saved.expectedDivisionVersion != expectedDivisionVersion) {
+      throw StateError(
+        'A protected deletion for an earlier division version must be resumed before starting another.',
+      );
+    }
+    final operation =
+        saved ??
+        DivisionDeleteOperation(
+          actorId: actorId,
+          associationId: associationId,
+          divisionId: divisionId,
+          expectedDivisionVersion: expectedDivisionVersion,
+          operationId: newDeleteOperationId(),
+        );
+    if (saved == null) await _deleteOperationStore.save(operation);
     final request = <String, Object?>{
       'schemaVersion': 1,
-      'operationId': operationId,
+      'operationId': operation.operationId,
       'divisionId': divisionId,
       'expectedDivisionVersion': expectedDivisionVersion,
     };
@@ -163,12 +197,196 @@ class DivisionRepository {
           (key, value) => MapEntry(key.toString(), value),
         );
       }
-      return DivisionDeleteReceipt.fromMap(result);
+      final receipt = DivisionDeleteReceipt.fromMap(result);
+      if (receipt.operationId != operation.operationId ||
+          receipt.divisionVersion != operation.expectedDivisionVersion) {
+        throw const FormatException(
+          'Division deletion receipt does not match the saved operation',
+        );
+      }
+      await _deleteOperationStore.clear(operation);
+      return receipt;
     } on FirebaseFunctionsException catch (error) {
       throw StateError(
         error.message ??
             'The division deletion service could not complete this request.',
       );
+    }
+  }
+
+  Future<DivisionDeleteOperation?> pendingDeleteOperation({
+    required String actorId,
+    required String associationId,
+    required String divisionId,
+  }) {
+    return _deleteOperationStore.load(
+      actorId: actorId,
+      associationId: associationId,
+      divisionId: divisionId,
+    );
+  }
+}
+
+class DivisionDeleteOperation {
+  static const schemaVersion = 1;
+
+  final String actorId;
+  final String associationId;
+  final String divisionId;
+  final int expectedDivisionVersion;
+  final String operationId;
+
+  const DivisionDeleteOperation({
+    required this.actorId,
+    required this.associationId,
+    required this.divisionId,
+    required this.expectedDivisionVersion,
+    required this.operationId,
+  });
+
+  Map<String, Object> toMap() => {
+    'schemaVersion': schemaVersion,
+    'actorId': actorId,
+    'associationId': associationId,
+    'divisionId': divisionId,
+    'expectedDivisionVersion': expectedDivisionVersion,
+    'operationId': operationId,
+  };
+
+  factory DivisionDeleteOperation.fromMap(Map<String, dynamic> map) {
+    const allowedKeys = {
+      'schemaVersion',
+      'actorId',
+      'associationId',
+      'divisionId',
+      'expectedDivisionVersion',
+      'operationId',
+    };
+    final actorId = map['actorId'];
+    final associationId = map['associationId'];
+    final divisionId = map['divisionId'];
+    final operationId = map['operationId'];
+    final scopeIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
+    final operationIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$');
+    if (map.length != allowedKeys.length ||
+        map.keys.any((key) => !allowedKeys.contains(key)) ||
+        map['schemaVersion'] != schemaVersion ||
+        map['actorId'] is! String ||
+        map['associationId'] is! String ||
+        map['divisionId'] is! String ||
+        map['expectedDivisionVersion'] is! int ||
+        (map['expectedDivisionVersion'] as int) < 1 ||
+        map['operationId'] is! String ||
+        (actorId as String).isEmpty ||
+        actorId.length > 128 ||
+        !scopeIdPattern.hasMatch(associationId as String) ||
+        !scopeIdPattern.hasMatch(divisionId as String) ||
+        !operationIdPattern.hasMatch(operationId as String)) {
+      throw const FormatException('Invalid saved division deletion operation');
+    }
+    return DivisionDeleteOperation(
+      actorId: map['actorId'] as String,
+      associationId: map['associationId'] as String,
+      divisionId: map['divisionId'] as String,
+      expectedDivisionVersion: map['expectedDivisionVersion'] as int,
+      operationId: map['operationId'] as String,
+    );
+  }
+
+  bool matches(DivisionDeleteOperation other) =>
+      actorId == other.actorId &&
+      associationId == other.associationId &&
+      divisionId == other.divisionId &&
+      expectedDivisionVersion == other.expectedDivisionVersion &&
+      operationId == other.operationId;
+}
+
+abstract interface class DivisionDeleteOperationStore {
+  Future<DivisionDeleteOperation?> load({
+    required String actorId,
+    required String associationId,
+    required String divisionId,
+  });
+
+  Future<void> save(DivisionDeleteOperation operation);
+
+  Future<void> clear(DivisionDeleteOperation operation);
+}
+
+class SharedPreferencesDivisionDeleteOperationStore
+    implements DivisionDeleteOperationStore {
+  static const _keyPrefix = 'hoopsconnect.division-delete.v1';
+
+  String _key(String actorId, String associationId, String divisionId) =>
+      '$_keyPrefix.${Uri.encodeComponent(actorId)}.'
+      '${Uri.encodeComponent(associationId)}.${Uri.encodeComponent(divisionId)}';
+
+  @override
+  Future<DivisionDeleteOperation?> load({
+    required String actorId,
+    required String associationId,
+    required String divisionId,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(_key(actorId, associationId, divisionId));
+    if (raw == null) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const FormatException('Invalid saved division deletion operation');
+    }
+    final operation = DivisionDeleteOperation.fromMap(
+      Map<String, dynamic>.from(decoded),
+    );
+    if (operation.actorId != actorId ||
+        operation.associationId != associationId ||
+        operation.divisionId != divisionId) {
+      throw const FormatException('Saved division deletion scope mismatch');
+    }
+    return operation;
+  }
+
+  @override
+  Future<void> save(DivisionDeleteOperation operation) async {
+    final preferences = await SharedPreferences.getInstance();
+    final key = _key(
+      operation.actorId,
+      operation.associationId,
+      operation.divisionId,
+    );
+    if (preferences.containsKey(key)) {
+      throw StateError('A protected division deletion is already pending');
+    }
+    final saved = await preferences.setString(
+      key,
+      jsonEncode(operation.toMap()),
+    );
+    if (!saved) {
+      throw StateError('The protected division deletion could not be saved');
+    }
+  }
+
+  @override
+  Future<void> clear(DivisionDeleteOperation operation) async {
+    final preferences = await SharedPreferences.getInstance();
+    final key = _key(
+      operation.actorId,
+      operation.associationId,
+      operation.divisionId,
+    );
+    final raw = preferences.getString(key);
+    if (raw == null) {
+      throw StateError('The protected division deletion operation was lost');
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map ||
+        !DivisionDeleteOperation.fromMap(
+          Map<String, dynamic>.from(decoded),
+        ).matches(operation)) {
+      throw StateError('The protected division deletion operation changed');
+    }
+    final removed = await preferences.remove(key);
+    if (!removed) {
+      throw StateError('The completed division deletion could not be cleared');
     }
   }
 }

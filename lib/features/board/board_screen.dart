@@ -61,8 +61,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedDivisionId = ref.watch(selectedDivisionIdProvider);
     final selectedDivisionName = ref.watch(selectedDivisionNameProvider);
-    final postsAsync = ref.watch(postsStreamProvider(selectedDivisionName));
+    final postsAsync = ref.watch(postsStreamProvider(selectedDivisionId));
     // Preview capabilities control presentation only. Every repository action
     // below rechecks the real membership-backed user.
     final currentUser = ref.watch(effectiveUserProvider);
@@ -168,7 +169,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
         return RefreshIndicator(
           onRefresh: () async {
-            ref.invalidate(postsStreamProvider(selectedDivisionName));
+            ref.invalidate(postsStreamProvider(selectedDivisionId));
           },
           child: ListView.builder(
             padding: const EdgeInsets.all(12),
@@ -225,8 +226,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       loading: () => const SkeletonCardList(),
       error: (e, _) => ErrorDisplay(
         error: e,
-        onRetry: () =>
-            ref.invalidate(postsStreamProvider(selectedDivisionName)),
+        onRetry: () => ref.invalidate(postsStreamProvider(selectedDivisionId)),
       ),
     );
 

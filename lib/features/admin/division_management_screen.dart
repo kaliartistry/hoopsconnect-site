@@ -90,7 +90,6 @@ class _DivisionCard extends ConsumerStatefulWidget {
 
 class _DivisionCardState extends ConsumerState<_DivisionCard> {
   bool _updating = false;
-  String? _deleteOperationId;
 
   @override
   Widget build(BuildContext context) {
@@ -300,14 +299,22 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
   }
 
   Future<void> _deletePermanently(BuildContext dialogContext) async {
-    final operationId = _deleteOperationId ??= ref
-        .read(divisionRepositoryProvider)
-        .newDeleteOperationId();
+    final actorId = ref.read(authStateProvider).valueOrNull?.uid;
+    final associationId = ref.read(currentAssociationIdProvider);
+    if (actorId == null || associationId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Your current league account could not be confirmed.'),
+        ),
+      );
+      return;
+    }
     try {
       final receipt = await ref
           .read(divisionRepositoryProvider)
           .deleteIfUnreferenced(
-            operationId: operationId,
+            actorId: actorId,
+            associationId: associationId,
             divisionId: widget.division.id,
             expectedDivisionVersion: widget.division.version,
           );
@@ -321,9 +328,6 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
         );
         return;
       }
-      // A blocked receipt is a completed operation. A later attempt after the
-      // dependencies are resolved must use a new operation ID.
-      _deleteOperationId = null;
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(

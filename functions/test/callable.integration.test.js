@@ -214,21 +214,25 @@ async function activateLeagueActor(user, authorizationSchemaVersion) {
 
 function leagueCallable(name) {
   return async (data) => {
-    const user = auth.currentUser;
-    assert.ok(user, 'league callable test requires an authenticated user');
-    const token = (await user.getIdTokenResult()).claims;
     try {
-      return {data: await leagueOperations[`${name}Handler`]({
-        auth: {uid: user.uid, token},
-        app: {appId: 'test-app'},
-        data,
-      })};
+      return {data: await leagueOperations[`${name}Handler`](await leagueRequest(data))};
     } catch (error) {
       if (typeof error?.code === 'string' && !error.code.startsWith('functions/')) {
         error.code = `functions/${error.code}`;
       }
       throw error;
     }
+  };
+}
+
+async function leagueRequest(data) {
+  const user = auth.currentUser;
+  assert.ok(user, 'league callable test requires an authenticated user');
+  const token = (await user.getIdTokenResult()).claims;
+  return {
+    auth: {uid: user.uid, token},
+    app: {appId: 'test-app'},
+    data,
   };
 }
 
@@ -981,19 +985,171 @@ test('division deletion resumes persisted operations and inventories canonical j
   assert.equal(limitedOperation.get('failureCode'), 'inventory-too-large');
 });
 
-test('per-actor quota bounds league callable abuse', async () => {
+test('division deletion inventories board posts and rejects authority reassignment during inventory', async () => {
   await seedLeagueOperations();
-  const uid = await createLeagueOperator('quota-operator@example.com', 'admin', [
-    'association.read', 'teams.manage',
+  const uid = await createLeagueOperator('division-scope-race@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
   ]);
-  await adminDb.doc(`associations/jba/leagueActorQuotas/${createHash('sha256').update(JSON.stringify({uid})).digest('hex')}`).set({
-    schemaVersion: 1, associationId: 'jba', actorId: uid,
-    minuteStartedAt: admin.firestore.Timestamp.now(), minuteCount: 120,
-    dayStartedAt: admin.firestore.Timestamp.now(), dayCount: 120,
+  const remove = leagueCallable('deleteDivisionIfUnreferenced');
+  await adminDb.doc('associations/jba/divisions/board-scope').set({
+    name: 'Board Scope', status: 'active', version: 1,
   });
-  const workspace = leagueCallable('getRosterWorkspace');
+  await adminDb.doc('associations/jba/posts/division-announcement').set({
+    title: 'Division announcement', divisionFilter: 'board-scope',
+  });
+  await adminDb.doc('associations/jba/posts/legacy-division-announcement').set({
+    title: 'Legacy division announcement', divisionFilter: 'Board Scope',
+  });
+  const blocked = await remove({
+    schemaVersion: 1,
+    operationId: 'division_board_inventory_1',
+    divisionId: 'board-scope',
+    expectedDivisionVersion: 1,
+  });
+  assert.equal(blocked.data.status, 'blocked');
+  assert.ok(blocked.data.references.some((entry) =>
+    entry.kind === 'boardPost' && entry.id === 'division-announcement'));
+  assert.ok(blocked.data.references.some((entry) =>
+    entry.kind === 'boardPostLegacyName' && entry.id === 'legacy-division-announcement'));
+
+  await adminDb.doc('associations/jba/divisions/scope-race').set({
+    name: 'Scope Race', status: 'active', version: 1,
+  });
+  const jbaControl = (await adminDb.doc(
+    'associations/jba/leagueWorkflowControl/current',
+  ).get()).data();
+  const jbaProjection = (await adminDb.doc(
+    `associations/jba/leagueActorAuthorities/${uid}`,
+  ).get()).data();
+  await adminDb.doc('associations/other').set({name: 'Other'});
+  await adminDb.doc('associations/other/leagueWorkflowControl/current').set({
+    ...jbaControl, associationId: 'other',
+  });
+  await adminDb.doc(`associations/other/leagueActorAuthorities/${uid}`).set({
+    ...jbaProjection, associationId: 'other',
+  });
+
   await assert.rejects(
-    workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'}),
+    leagueOperations.deleteDivisionIfUnreferencedHandlerForTest(
+      await leagueRequest({
+        schemaVersion: 1,
+        operationId: 'division_scope_race_001',
+        divisionId: 'scope-race',
+        expectedDivisionVersion: 1,
+      }),
+      {
+        afterInventory: async () => {
+          await adminDb.doc(`memberships/${uid}`).update({associationId: 'other'});
+        },
+      },
+    ),
+    (error) => error.code === 'permission-denied',
+  );
+  assert.equal((await adminDb.doc(
+    'associations/jba/divisions/scope-race',
+  ).get()).exists, true);
+});
+
+test('invite creation and redemption cannot add membership references while a division deletion guard is active', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('invite-guard-admin@example.com', 'superAdmin', [
+    'association.read', 'association.manage', 'invites.manage',
+  ]);
+  const createInvite = httpsCallable(functions, 'createPrivilegedInvite');
+  const issued = await createInvite({
+    role: 'rep',
+    teamId: 'team-a',
+    daysValid: 7,
+    operationId: 'invite_before_guard_001',
+    authorizationSchemaVersion: 1,
+  });
+  await adminDb.doc('associations/jba/divisions/premier').update({
+    deletionPending: {
+      schemaVersion: 1,
+      operationId: 'division_invite_guard_1',
+      actorId: 'server-test',
+      expectedDivisionVersion: 7,
+      leaseExpiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 60_000),
+    },
+  });
+  await assert.rejects(
+    createInvite({
+      role: 'rep',
+      teamId: 'team-a',
+      daysValid: 7,
+      operationId: 'invite_during_guard_001',
+      authorizationSchemaVersion: 1,
+    }),
+    (error) => error.code === 'functions/failed-precondition',
+  );
+
+  await signOut(auth);
+  const invitee = await createUserWithEmailAndPassword(
+    auth,
+    'invite-guard-rep@example.com',
+    'correct-horse-battery-staple',
+  );
+  const redeem = httpsCallable(functions, 'redeemPrivilegedInvite');
+  await assert.rejects(
+    redeem({
+      code: issued.data.code,
+      displayName: 'Guarded Representative',
+      operationId: 'redeem_during_guard_01',
+      authorizationSchemaVersion: 1,
+    }),
+    (error) => error.code === 'functions/failed-precondition',
+  );
+  assert.equal((await adminDb.doc(`memberships/${invitee.user.uid}`).get()).exists, false);
+});
+
+test('token bucket has no boundary reset and exact lost-response replay consumes no quota', async () => {
+  await seedLeagueOperations();
+  const uid = await createLeagueOperator('quota-operator@example.com', 'superAdmin', [
+    'association.read', 'association.manage', 'schedule.manage',
+  ]);
+  const quotaRef = adminDb.doc(
+    `associations/jba/leagueActorQuotas/${createHash('sha256').update(JSON.stringify({uid})).digest('hex')}`,
+  );
+  const now = admin.firestore.Timestamp.now();
+  await quotaRef.set({
+    schemaVersion: 2,
+    associationId: 'jba',
+    actorId: uid,
+    minuteTokens: 1_000,
+    minuteRefilledAt: now,
+    dayTokens: 1_000,
+    dayRefilledAt: now,
+  });
+  const schedule = leagueCallable('scheduleGame');
+  const request = {
+    schemaVersion: 1,
+    operationId: 'schedule_quota_boundary_1',
+    seasonId: 's2026',
+    divisionId: 'premier',
+    homeTeamId: 'team-a',
+    awayTeamId: 'team-b',
+    startTimeUtc: '2027-01-02T01:00:00.000Z',
+    endTimeUtc: '2027-01-02T03:00:00.000Z',
+  };
+  const first = await schedule(request);
+  const afterFirst = (await quotaRef.get()).data();
+  assert.ok(afterFirst.minuteTokens < 1_000);
+  assert.ok(afterFirst.dayTokens < 1_000);
+
+  const replay = await schedule(request);
+  assert.deepEqual(replay.data, first.data);
+  assert.deepEqual((await quotaRef.get()).data(), afterFirst);
+  await assert.rejects(
+    schedule({...request, startTimeUtc: '2027-01-02T02:00:00.000Z'}),
+    (error) => error.code === 'functions/already-exists',
+  );
+  await assert.rejects(
+    schedule({
+      ...request,
+      operationId: 'schedule_quota_boundary_2',
+      startTimeUtc: '2027-01-03T01:00:00.000Z',
+      endTimeUtc: '2027-01-03T03:00:00.000Z',
+    }),
     (error) => error.code === 'functions/resource-exhausted',
   );
 });

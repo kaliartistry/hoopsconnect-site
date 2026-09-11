@@ -165,6 +165,9 @@ test('fan provisioning creates a consistent pair, repairs membership-only, and f
 
 test('invite issuance is high-entropy, hash-addressed, idempotent, and never persists the bearer', async () => {
   await seedMember('root', 'superAdmin');
+  await db.doc('associations/jba/divisions/division-1').set({
+    name: 'Division 1', status: 'active', version: 1,
+  });
   await db.doc('associations/jba/teams/team-1').set({name: 'Team', divisionId: 'division-1'});
   const payload = {
     role: 'rep', teamId: 'team-1', daysValid: 7,

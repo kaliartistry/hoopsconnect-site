@@ -85,9 +85,9 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMapper.map(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(ErrorMapper.map(e))));
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
@@ -130,7 +130,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     final divisionOptions = <String?>[null];
     final divisionLabels = <String>['All Divisions'];
     for (final div in divisions) {
-      divisionOptions.add(div.name);
+      divisionOptions.add(div.id);
       divisionLabels.add(div.name);
     }
 
@@ -187,10 +187,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                   PostType.gymAvailable: 'Gym Available',
                   PostType.general: 'General',
                 };
-                return DropdownMenuItem(
-                  value: t,
-                  child: Text(labels[t]!),
-                );
+                return DropdownMenuItem(value: t, child: Text(labels[t]!));
               }).toList(),
               onChanged: (v) => setState(() => _type = v!),
             ),
@@ -251,8 +248,9 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
               const SizedBox(height: 8),
               SwitchListTile(
                 title: const Text('Pin to top'),
-                subtitle:
-                    const Text('Pinned posts stay at the top of the feed'),
+                subtitle: const Text(
+                  'Pinned posts stay at the top of the feed',
+                ),
                 value: _pinned,
                 onChanged: (v) => setState(() => _pinned = v),
                 activeThumbColor: AppColors.primary,
@@ -272,8 +270,11 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                   'Hide from fans — admin, reps, and media only',
                 ),
                 value: _visibility == PostVisibility.internal,
-                onChanged: (v) => setState(() => _visibility =
-                    v ? PostVisibility.internal : PostVisibility.public),
+                onChanged: (v) => setState(
+                  () => _visibility = v
+                      ? PostVisibility.internal
+                      : PostVisibility.public,
+                ),
                 activeThumbColor: AppColors.info,
                 contentPadding: EdgeInsets.zero,
               ),

@@ -19,7 +19,7 @@ const fixturePath =
 const pinnedBaseBlobs = Object.freeze({
   'functions/src/index.ts': '04347ea48ff46cdc6564489b682c22c4495c2df4',
   'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
-  'firestore.rules': '263d865c407e3ac2f6da1b04b4968db2404975be',
+  'firestore.rules': 'fae96dfa751599739cdf45cf865a9e84c42f3098',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/domain/official_stats_contract.ts':
     'c6879439091b72088bcef2659490eaff72ddd5f0',

@@ -50,7 +50,11 @@ epoch, active lifecycle/membership state, operating custody state, current
 custody/privacy epochs, unsuppressed identity state, and strict
 `auth_time > reauthAfterSecV2`. This applies before any saved receipt replay.
 Every exported league callable also enforces App Check and a server-owned
-rolling per-actor minute/day quota.
+per-actor token bucket with 120-call minute capacity and 2,000-call day
+capacity. Tokens refill continuously rather than resetting at a window edge.
+An exact actor/association/operation/fingerprint-bound receipt replay still
+reauthorizes lifecycle, custody, generation, and privacy, but does not consume
+another token. A missing or changed receipt does not bypass the bucket.
 
 ## Compatibility and activation order
 
@@ -104,6 +108,15 @@ and for the collection groups `teamEntries`, `games`, `scheduleRevisions`,
 `participantSnapshots`, `operations`, `operationReceipts`, `statRevisions`,
 `officialResults`, `reviews`, `certificates`, `certificateActions`,
 `corrections`, `aggregateReleases`, `publicSelections`, and `projectionBuilds`.
+The association-local `posts.divisionFilter` query must also remain in the
+inventory for both current division IDs and the historical exact division-name
+format. New clients write division IDs; historical name values require a
+reviewed migration before names may change. Direct post creation or
+reassignment and invite creation/redemption
+read the referenced division and require it to be active and free of a deletion
+guard. Membership and invite records remain client-immutable. These reads
+serialize new reference writers against guard acquisition so no reference can
+be added after the out-of-transaction inventory begins.
 An index/query/size failure persists `inventoryFailed`, releases the division
 guard, and fails closed. It must not be worked around by skipping a reference
 class. `divisionDeletion` must remain false until this exact inventory succeeds
@@ -129,6 +142,12 @@ is denied. Direct compatibility event writes remain denied.
   process restart. Inventory/query/size failures persist a retryable failure
   and safely release the guard; a stale lease can be reclaimed. A successful
   inventory records every blocker and clears the guard or deletes the division.
+  The final phase must match the prepared actor, association, generation,
+  lifecycle epoch, capability set, workflow scope and division version before
+  touching the prepared references. The client separately persists the pending
+  operation ID in an account/association/division/version-bound local record,
+  reuses it after app restart, and removes it only after a matching terminal
+  callable receipt. Server operation and receipt documents remain private.
 - Direct division create/edit/archive writes require exact integer versions:
   create at 1 and increment by exactly one with a server timestamp on every
   mutation.

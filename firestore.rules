@@ -90,6 +90,29 @@ service cloud.firestore {
         && !('deletionPending' in get(path).data);
     }
 
+    function postDivisionReferenceAccepted(assocId) {
+      return !('divisionFilter' in request.resource.data)
+        || request.resource.data.divisionFilter == null
+        || (request.resource.data.divisionFilter is string
+          && divisionAcceptsNewReferences(
+            assocId,
+            request.resource.data.divisionFilter
+          ));
+    }
+
+    function postDivisionReferenceUnchangedOrAccepted(assocId) {
+      return (
+          !('divisionFilter' in resource.data)
+            && !('divisionFilter' in request.resource.data)
+        )
+        || (
+          'divisionFilter' in resource.data
+            && 'divisionFilter' in request.resource.data
+            && request.resource.data.divisionFilter == resource.data.divisionFilter
+        )
+        || postDivisionReferenceAccepted(assocId);
+    }
+
     // ── Private identity and authorization data ────────────────────
     match /users/{userId} {
       allow get: if isAuthenticated() && (
@@ -196,6 +219,7 @@ service cloud.firestore {
 
         allow create: if isSameAssociation(assocId)
           && hasCapability('posts.create')
+          && postDivisionReferenceAccepted(assocId)
           && request.resource.data.keys().hasAll([
             'authorId', 'authorName', 'authorRole', 'title', 'body', 'type',
             'createdAt', 'visibility', 'pinned', 'urgent', 'requiresAck',
@@ -214,14 +238,17 @@ service cloud.firestore {
               && request.resource.data.requiresAck == false)
           );
 
-        allow update: if canManagePosts(assocId)
-          || (isSameAssociation(assocId)
-            && hasCapability('posts.create')
-            && request.auth.uid == resource.data.authorId
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'title', 'body', 'imageUrl', 'divisionFilter', 'reactions'
-            ]))
-          || validOwnAcknowledgment(assocId);
+        allow update: if postDivisionReferenceUnchangedOrAccepted(assocId)
+          && (
+            canManagePosts(assocId)
+            || (isSameAssociation(assocId)
+              && hasCapability('posts.create')
+              && request.auth.uid == resource.data.authorId
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'title', 'body', 'imageUrl', 'divisionFilter', 'reactions'
+              ]))
+            || validOwnAcknowledgment(assocId)
+          );
         allow delete: if canManagePosts(assocId);
       }
 

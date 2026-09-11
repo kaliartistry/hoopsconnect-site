@@ -244,10 +244,16 @@ test('direct division creates and every edit advance an exact integer version', 
 
 test('direct team writers cannot bypass a pending division deletion guard', async () => {
   await seed(async (db) => {
+    await setDoc(doc(db, 'users/root'), {
+      email: 'root@example.com', displayName: 'Root', associationId: 'jba', role: 'superAdmin',
+    });
     await setDoc(doc(db, 'memberships/root'), {
       associationId: 'jba', role: 'superAdmin', status: 'active',
       authorizationSchemaVersion: 1,
-      capabilities: ['association.read', 'association.manage', 'teams.manage', 'stats.enter'],
+      capabilities: [
+        'association.read', 'association.manage', 'teams.manage', 'stats.enter',
+        'posts.create', 'posts.manage',
+      ],
     });
     await setDoc(doc(db, 'associations/jba/divisions/open'), {name: 'Open', status: 'active'});
     await setDoc(doc(db, 'associations/jba/divisions/pending'), {
@@ -272,6 +278,32 @@ test('direct team writers cannot bypass a pending division deletion guard', asyn
   }));
   await assertFails(updateDoc(doc(root, 'associations/jba/teams/team-1'), {divisionId: 'pending'}));
   await assertFails(updateDoc(doc(root, 'associations/jba/divisions/pending'), {deletionPending: null}));
+  const post = {
+    authorId: 'root', authorName: 'Root', authorRole: 'superAdmin',
+    title: 'Division notice', body: 'Body', type: 'announcement',
+    createdAt: serverTimestamp(), visibility: 'internal', pinned: false,
+    urgent: false, requiresAck: false, expectedAcks: {}, ackStatus: {},
+  };
+  await assertSucceeds(setDoc(
+    doc(root, 'associations/jba/posts/open-post'),
+    {...post, divisionFilter: 'open'},
+  ));
+  await assertFails(setDoc(
+    doc(root, 'associations/jba/posts/pending-post'),
+    {...post, divisionFilter: 'pending'},
+  ));
+  await assertSucceeds(setDoc(
+    doc(root, 'associations/jba/posts/unscoped-post'),
+    {...post, divisionFilter: null},
+  ));
+  await assertFails(updateDoc(
+    doc(root, 'associations/jba/posts/unscoped-post'),
+    {divisionFilter: 'pending'},
+  ));
+  await assertSucceeds(updateDoc(
+    doc(root, 'associations/jba/posts/unscoped-post'),
+    {divisionFilter: 'open'},
+  ));
   await assertSucceeds(setDoc(doc(root, 'associations/jba/gameStats/game-open'), {
     status: 'draft', homeScore: 0, awayScore: 0,
   }));
