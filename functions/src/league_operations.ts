@@ -40,7 +40,7 @@ const generationPattern = /^[a-f0-9]{64}$/;
 type Json = Record<string, unknown>;
 type RosterKind = "addPlayer" | "updatePlayer" | "removePlayer";
 
-interface Caller {
+export interface Caller {
   uid: string;
   authProjectIdV2: string;
   authTenantIdV2: string | null;
@@ -49,7 +49,7 @@ interface Caller {
   authTimeSec: number;
 }
 
-interface Authority {
+export interface Authority {
   uid: string;
   associationId: string;
   role: Role | null;
@@ -85,7 +85,7 @@ interface ScheduleAuditState {
   cancellationReason: string | null;
 }
 
-interface WorkflowControl {
+export interface WorkflowControl {
   competitionId: string;
   seasonId: string;
   phaseId: string;
@@ -94,14 +94,14 @@ interface WorkflowControl {
   privacyEpochV2: number;
 }
 
-function object(value: unknown): Json {
+export function object(value: unknown): Json {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new HttpsError("invalid-argument", "A request object is required.");
   }
   return value as Json;
 }
 
-function exactKeys(value: Json, required: readonly string[], optional: readonly string[] = []): void {
+export function exactKeys(value: Json, required: readonly string[], optional: readonly string[] = []): void {
   const allowed = new Set([...required, ...optional]);
   if (!required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) ||
       Object.keys(value).some((key) => !allowed.has(key))) {
@@ -109,13 +109,13 @@ function exactKeys(value: Json, required: readonly string[], optional: readonly 
   }
 }
 
-function schema(value: Json): void {
+export function schema(value: Json): void {
   if (value.schemaVersion !== SCHEMA_VERSION) {
     throw new HttpsError("failed-precondition", "This app version is not supported.");
   }
 }
 
-function caller(request: CallableRequest<unknown>): Caller {
+export function caller(request: CallableRequest<unknown>): Caller {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in before completing this action.");
   const token = request.auth.token as Record<string, unknown>;
   const firebase = token.firebase && typeof token.firebase === "object" && !Array.isArray(token.firebase) ?
@@ -139,7 +139,7 @@ function caller(request: CallableRequest<unknown>): Caller {
   };
 }
 
-function id(value: unknown, key: string, operation = false): string {
+export function id(value: unknown, key: string, operation = false): string {
   const pattern = operation ? operationPattern : idPattern;
   if (typeof value !== "string" || !pattern.test(value)) {
     throw new HttpsError("invalid-argument", `${key} must be an opaque identifier.`);
@@ -147,7 +147,7 @@ function id(value: unknown, key: string, operation = false): string {
   return value;
 }
 
-function text(value: unknown, key: string, maximum: number, nullable = false): string | null {
+export function text(value: unknown, key: string, maximum: number, nullable = false): string | null {
   if (nullable && (value === null || value === undefined || value === "")) return null;
   if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > maximum || /[\u0000-\u001f\u007f]/.test(value)) {
     throw new HttpsError("invalid-argument", `${key} must be between 1 and ${maximum} characters.`);
@@ -155,7 +155,7 @@ function text(value: unknown, key: string, maximum: number, nullable = false): s
   return value.trim().normalize("NFC");
 }
 
-function counter(value: unknown, key: string, allowZero = true): number {
+export function counter(value: unknown, key: string, allowZero = true): number {
   if (!Number.isSafeInteger(value) || (value as number) < (allowZero ? 0 : 1)) {
     throw new HttpsError("invalid-argument", `${key} must be a valid version.`);
   }
@@ -182,7 +182,7 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-function hash(value: unknown): string {
+export function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonical(value)), "utf8").digest("hex");
 }
 
@@ -198,11 +198,11 @@ function scheduleSemantic(input: ScheduleInput): Json {
   };
 }
 
-function operationReceiptRef(db: Firestore, actorId: string, operation: string, operationId: string) {
+export function operationReceiptRef(db: Firestore, actorId: string, operation: string, operationId: string) {
   return db.doc(`leagueOperationReceipts/${hash({actorId, operation, operationId})}`);
 }
 
-function receiptReplay(snapshot: DocumentSnapshot, fingerprint: string, expected: {
+export function receiptReplay(snapshot: DocumentSnapshot, fingerprint: string, expected: {
   actorId: string;
   associationId: string;
   operation: string;
@@ -218,7 +218,7 @@ function receiptReplay(snapshot: DocumentSnapshot, fingerprint: string, expected
   return data.result as Json;
 }
 
-function saveReceipt(transaction: Transaction, ref: DocumentReference, input: {
+export function saveReceipt(transaction: Transaction, ref: DocumentReference, input: {
   actorId: string;
   associationId: string;
   operation: string;
@@ -282,7 +282,7 @@ async function enforceActorQuota(
   }, {merge: false});
 }
 
-async function authorityInTransaction(
+export async function authorityInTransaction(
   transaction: Transaction,
   db: Firestore,
   actor: Caller,
@@ -337,7 +337,7 @@ interface ReceiptQuotaCheck {
   fingerprint: string;
 }
 
-async function consumeInvocationQuota(
+export async function consumeInvocationQuota(
   db: Firestore,
   actor: Caller,
   cost = 1,
@@ -365,16 +365,16 @@ async function consumeInvocationQuota(
   });
 }
 
-function requireCapability(authority: Authority, required: string): void {
+export function requireCapability(authority: Authority, required: string): void {
   if (!authority.capabilities.includes(required)) {
     throw new HttpsError("permission-denied", "You do not have permission to complete this action.");
   }
 }
 
-function requireWorkflowReady(
+export function requireWorkflowReady(
   control: DocumentSnapshot,
   associationId: string,
-  capability: "rosters" | "divisionDeletion" | "scheduling",
+  capability: "rosters" | "divisionDeletion" | "scheduling" | "seasonLifecycle",
 ): WorkflowControl {
   const data = control.data() ?? {};
   if (!control.exists || data.schemaVersion !== SCHEMA_VERSION || data.callablesReady !== true ||
@@ -398,7 +398,7 @@ function requireWorkflowReady(
   };
 }
 
-async function requireActorWorkflowBinding(
+export async function requireActorWorkflowBinding(
   transaction: Transaction,
   db: Firestore,
   actor: Caller,
@@ -438,7 +438,7 @@ async function requireV2Authority(
   }
 }
 
-function workflowRef(db: Firestore, associationId: string) {
+export function workflowRef(db: Firestore, associationId: string) {
   return db.doc(`associations/${associationId}/leagueWorkflowControl/current`);
 }
 

@@ -1,9 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
-import '../../core/constants/firestore_paths.dart';
 import '../../core/widgets/responsive_layout.dart';
 import '../../models/user_model.dart';
 import '../../providers/ack_providers.dart';
@@ -14,6 +12,7 @@ import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
 import '../../app/router/app_route_contract.dart';
+import 'widgets/season_management_panel.dart';
 
 class AdminPanelScreen extends ConsumerWidget {
   const AdminPanelScreen({super.key});
@@ -105,7 +104,7 @@ class AdminPanelScreen extends ConsumerWidget {
         _AdminMenuItem(
           icon: Icons.leaderboard,
           title: 'Season Leaderboard',
-          subtitle: 'View published rankings',
+          subtitle: 'View-only published rankings',
           bgColor: AppColors.statBg,
           highlightColor: AppColors.statHighlight,
           onTap: () => context.go('/leaderboard'),
@@ -215,15 +214,7 @@ class AdminPanelScreen extends ConsumerWidget {
                     ],
                     if (canManageAssociation) ...[
                       const SizedBox(height: 16),
-                      OutlinedButton(
-                        onPressed: () => _showArchiveSeasonDialog(context, ref),
-                        child: const Text('Archive Season'),
-                      ),
-                      const SizedBox(height: 8),
-                      ElevatedButton(
-                        onPressed: () => _showNewSeasonDialog(context, ref),
-                        child: const Text('New Season'),
-                      ),
+                      const SeasonManagementLauncher(),
                     ],
                   ],
                 ),
@@ -319,17 +310,7 @@ class AdminPanelScreen extends ConsumerWidget {
           ],
 
           const SizedBox(height: 16),
-          if (canManageAssociation) ...[
-            OutlinedButton(
-              onPressed: () => _showArchiveSeasonDialog(context, ref),
-              child: const Text('Archive Season'),
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: () => _showNewSeasonDialog(context, ref),
-              child: const Text('New Season'),
-            ),
-          ],
+          if (canManageAssociation) ...[const SeasonManagementLauncher()],
         ],
       ),
     );
@@ -359,158 +340,6 @@ class AdminPanelScreen extends ConsumerWidget {
         subtitle: Text(item.subtitle, style: const TextStyle(fontSize: 11)),
         hoverColor: AppColors.primaryLight,
         onTap: item.onTap,
-      ),
-    );
-  }
-
-  void _showNewSeasonDialog(BuildContext context, WidgetRef ref) {
-    final nameController = TextEditingController();
-    DateTime startDate = DateTime.now();
-    DateTime endDate = DateTime.now().add(AppDefaults.seasonEndOffset);
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Create New Season'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Season Name',
-                  hintText: 'e.g. NBL 2026-27',
-                ),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Start Date'),
-                subtitle: Text(
-                  '${startDate.month}/${startDate.day}/${startDate.year}',
-                ),
-                trailing: const Icon(Icons.calendar_today, size: 20),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: ctx,
-                    initialDate: startDate,
-                    firstDate: DateTime(2024),
-                    lastDate: DateTime(2030),
-                  );
-                  if (picked != null) {
-                    setDialogState(() => startDate = picked);
-                  }
-                },
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('End Date'),
-                subtitle: Text(
-                  '${endDate.month}/${endDate.day}/${endDate.year}',
-                ),
-                trailing: const Icon(Icons.calendar_today, size: 20),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: ctx,
-                    initialDate: endDate,
-                    firstDate: DateTime(2024),
-                    lastDate: DateTime(2030),
-                  );
-                  if (picked != null) {
-                    setDialogState(() => endDate = picked);
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-
-                final assocId = ref.read(currentAssociationIdProvider);
-                if (assocId == null) return;
-
-                final seasonId = name
-                    .toLowerCase()
-                    .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-                    .replaceAll(RegExp(r'^-|-$'), '');
-
-                final db = FirebaseFirestore.instance;
-                final batch = db.batch();
-
-                batch.set(db.doc(FirestorePaths.season(assocId, seasonId)), {
-                  'name': name,
-                  'startDate': Timestamp.fromDate(startDate),
-                  'endDate': Timestamp.fromDate(endDate),
-                  'isActive': true,
-                });
-
-                batch.update(db.doc(FirestorePaths.association(assocId)), {
-                  'currentSeasonId': seasonId,
-                });
-
-                await batch.commit();
-
-                if (ctx.mounted) {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Season "$name" created')),
-                  );
-                }
-              },
-              child: const Text('Create'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showArchiveSeasonDialog(BuildContext context, WidgetRef ref) {
-    final seasonName =
-        ref.read(activeSeasonNameProvider).value ?? 'this season';
-    final seasonId = ref.read(activeSeasonIdProvider).value;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Archive Season'),
-        content: Text(
-          'Are you sure you want to archive "$seasonName"? '
-          'This will mark the season as inactive.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.urgent),
-            onPressed: () async {
-              final assocId = ref.read(currentAssociationIdProvider);
-              if (assocId == null || seasonId == null) return;
-
-              await FirebaseFirestore.instance
-                  .doc(FirestorePaths.season(assocId, seasonId))
-                  .update({'isActive': false});
-
-              if (ctx.mounted) {
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('"$seasonName" archived')),
-                );
-              }
-            },
-            child: const Text('Archive'),
-          ),
-        ],
       ),
     );
   }

@@ -167,11 +167,17 @@ service cloud.firestore {
     // ── Association-scoped private application data ────────────────
     match /associations/{assocId} {
       allow read: if canReadAssociation(assocId);
-      allow write: if canManageAssociation(assocId);
+      allow create, delete: if false;
+      // The active-season pointer is a server-owned coordination boundary.
+      // Administrators may still update branding and other association fields,
+      // but lifecycle transitions must use the fixed-purpose callable.
+      allow update: if canManageAssociation(assocId)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['currentSeasonId']);
 
       match /seasons/{seasonId} {
         allow read: if canReadAssociation(assocId);
-        allow write: if canManageAssociation(assocId);
+        allow create, update, delete: if false;
       }
 
       match /divisions/{divisionId} {

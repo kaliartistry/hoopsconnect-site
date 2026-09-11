@@ -17,9 +17,10 @@ const fixturePath =
   'contracts/account_deletion/ad05/account_shared_workflow_fixtures_v1.json';
 
 const pinnedBaseBlobs = Object.freeze({
-  'functions/src/index.ts': '04347ea48ff46cdc6564489b682c22c4495c2df4',
+  // Reviewed callable-only season lifecycle transition; AD05-C stays absent.
+  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
   'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
-  'firestore.rules': 'fae96dfa751599739cdf45cf865a9e84c42f3098',
+  'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/account_deletion/ad05_identity_suppression_records.ts':
     '6624d768d8910060c792605b1330ca757f05fcf8',

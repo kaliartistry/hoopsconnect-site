@@ -195,6 +195,12 @@ test('league operations remain callable-only even for a super administrator', as
       authorizationSchemaVersion: 1,
       capabilities: ['association.read', 'association.manage', 'teams.manage', 'schedule.manage'],
     });
+    await setDoc(doc(db, 'associations/jba'), {
+      name: 'JBA', currentSeasonId: 's2026',
+    });
+    await setDoc(doc(db, 'associations/jba/seasons/s2026'), {
+      name: '2026', status: 'active', isActive: true,
+    });
     await setDoc(doc(db, 'associations/jba/divisions/premier'), {
       name: 'Premier', status: 'active', version: 7,
     });
@@ -209,6 +215,13 @@ test('league operations remain callable-only even for a super administrator', as
     });
   });
   const root = authed('root', 'root@example.com');
+  await assertFails(setDoc(doc(root, 'associations/jba/seasons/s2027'), {
+    name: '2027', status: 'prepared', isActive: false,
+  }));
+  await assertFails(updateDoc(doc(root, 'associations/jba/seasons/s2026'), {isActive: false}));
+  await assertFails(updateDoc(doc(root, 'associations/jba'), {currentSeasonId: 's2027'}));
+  await assertSucceeds(updateDoc(doc(root, 'associations/jba'), {brandingV1: {name: 'JBA'}}));
+  await assertFails(deleteDoc(doc(root, 'associations/jba')));
   await assertFails(deleteDoc(doc(root, 'associations/jba/divisions/premier')));
   await assertFails(setDoc(doc(root, 'associations/jba/events/game-2'), {type: 'game'}));
   await assertFails(updateDoc(doc(root, 'associations/jba/events/game-1'), {status: 'cancelled'}));

@@ -25,6 +25,7 @@ if (admin.apps.length === 0) {
 const adminDb = admin.firestore();
 const {capabilitiesForRole} = require('../lib/authorization');
 const leagueOperations = require('../lib/league_operations');
+const seasonOperations = require('../lib/season_operations');
 const clientApp = initializeApp({
   projectId: 'demo-hoopsconnect',
   apiKey: 'demo-key',
@@ -215,7 +216,8 @@ async function activateLeagueActor(user, authorizationSchemaVersion) {
 function leagueCallable(name) {
   return async (data) => {
     try {
-      return {data: await leagueOperations[`${name}Handler`](await leagueRequest(data))};
+      const handler = leagueOperations[`${name}Handler`] || seasonOperations[`${name}Handler`];
+      return {data: await handler(await leagueRequest(data))};
     } catch (error) {
       if (typeof error?.code === 'string' && !error.code.startsWith('functions/')) {
         error.code = `functions/${error.code}`;
@@ -261,6 +263,7 @@ async function seedLeagueOperations() {
     rosters: true,
     divisionDeletion: true,
     scheduling: true,
+    seasonLifecycle: true,
   });
   await adminDb.doc('associations/jba/seasons/s2026').set({name: '2026', status: 'active'});
   await adminDb.doc('associations/jba/divisions/premier').set({name: 'Premier', status: 'active', version: 7});
@@ -1283,4 +1286,186 @@ test('token bucket has no boundary reset and exact lost-response replay consumes
     }),
     (error) => error.code === 'functions/resource-exhausted',
   );
+});
+
+test('season preparation is gated, date-only, stable-ID bound, and never changes current season', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('season-prepare@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
+  ]);
+  const prepare = leagueCallable('seasonPrepare');
+  const request = {
+    schemaVersion: 1,
+    operationId: 'season_prepare_2027_01',
+    seasonId: 'nbl-2027',
+    name: 'NBL 2027',
+    startDate: '2027-01-03',
+    endDate: '2027-09-30',
+  };
+
+  await adminDb.doc('associations/jba/leagueWorkflowControl/current').update({seasonLifecycle: false});
+  await assert.rejects(prepare(request), (error) => error.code === 'functions/failed-precondition');
+  assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2027').get()).exists, false);
+  await adminDb.doc('associations/jba/leagueWorkflowControl/current').update({seasonLifecycle: true});
+
+  await assert.rejects(
+    prepare({...request, operationId: 'season_prepare_bad_date', startDate: '2027-02-30'}),
+    (error) => error.code === 'functions/invalid-argument',
+  );
+  await assert.rejects(
+    prepare({...request, operationId: 'season_prepare_bad_range', startDate: '2027-10-01'}),
+    (error) => error.code === 'functions/invalid-argument',
+  );
+  await assert.rejects(
+    prepare({...request, operationId: 'season_prepare_bad_slug', seasonId: 'chosen-id'}),
+    (error) => error.code === 'functions/invalid-argument',
+  );
+  await assert.rejects(
+    prepare({...request, operationId: 'season_prepare_scope_injection', associationId: 'other'}),
+    (error) => error.code === 'functions/invalid-argument',
+  );
+
+  const first = await prepare(request);
+  assert.deepEqual(first.data, {
+    operationId: request.operationId,
+    status: 'prepared',
+    seasonId: 'nbl-2027',
+    seasonVersion: 1,
+    currentSeasonId: 's2026',
+  });
+  const prepared = (await adminDb.doc('associations/jba/seasons/nbl-2027').get()).data();
+  assert.equal(prepared.status, 'prepared');
+  assert.equal(prepared.isActive, false);
+  assert.equal(prepared.startDate, '2027-01-03');
+  assert.equal((await adminDb.doc('associations/jba').get()).get('currentSeasonId'), 's2026');
+  assert.equal(
+    (await adminDb.doc('associations/jba/leagueWorkflowControl/current').get()).get('activeSeasonId'),
+    's2026',
+  );
+
+  const replay = await prepare(request);
+  assert.deepEqual(replay.data, first.data);
+  await assert.rejects(
+    prepare({...request, endDate: '2027-10-01'}),
+    (error) => error.code === 'functions/already-exists',
+  );
+  await assert.rejects(
+    prepare({...request, operationId: 'season_prepare_duplicate_id'}),
+    (error) => error.code === 'functions/already-exists',
+  );
+  assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2027').get()).get('endDate'), '2027-09-30');
+});
+
+test('season activation atomically switches both pointers and active flags with exact replay', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('season-activate@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
+  ]);
+  const prepare = leagueCallable('seasonPrepare');
+  const activate = leagueCallable('seasonActivate');
+  await prepare({
+    schemaVersion: 1,
+    operationId: 'season_prepare_activation',
+    seasonId: 'nbl-2028',
+    name: 'NBL 2028',
+    startDate: '2028-01-01',
+    endDate: '2028-09-30',
+  });
+  const request = {
+    schemaVersion: 1,
+    operationId: 'season_activate_2027_01',
+    seasonId: 'nbl-2028',
+    expectedSeasonVersion: 1,
+    expectedCurrentSeasonId: 's2026',
+  };
+  await assert.rejects(
+    activate({...request, operationId: 'season_activate_stale_01', expectedCurrentSeasonId: 'stale'}),
+    (error) => error.code === 'functions/aborted',
+  );
+  const first = await activate(request);
+  assert.equal(first.data.previousSeasonId, 's2026');
+  assert.equal(first.data.currentSeasonId, 'nbl-2028');
+  const [association, control, oldSeason, newSeason] = await Promise.all([
+    adminDb.doc('associations/jba').get(),
+    adminDb.doc('associations/jba/leagueWorkflowControl/current').get(),
+    adminDb.doc('associations/jba/seasons/s2026').get(),
+    adminDb.doc('associations/jba/seasons/nbl-2028').get(),
+  ]);
+  assert.equal(association.get('currentSeasonId'), 'nbl-2028');
+  assert.equal(control.get('activeSeasonId'), 'nbl-2028');
+  assert.equal(oldSeason.get('status'), 'inactive');
+  assert.equal(oldSeason.get('isActive'), false);
+  assert.equal(newSeason.get('status'), 'active');
+  assert.equal(newSeason.get('isActive'), true);
+  assert.deepEqual((await activate(request)).data, first.data);
+});
+
+test('season archive refuses current, preserves history, and restore is reversible', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('season-archive@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
+  ]);
+  const prepare = leagueCallable('seasonPrepare');
+  const archive = leagueCallable('seasonArchive');
+  const restore = leagueCallable('seasonRestore');
+  await prepare({
+    schemaVersion: 1,
+    operationId: 'season_prepare_archive',
+    seasonId: 'nbl-2029',
+    name: 'NBL 2029',
+    startDate: '2029-01-01',
+    endDate: '2029-09-30',
+  });
+  await adminDb.doc('associations/jba/seasons/nbl-2029/games/historical').set({result: 'preserved'});
+
+  await assert.rejects(
+    archive({
+      schemaVersion: 1,
+      operationId: 'season_archive_current',
+      seasonId: 's2026',
+      expectedSeasonVersion: 1,
+      expectedCurrentSeasonId: 's2026',
+    }),
+    (error) => error.code === 'functions/failed-precondition',
+  );
+  const archived = await archive({
+    schemaVersion: 1,
+    operationId: 'season_archive_2027_01',
+    seasonId: 'nbl-2029',
+    expectedSeasonVersion: 1,
+    expectedCurrentSeasonId: 's2026',
+  });
+  assert.equal(archived.data.status, 'archived');
+  assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2029').get()).get('status'), 'archived');
+  assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2029/games/historical').get()).exists, true);
+  const restored = await restore({
+    schemaVersion: 1,
+    operationId: 'season_restore_2027_01',
+    seasonId: 'nbl-2029',
+    expectedSeasonVersion: 2,
+    expectedCurrentSeasonId: 's2026',
+  });
+  assert.equal(restored.data.status, 'restored');
+  const restoredSeason = await adminDb.doc('associations/jba/seasons/nbl-2029').get();
+  assert.equal(restoredSeason.get('status'), 'prepared');
+  assert.equal(restoredSeason.get('isActive'), false);
+  assert.equal((await adminDb.doc('associations/jba').get()).get('currentSeasonId'), 's2026');
+});
+
+test('season callables require authoritative association management capability', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('season-reader@example.com', 'fan', ['association.read']);
+  const prepare = leagueCallable('seasonPrepare');
+  await assert.rejects(
+    prepare({
+      schemaVersion: 1,
+      operationId: 'season_prepare_denied_01',
+      seasonId: 'nbl-2030',
+      name: 'NBL 2030',
+      startDate: '2030-01-01',
+      endDate: '2030-09-30',
+    }),
+    (error) => error.code === 'functions/permission-denied',
+  );
+  assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2030').get()).exists, false);
 });

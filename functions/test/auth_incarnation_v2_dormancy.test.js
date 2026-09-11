@@ -8,8 +8,9 @@ const test = require('node:test');
 
 const repositoryRoot = path.resolve(__dirname, '../..');
 const baselineGitBlobHashes = Object.freeze({
-  'functions/src/index.ts': '04347ea48ff46cdc6564489b682c22c4495c2df4',
-  'firestore.rules': 'fae96dfa751599739cdf45cf865a9e84c42f3098',
+  // Reviewed callable-only season lifecycle transition; V2 stays absent.
+  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
+  'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   // Reviewed public deep-link transition: URL strategy only; V2 stays absent.
   'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',

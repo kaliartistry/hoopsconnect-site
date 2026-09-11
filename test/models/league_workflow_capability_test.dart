@@ -22,6 +22,7 @@ void main() {
     'rosters': true,
     'divisionDeletion': true,
     'scheduling': true,
+    'seasonLifecycle': true,
   };
 
   test(
@@ -33,6 +34,7 @@ void main() {
         clientAuthorizationSchemaVersion: 1,
       );
       expect(ready.schedulingEnabled, isTrue);
+      expect(ready.seasonLifecycleEnabled, isTrue);
       for (final key in [
         'callablesReady',
         'directWritesDenied',
@@ -50,6 +52,7 @@ void main() {
         expect(closed.schedulingEnabled, isFalse, reason: key);
         expect(closed.rosterEnabled, isFalse, reason: key);
         expect(closed.divisionDeletionEnabled, isFalse, reason: key);
+        expect(closed.seasonLifecycleEnabled, isFalse, reason: key);
       }
       final mismatchedSchema = LeagueWorkflowCapability.fromMap(
         fixture(),
@@ -57,6 +60,14 @@ void main() {
         clientAuthorizationSchemaVersion: 2,
       );
       expect(mismatchedSchema.schedulingEnabled, isFalse);
+      expect(mismatchedSchema.seasonLifecycleEnabled, isFalse);
+
+      final missingSeasonGate = LeagueWorkflowCapability.fromMap(
+        {...fixture()}..remove('seasonLifecycle'),
+        expectedAssociationId: 'jba',
+        clientAuthorizationSchemaVersion: 1,
+      );
+      expect(missingSeasonGate.seasonLifecycleEnabled, isFalse);
     },
   );
 

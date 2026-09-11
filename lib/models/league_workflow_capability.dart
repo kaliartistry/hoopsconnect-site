@@ -20,6 +20,7 @@ class LeagueWorkflowCapability {
   final bool rosters;
   final bool divisionDeletion;
   final bool scheduling;
+  final bool seasonLifecycle;
 
   const LeagueWorkflowCapability({
     required this.associationId,
@@ -40,6 +41,7 @@ class LeagueWorkflowCapability {
     required this.rosters,
     required this.divisionDeletion,
     required this.scheduling,
+    required this.seasonLifecycle,
   });
 
   factory LeagueWorkflowCapability.fromMap(
@@ -84,6 +86,7 @@ class LeagueWorkflowCapability {
       rosters: map['rosters'] == true,
       divisionDeletion: map['divisionDeletion'] == true,
       scheduling: map['scheduling'] == true,
+      seasonLifecycle: map['seasonLifecycle'] == true,
     );
   }
 
@@ -101,6 +104,7 @@ class LeagueWorkflowCapability {
   bool get rosterEnabled => commonReady && rosters;
   bool get divisionDeletionEnabled => commonReady && divisionDeletion;
   bool get schedulingEnabled => commonReady && scheduling;
+  bool get seasonLifecycleEnabled => commonReady && seasonLifecycle;
 }
 
 final _idPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
