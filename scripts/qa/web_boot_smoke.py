@@ -338,10 +338,12 @@ def main():
     args = parser.parse_args()
 
     build_dir = pathlib.Path(args.build_dir).resolve()
-    headers = parse_headers(pathlib.Path(args.config).resolve())
+    config_path = pathlib.Path(args.config).resolve()
+    headers = parse_headers(config_path)
     validate_build(build_dir, headers)
     with serve(build_dir, headers) as port:
         run_browser(find_chrome(args.chrome), f"http://127.0.0.1:{port}/", args.timeout)
+    print(f"HOOPSCONNECT_WEB_CSP_OK config={config_path.name}")
 
 
 if __name__ == "__main__":

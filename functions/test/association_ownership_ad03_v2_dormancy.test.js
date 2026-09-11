@@ -16,7 +16,7 @@ const pinnedMergedMainBlobs = Object.freeze({
   'functions/src/index.ts': '78ebe0c51a1550132da8201b0f2e7b783260cb38',
   'firestore.rules': '9dc99cf1f7c597dd556898424b2911154abe3fc3',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'firebase.json': 'bffa6ccd0f69f3f39d9be8cdc49941adab02f3dc',
+  'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
   'functions/src/domain/account_deletion_contract.ts':
     '39a76af7b7fc2b76389cbf31defa0aab60c6e5fe',
   'functions/src/domain/account_lifecycle_ad02_v2.ts':

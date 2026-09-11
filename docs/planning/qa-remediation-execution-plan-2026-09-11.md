@@ -1,6 +1,6 @@
 # HoopsConnect QA remediation and execution plan
 
-Status: ready for implementation planning review. No implementation agents have been dispatched and no application changes are included in this document.
+Status: implementation in progress. Stage 0 is integrated and independently reviewed; Stage 1 dispatch follows the accepted Stage 0 platform, interface, and statistics contracts.
 
 Prepared: 11 September 2026.
 
@@ -283,10 +283,11 @@ The first dispatch is Stage 0. Its output is the reproducible base and reviewed 
 ## 11. Execution ledger
 
 - Baseline: `ccc53eace3d8b08b49400a033952db7f882f0fae` on `main`, clean when planning began.
-- Integration: `codex/qa-remediation-integration`, plan commit `9164169b112a62338cfa2e94e08ccaded2dc4fa3`.
-- Stage 0 A: `codex/stage0-platform-qa`, active, isolated worktree, platform/test/web boot only.
-- Stage 0 B: `codex/stage0-ui-system`, active, isolated worktree, shared UI/accessibility/login only.
-- Stage 0 D: `codex/stage0-stats-contracts`, active, isolated worktree, dormant statistics adapter/contracts only.
-- Safety baseline: all 50 dormancy tests passed before implementation. Production activation flags, deploy roots and real Firebase data remain unchanged.
+- Integration: `codex/qa-remediation-integration`, planning commits `9164169b112a62338cfa2e94e08ccaded2dc4fa3` and `e8d3169`.
+- Stage 0 A: platform/test/web boot integrated through `a803b11`; its full isolated emulator and browser run passed with Node 22.22.2, Java 21.0.3, Flutter 3.41.2, Dart 3.11.0, and Firebase CLI 15.8.0.
+- Stage 0 B: shared interface/accessibility/login patterns integrated through `2ad0198`; integration-owner branded theme wiring landed in `b2a6f7b`.
+- Stage 0 D: dormant statistics migration adapter/contracts integrated through `f6f8a67`; candidate activation remains deliberately off.
+- Stage 0 shared integration: CSP, CI, public Functions coverage, exact dormancy-pin transition, and path-safe delivery isolation validated on the assembled branch before commit.
+- Safety state: all 50 dormancy tests passed before and after the reviewed root transition. Production activation flags, deploy roots and real Firebase data remain unchanged.
 
 Stage 0 integration gates are: the public route contract before A/E, lifecycle route contract before A/F, official result/revision contract before C/D/E, shared accessibility harness before broad feature UI work, and one-at-a-time use of fixed local emulator ports.

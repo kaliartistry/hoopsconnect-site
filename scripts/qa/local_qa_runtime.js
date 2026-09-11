@@ -31,6 +31,9 @@ function validateInvocation(argv = process.argv.slice(2), env = process.env) {
   for (const name of CREDENTIAL_ENV) {
     if (env[name]) throw new Error(`${name} is forbidden in local QA.`);
   }
+  if (env.NODE_OPTIONS) {
+    throw new Error('NODE_OPTIONS is forbidden in local QA; only the recorded delivery guard may preload code.');
+  }
   const config = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, CONFIG), 'utf8'));
   for (const [service, port] of Object.entries(EMULATORS)) {
     const actual = config.emulators?.[service];
@@ -69,8 +72,12 @@ function createIsolation(tools) {
   const disabledCredential = path.join(directory, 'disabled-credential.json');
   const guardLog = path.join(directory, 'delivery-guard.jsonl');
   fs.writeFileSync(disabledCredential, '{}', {encoding: 'utf8', mode: 0o600});
-  const preload = path.join(REPOSITORY_ROOT, 'scripts/qa/functions_runtime_guard.cjs');
-  const nodeOptions = [tools.env.NODE_OPTIONS, `--require=${preload}`].filter(Boolean).join(' ');
+  const preload = path.join(directory, 'functions_runtime_guard.cjs');
+  fs.copyFileSync(
+    path.join(REPOSITORY_ROOT, 'scripts/qa/functions_runtime_guard.cjs'),
+    preload,
+  );
+  fs.chmodSync(preload, 0o600);
   return {
     directory,
     guardLog,
@@ -82,7 +89,7 @@ function createIsolation(tools) {
       HOOPSCONNECT_QA_DELIVERY_GUARD_LOG: guardLog,
       HOOPSCONNECT_QA_NODE: tools.node.path,
       HOOPSCONNECT_QA_PYTHON: tools.python.path,
-      NODE_OPTIONS: nodeOptions,
+      NODE_OPTIONS: `--require=${preload}`,
     },
   };
 }

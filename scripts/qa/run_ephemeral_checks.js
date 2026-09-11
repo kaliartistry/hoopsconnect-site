@@ -18,3 +18,10 @@ execFileSync(process.env.HOOPSCONNECT_QA_PYTHON || 'python3', [
   env,
   stdio: 'inherit',
 });
+execFileSync(process.env.HOOPSCONNECT_QA_PYTHON || 'python3', [
+  'scripts/qa/web_boot_smoke.py', '--config', 'firebase.json', '--timeout', '60',
+], {
+  cwd: REPOSITORY_ROOT,
+  env,
+  stdio: 'inherit',
+});

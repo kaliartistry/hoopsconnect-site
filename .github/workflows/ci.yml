@@ -26,7 +26,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: functions/package-lock.json
+          cache-dependency-path: |
+            functions/package-lock.json
+            public_functions/package-lock.json
+            scripts/package-lock.json
 
       - name: Setup Java for Firebase emulators
         uses: actions/setup-java@v5
@@ -42,6 +45,14 @@ jobs:
 
       - name: Install Functions dependencies
         working-directory: functions
+        run: npm ci
+
+      - name: Install public Functions dependencies
+        working-directory: public_functions
+        run: npm ci
+
+      - name: Install QA script dependencies
+        working-directory: scripts
         run: npm ci
 
       - name: Check repository and Firebase target safety
@@ -82,9 +93,56 @@ jobs:
         working-directory: functions
         run: npm run build
 
+      - name: Test public Functions boundary
+        working-directory: public_functions
+        run: npm test
+
       - name: Audit Functions dependencies
         working-directory: functions
         run: npm audit --audit-level=high
 
       - name: Build web
         run: flutter build web --release
+
+  local-qa:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2.22.0
+        with:
+          flutter-version: '3.41.2'
+          channel: stable
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            functions/package-lock.json
+            public_functions/package-lock.json
+            scripts/package-lock.json
+
+      - name: Setup Java for Firebase emulators
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install pinned Firebase CLI
+        run: npm install --global firebase-tools@15.8.0
+
+      - name: Install locked dependencies
+        run: |
+          flutter pub get
+          npm --prefix functions ci
+          npm --prefix public_functions ci
+          npm --prefix scripts ci
+
+      - name: Run isolated full-role platform QA
+        run: node scripts/run_local_qa.js
