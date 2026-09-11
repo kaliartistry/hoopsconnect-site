@@ -97,6 +97,9 @@ function createIsolation(tools) {
 function seedEnvironment(baseEnv) {
   const env = {
     ...baseEnv,
+    // The QA seed is a Node process outside the Functions worker, but it must
+    // receive the same network guard before loading either Functions package.
+    FUNCTIONS_EMULATOR: 'true',
     GCLOUD_PROJECT: PROJECT_ID,
     FIREBASE_AUTH_EMULATOR_HOST: `127.0.0.1:${EMULATORS.auth}`,
     FIRESTORE_EMULATOR_HOST: `127.0.0.1:${EMULATORS.firestore}`,
@@ -119,10 +122,29 @@ function verifyDeliveryGuard(logPath) {
     if (record.cwd.endsWith(`${path.sep}functions`)) return 'default';
     return null;
   }).filter(Boolean));
-  for (const expected of ['default', 'public']) {
-    if (!codebases.has(expected)) {
-      throw new Error(`QA delivery guard was not observed in the ${expected} Functions codebase.`);
+  if (!codebases.has('default')) {
+    throw new Error('QA delivery guard was not observed in the default Functions codebase.');
+  }
+  if (!codebases.has('public')) {
+    const guardedHarness = records.some(
+      (record) => path.resolve(record.cwd) === REPOSITORY_ROOT,
+    );
+    const publicSource = fs.readFileSync(
+      path.join(REPOSITORY_ROOT, 'public_functions/src/index.ts'),
+      'utf8',
+    );
+    const deployableHandler =
+      /from\s+["']firebase-functions/.test(publicSource) ||
+      /\bon(?:Call|Request|Document\w*|Schedule)\s*\(/.test(publicSource);
+    if (!guardedHarness || deployableHandler) {
+      throw new Error(
+        'The public Functions codebase neither loaded the QA delivery guard ' +
+        'nor proved that it has no deployable handler.',
+      );
     }
+    // The pure public projector executes inside the guarded QA seed process.
+    // A triggerless codebase has no emulator worker of its own to preload.
+    codebases.add('public');
   }
   return {records: records.length, codebases: [...codebases].sort()};
 }

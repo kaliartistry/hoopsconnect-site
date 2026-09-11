@@ -92,6 +92,12 @@ function firebaseAdmin() {
   return require(path.resolve(__dirname, '../../functions/node_modules/firebase-admin'));
 }
 
+function publicSnapshotBuilder() {
+  return require(
+    path.resolve(__dirname, '../../public_functions/lib/index.js'),
+  ).buildPublicSnapshot;
+}
+
 function identity(role, dataset) {
   const suffix = dataset === 'empty' ? '-empty' : '';
   return {
@@ -217,6 +223,22 @@ async function seedLeague(db, admin) {
     });
     return result;
   };
+  const publicPlayerLines = (teamIds, pointTargets) =>
+    Object.entries(playerLines(teamIds, pointTargets)).map(
+      ([playerId, line]) => ({
+        playerId,
+        publicDisplayName: line.name,
+        teamId: line.teamId,
+        minutes: line.min,
+        points: line.pts,
+        offensiveRebounds: line.oreb,
+        defensiveRebounds: line.dreb,
+        assists: line.ast,
+        steals: line.stl,
+        blocks: line.blk,
+        fouls: line.fls,
+      }),
+    );
 
   const standings = [
     {teamId: 'kingston-lions', teamName: 'Kingston Lions', divisionId: 'premier', wins: 7, losses: 2, pct: 0.778, gb: 0, streak: 'W3', lastTen: '7-2', pointsFor: 731, pointsAgainst: 668},
@@ -230,6 +252,10 @@ async function seedLeague(db, admin) {
     shortName: 'JBA QA',
     currentSeasonId: seasonId,
     primaryColor: '#2E7D32',
+    publicLeagueState: 'published',
+    publicPrivacyEpoch: 1,
+    standingsPolicyLabel:
+      'Winning percentage; unresolved ties remain tied',
     qaFixtureVersion: QA_FIXTURE_VERSION,
   });
 
@@ -343,6 +369,10 @@ async function seedLeague(db, admin) {
         awayScore: game.score[1],
         entryMode: game.status === 'inProgress' ? 'live' : 'postGame',
         playerLines: playerLines([game.home, game.away], game.score),
+        publicPlayerLines: publicPlayerLines(
+          [game.home, game.away],
+          game.score,
+        ),
         homeQuarterScores: Object.fromEntries(game.quarters[0].map((score, index) => [String(index + 1), score])),
         awayQuarterScores: Object.fromEntries(game.quarters[1].map((score, index) => [String(index + 1), score])),
         submittedBy: game.status === 'inProgress' ? null : 'qa-statistician',
@@ -382,6 +412,8 @@ async function seedLeague(db, admin) {
         .map((player, index) => ({
           playerId: player.id,
           name: player.name,
+          publicDisplayName: player.name,
+          teamId: player.teamId,
           teamName: player.teamName,
           value: field === 'spg' ? 2.2 - index * 0.1 : field === 'bpg' ? 1.8 - index * 0.1 : player[field],
           gp: player.gamesPlayed,
@@ -498,39 +530,80 @@ async function seedLeague(db, admin) {
     name: 'Empty Synthetic Season', status: 'active', qaFixtureVersion: QA_FIXTURE_VERSION,
   });
   await batch.commit();
-
-  // The first source write exercises the public codebase when it is already
-  // ready. waitForPublicSnapshot repeats this idempotent write so persistent
-  // mode also survives Functions emulator startup races.
-  await db.doc(`associations/${ASSOCIATION_ID}/teams/kingston-lions`).set(
-    {qaPublicProjectionProbe: true},
-    {merge: true},
-  );
 }
 
-async function waitForPublicSnapshot(db) {
-  const ref = db.doc(`publicData/${ASSOCIATION_ID}/snapshots/current`);
-  const sourceProbe = db.doc(`associations/${ASSOCIATION_ID}/teams/kingston-lions`);
-  const deadline = Date.now() + 30000;
-  let nextProbeAt = 0;
-  while (Date.now() < deadline) {
-    const snapshot = await ref.get();
-    const data = snapshot.data();
-    if (
-      snapshot.exists &&
-      data.published === true &&
-      data.schedule?.length === 6 &&
-      data.standings?.length === 4 &&
-      data.leaderboards?.length === 5 &&
-      data.leaderboards.every((board) => board.rankings?.length > 0)
-    ) return data;
-    if (Date.now() >= nextProbeAt) {
-      await sourceProbe.set({qaPublicProjectionProbe: true}, {merge: true});
-      nextProbeAt = Date.now() + 1000;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+function normalizePublicFixtureValue(value) {
+  if (Array.isArray(value)) return value.map(normalizePublicFixtureValue);
+  if (value && typeof value.toDate === 'function') {
+    return value.toDate().toISOString();
   }
-  throw new Error('Public Functions emulator did not publish the complete Stage 1 QA snapshot.');
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [
+        key,
+        normalizePublicFixtureValue(nested),
+      ]),
+    );
+  }
+  return value;
+}
+
+async function publishQaPublicSnapshot(db) {
+  const associationRef = db.doc(`associations/${ASSOCIATION_ID}`);
+  const [association, season, divisions, events, gameStats, standings, leaderboards, teams] =
+    await Promise.all([
+      associationRef.get(),
+      associationRef.collection('seasons').doc('qa-2026').get(),
+      associationRef.collection('divisions').get(),
+      associationRef.collection('events').get(),
+      associationRef.collection('gameStats').get(),
+      associationRef.collection('standings').get(),
+      associationRef.collection('leaderboard').get(),
+      associationRef.collection('teams').get(),
+    ]);
+  const records = (snapshot) => snapshot.docs.map((document) => ({
+    id: document.id,
+    data: normalizePublicFixtureValue(document.data()),
+  }));
+  const scopedStandings = records(standings).filter(
+    (entry) => typeof entry.data.divisionId === 'string',
+  );
+  const scopedLeaderboards = records(leaderboards).filter(
+    (entry) => typeof entry.data.divisionId === 'string',
+  );
+  const snapshot = publicSnapshotBuilder()({
+    associationId: ASSOCIATION_ID,
+    association: normalizePublicFixtureValue(association.data()),
+    season: {id: season.id, data: normalizePublicFixtureValue(season.data())},
+    divisions: records(divisions),
+    events: records(events),
+    gameStats: records(gameStats),
+    // The synthetic public journey exercises the two division views. Overall
+    // aggregate documents remain seeded for signed-in compatibility tests but
+    // are not duplicated beside their division-scoped public equivalents.
+    standings: scopedStandings,
+    leaderboards: scopedLeaderboards,
+    teams: records(teams),
+    generatedAt: '2026-09-01T12:00:00.000Z',
+  });
+  if (
+    snapshot.published !== true ||
+    snapshot.schedule?.length !== 6 ||
+    snapshot.standings?.length !== 4 ||
+    snapshot.leaderboards?.length !== 10 ||
+    !snapshot.leaderboards.every((board) => board.rankings?.length > 0)
+  ) {
+    throw new Error(
+      'The pure public projection did not produce the complete Stage 1 QA ' +
+      `snapshot (published=${snapshot.published}, ` +
+      `schedule=${snapshot.schedule?.length}, ` +
+      `standings=${snapshot.standings?.length}, ` +
+      `leaderboards=${snapshot.leaderboards?.length}, ` +
+      `rankings=${snapshot.leaderboards?.map((board) => board.rankings?.length).join(',')}).`,
+    );
+  }
+  await db.doc(`publicData/${ASSOCIATION_ID}/snapshots/current`).set(snapshot);
+  return snapshot;
 }
 
 async function main() {
@@ -545,12 +618,12 @@ async function main() {
   const db = admin.firestore();
   await seedIdentities(admin.auth(), db);
   await seedLeague(db, admin);
+  const publicSnapshot = await publishQaPublicSnapshot(db);
   await probeCallable();
   await admin.storage().bucket().file('qa/public/fixture-health.txt').save(
     Buffer.from('HOOPSCONNECT_QA_STORAGE_OK\n', 'utf8'),
     {contentType: 'text/plain', resumable: false},
   );
-  const publicSnapshot = await waitForPublicSnapshot(db);
   console.log(
     `HOOPSCONNECT_QA_FIXTURES_OK users=${roles.length * 2} ` +
     `teams=${TEAM_FIXTURES.length} players=24 publicGames=${publicSnapshot.schedule.length} ` +
@@ -571,7 +644,9 @@ module.exports = {
   TEAM_FIXTURES,
   authorizationSchema,
   identity,
+  normalizePublicFixtureValue,
   probeCallable,
+  publishQaPublicSnapshot,
   requireSafeEnvironment,
   roles,
 };

@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
@@ -8,6 +10,7 @@ const {
   TEAM_FIXTURES,
   authorizationSchema,
   identity,
+  normalizePublicFixtureValue,
   requireSafeEnvironment,
   roles,
 } = require('../qa/seed_local_qa');
@@ -74,4 +77,25 @@ test('full dataset has four deterministic teams for roster and division journeys
     'premier',
     'development',
   ]));
+});
+
+test('QA public data uses the reviewed pure projector without a deployable trigger', () => {
+  const seedSource = fs.readFileSync(
+    path.resolve(__dirname, '../qa/seed_local_qa.js'),
+    'utf8',
+  );
+  assert.match(seedSource, /publicSnapshotBuilder\(\)\(\{/);
+  assert.match(
+    seedSource,
+    /publicData\/\$\{ASSOCIATION_ID\}\/snapshots\/current/,
+  );
+  assert.doesNotMatch(seedSource, /onPublicLeagueSourceWritten/);
+  const converted = normalizePublicFixtureValue({
+    startTime: {toDate: () => new Date('2026-09-10T20:00:00.000Z')},
+    nested: [{value: 1}],
+  });
+  assert.deepEqual(converted, {
+    startTime: '2026-09-10T20:00:00.000Z',
+    nested: [{value: 1}],
+  });
 });

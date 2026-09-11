@@ -30,7 +30,7 @@ version mismatch when a pin is unavailable.
 The successful markers are:
 
 ```text
-HOOPSCONNECT_QA_FIXTURES_OK users=14 teams=4 players=24 publicGames=6 leaderboards=5 callable=true storage=true password=LocalQa-Only-42!
+HOOPSCONNECT_QA_FIXTURES_OK users=14 teams=4 players=24 publicGames=6 leaderboards=10 callable=true storage=true password=LocalQa-Only-42!
 HOOPSCONNECT_WEB_BOOT_OK fresh=true update=true newDocument=true staleWorkerRemoved=true
 HOOPSCONNECT_QA_DELIVERY_GUARD_OK codebases=default,public
 ```
