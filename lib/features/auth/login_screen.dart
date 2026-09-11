@@ -8,22 +8,11 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
-import '../../providers/auth_providers.dart';
+import 'login_auth_actions.dart';
 import '../public/public_league_screen.dart';
 
-typedef LoginEmailPasswordHandler =
-    Future<void> Function({
-      required String email,
-      required String password,
-      String? displayName,
-    });
-
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key, this.onEmailPasswordSubmit});
-
-  /// Optional transport seam used by screen-level tests and embedders. Normal
-  /// application routing uses [authRepositoryProvider].
-  final LoginEmailPasswordHandler? onEmailPasswordSubmit;
+  const LoginScreen({super.key});
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
@@ -83,28 +72,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      final handler = widget.onEmailPasswordSubmit;
-      if (handler != null) {
-        await handler(
+      final actions = ref.read(loginAuthActionsProvider);
+      if (_isSignUp) {
+        await actions.signUpFan(
           email: _emailController.text.trim(),
           password: _passwordController.text,
-          displayName: _isSignUp ? _nameController.text.trim() : null,
+          displayName: _nameController.text.trim(),
         );
-      } else if (_isSignUp) {
-        await ref
-            .read(authRepositoryProvider)
-            .signUpFan(
-              email: _emailController.text.trim(),
-              password: _passwordController.text,
-              displayName: _nameController.text.trim(),
-            );
       } else {
-        await ref
-            .read(authRepositoryProvider)
-            .signIn(
-              email: _emailController.text.trim(),
-              password: _passwordController.text,
-            );
+        await actions.signIn(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
       }
     } catch (error) {
       if (mounted) {
@@ -122,7 +101,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      await ref.read(authRepositoryProvider).signInWithGoogle();
+      await ref.read(loginAuthActionsProvider).signInWithGoogle();
     } catch (error) {
       if (mounted) {
         setState(() => _error = _friendlyError(error.toString()));
@@ -139,7 +118,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      await ref.read(authRepositoryProvider).signInWithApple();
+      await ref.read(loginAuthActionsProvider).signInWithApple();
     } catch (error) {
       if (mounted) {
         setState(() => _error = _friendlyError(error.toString()));
@@ -252,72 +231,86 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 24),
-                  if (_isSignUp) ...[
-                    TextFormField(
-                      key: const Key('login-name-field'),
-                      controller: _nameController,
-                      focusNode: _nameFocus,
-                      textInputAction: TextInputAction.next,
-                      autofillHints: const [AutofillHints.name],
-                      decoration: const InputDecoration(
-                        labelText: 'Full Name',
-                        prefixIcon: Icon(Icons.person_outlined),
-                      ),
-                      validator: (value) =>
-                          _isSignUp && (value == null || value.trim().isEmpty)
-                          ? 'Enter your name'
-                          : null,
-                      onChanged: (_) => _clearTransportError(),
-                      onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+                  AutofillGroup(
+                    child: Column(
+                      children: [
+                        if (_isSignUp) ...[
+                          TextFormField(
+                            key: const Key('login-name-field'),
+                            controller: _nameController,
+                            focusNode: _nameFocus,
+                            textInputAction: TextInputAction.next,
+                            autofillHints: const [AutofillHints.name],
+                            decoration: const InputDecoration(
+                              labelText: 'Full Name',
+                              prefixIcon: Icon(Icons.person_outlined),
+                            ),
+                            validator: (value) =>
+                                _isSignUp &&
+                                    (value == null || value.trim().isEmpty)
+                                ? 'Enter your name'
+                                : null,
+                            onChanged: (_) => _clearTransportError(),
+                            onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        TextFormField(
+                          key: const Key('login-email-field'),
+                          controller: _emailController,
+                          focusNode: _emailFocus,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [
+                            AutofillHints.username,
+                            AutofillHints.email,
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: 'Email',
+                            prefixIcon: Icon(Icons.email_outlined),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'Enter your email';
+                            }
+                            final emailRegex = RegExp(
+                              r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                            );
+                            if (!emailRegex.hasMatch(value.trim())) {
+                              return 'Enter a valid email address';
+                            }
+                            return null;
+                          },
+                          onChanged: (_) => _clearTransportError(),
+                          onFieldSubmitted: (_) =>
+                              _passwordFocus.requestFocus(),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          key: const Key('login-password-field'),
+                          controller: _passwordController,
+                          focusNode: _passwordFocus,
+                          obscureText: true,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: [
+                            _isSignUp
+                                ? AutofillHints.newPassword
+                                : AutofillHints.password,
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: 'Password',
+                            prefixIcon: Icon(Icons.lock_outlined),
+                          ),
+                          validator: (value) => value == null || value.isEmpty
+                              ? 'Enter your password'
+                              : null,
+                          onChanged: (_) => _clearTransportError(),
+                          onFieldSubmitted: (_) {
+                            if (!_loading) unawaited(_submitEmailPassword());
+                          },
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                  ],
-                  TextFormField(
-                    key: const Key('login-email-field'),
-                    controller: _emailController,
-                    focusNode: _emailFocus,
-                    keyboardType: TextInputType.emailAddress,
-                    textInputAction: TextInputAction.next,
-                    autofillHints: const [
-                      AutofillHints.username,
-                      AutofillHints.email,
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: Icon(Icons.email_outlined),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Enter your email';
-                      }
-                      final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-                      if (!emailRegex.hasMatch(value.trim())) {
-                        return 'Enter a valid email address';
-                      }
-                      return null;
-                    },
-                    onChanged: (_) => _clearTransportError(),
-                    onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    key: const Key('login-password-field'),
-                    controller: _passwordController,
-                    focusNode: _passwordFocus,
-                    obscureText: true,
-                    textInputAction: TextInputAction.done,
-                    autofillHints: const [AutofillHints.password],
-                    decoration: const InputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: Icon(Icons.lock_outlined),
-                    ),
-                    validator: (value) => value == null || value.isEmpty
-                        ? 'Enter your password'
-                        : null,
-                    onChanged: (_) => _clearTransportError(),
-                    onFieldSubmitted: (_) {
-                      if (!_loading) unawaited(_submitEmailPassword());
-                    },
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 12),
@@ -444,39 +437,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required Key key,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Semantics(
-      button: true,
-      selected: active,
-      label: label,
-      excludeSemantics: true,
-      child: InkWell(
-        key: key,
-        focusNode: focusNode,
-        onTap: _loading ? null : onTap,
-        borderRadius: BorderRadius.circular(AppSizes.radiusSm),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 48),
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          decoration: BoxDecoration(
-            color: active
+    return MergeSemantics(
+      child: Semantics(
+        selected: active,
+        child: ListenableBuilder(
+          listenable: focusNode,
+          builder: (context, child) {
+            final focused = focusNode.hasFocus;
+            final borderColor = focused
+                ? active
+                      ? colorScheme.onPrimary
+                      : colorScheme.primary
+                : active
                 ? colorScheme.primary
-                : colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(AppSizes.radiusSm),
-            border: Border.all(
-              color: active ? colorScheme.primary : colorScheme.outlineVariant,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
+                : colorScheme.outlineVariant;
+            final shape = RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusSm),
+              side: BorderSide(color: borderColor, width: focused ? 3 : 1),
+            );
+
+            return Material(
+              key: key,
               color: active
-                  ? colorScheme.onPrimary
-                  : colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-          ),
+                  ? colorScheme.primary
+                  : colorScheme.surfaceContainerLow,
+              shape: shape,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                focusNode: focusNode,
+                onTap: _loading ? null : onTap,
+                customBorder: shape,
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 10,
+                  ),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: active
+                          ? colorScheme.onPrimary
+                          : colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

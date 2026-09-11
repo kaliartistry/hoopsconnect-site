@@ -87,7 +87,11 @@ class AppStateMessage extends StatelessWidget {
             const SizedBox(height: 8),
             Align(
               alignment: AlignmentDirectional.centerEnd,
-              child: TextButton(onPressed: onAction, child: Text(actionLabel!)),
+              child: TextButton(
+                style: TextButton.styleFrom(foregroundColor: colors.foreground),
+                onPressed: onAction,
+                child: Text(actionLabel!),
+              ),
             ),
           ],
         ],

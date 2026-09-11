@@ -105,26 +105,29 @@ class AppAsyncActionButton extends StatelessWidget {
           }
         : null;
 
+    final buttonContent = ExcludeSemantics(child: content);
     final Widget button = switch (style) {
       AppActionStyle.filled => ElevatedButton(
         onPressed: callback,
-        child: content,
+        child: buttonContent,
       ),
       AppActionStyle.outlined => OutlinedButton(
         onPressed: callback,
-        child: content,
+        child: buttonContent,
       ),
-      AppActionStyle.text => TextButton(onPressed: callback, child: content),
+      AppActionStyle.text => TextButton(
+        onPressed: callback,
+        child: buttonContent,
+      ),
     };
 
-    return Semantics(
-      label: semanticsLabel,
-      hint: semanticsHint,
-      button: true,
-      enabled: enabled,
-      liveRegion: isBusy,
-      excludeSemantics: true,
-      child: button,
+    return MergeSemantics(
+      child: Semantics(
+        label: semanticsLabel,
+        hint: semanticsHint,
+        liveRegion: isBusy,
+        child: button,
+      ),
     );
   }
 }

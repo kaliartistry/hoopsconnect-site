@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,6 +41,33 @@ void main() {
     );
     await tester.tap(find.text('Try Again'));
     expect(retried, isTrue);
+    final action = tester.widget<TextButton>(
+      find.widgetWithText(TextButton, 'Try Again'),
+    );
+    final actionColor = action.style!.foregroundColor!.resolve({})!;
+    expect(actionColor, AppTheme.dark.colorScheme.onErrorContainer);
+    expect(
+      _contrastRatio(actionColor, AppTheme.dark.colorScheme.errorContainer),
+      greaterThanOrEqualTo(4.5),
+    );
+    semantics.dispose();
+  });
+
+  testWidgets('enabled async action exposes its tap semantics action', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var calls = 0;
+    await tester.pumpWidget(
+      host(
+        AppAsyncActionButton(label: 'Submit stats', onPressed: () => calls++),
+      ),
+    );
+
+    final node = tester.getSemantics(find.byType(AppAsyncActionButton));
+    expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    await tester.tap(find.byType(AppAsyncActionButton));
+    expect(calls, 1);
     semantics.dispose();
   });
 
@@ -127,4 +156,12 @@ void main() {
     expect(find.bySemanticsLabel('Loading standings'), findsOneWidget);
     semantics.dispose();
   });
+}
+
+double _contrastRatio(Color foreground, Color background) {
+  final first = foreground.computeLuminance();
+  final second = background.computeLuminance();
+  final lighter = first > second ? first : second;
+  final darker = first > second ? second : first;
+  return (lighter + 0.05) / (darker + 0.05);
 }

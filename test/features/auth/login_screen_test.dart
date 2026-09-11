@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:ui' show Tristate;
+import 'dart:ui' show SemanticsAction, Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
+import 'package:hoops_connect/features/auth/login_auth_actions.dart';
 import 'package:hoops_connect/features/auth/login_screen.dart';
 
 void main() {
@@ -13,7 +14,7 @@ void main() {
     WidgetTester tester, {
     ThemeData? theme,
     Size size = const Size(375, 844),
-    LoginEmailPasswordHandler? onSubmit,
+    _FakeLoginAuthActions? auth,
     TextScaler textScaler = TextScaler.noScaling,
   }) async {
     tester.view.devicePixelRatio = 1;
@@ -22,11 +23,16 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          loginAuthActionsProvider.overrideWithValue(
+            auth ?? _FakeLoginAuthActions(),
+          ),
+        ],
         child: MaterialApp(
           theme: theme ?? AppTheme.light,
           home: MediaQuery(
             data: MediaQueryData(size: size, textScaler: textScaler),
-            child: LoginScreen(onEmailPasswordSubmit: onSubmit),
+            child: const LoginScreen(),
           ),
         ),
       ),
@@ -47,6 +53,9 @@ void main() {
     );
     expect(find.byKey(const Key('login-email-field')), findsOneWidget);
     expect(find.byKey(const Key('login-password-field')), findsOneWidget);
+    expect(_editable(tester, const Key('login-password-field')).autofillHints, [
+      AutofillHints.password,
+    ]);
     expect(find.text('Browse scores & schedule as a guest'), findsOneWidget);
 
     final headingSemantics = tester.getSemantics(
@@ -60,14 +69,8 @@ void main() {
     tester,
   ) async {
     final pending = Completer<void>();
-    final submissions = <({String email, String password, String? name})>[];
-    await pumpLogin(
-      tester,
-      onSubmit: ({required email, required password, displayName}) {
-        submissions.add((email: email, password: password, name: displayName));
-        return pending.future;
-      },
-    );
+    final auth = _FakeLoginAuthActions()..signInPending = pending;
+    await pumpLogin(tester, auth: auth);
 
     await tester.enterText(
       find.byKey(const Key('login-email-field')),
@@ -81,15 +84,15 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
 
-    expect(submissions, [
-      (email: 'member@example.com', password: 'correct horse', name: null),
+    expect(auth.signInSubmissions, [
+      (email: 'member@example.com', password: 'correct horse'),
     ]);
     expect(find.text('Signing in'), findsOneWidget);
     expect(find.bySemanticsLabel('Signing in'), findsOneWidget);
 
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
-    expect(submissions, hasLength(1));
+    expect(auth.signInSubmissions, hasLength(1));
 
     pending.complete();
     await tester.pumpAndSettle();
@@ -131,7 +134,10 @@ void main() {
     await pumpLogin(tester);
 
     final createAccount = tester.widget<InkWell>(
-      find.byKey(const Key('login-mode-create-account')),
+      find.descendant(
+        of: find.byKey(const Key('login-mode-create-account')),
+        matching: find.byType(InkWell),
+      ),
     );
     createAccount.focusNode!.requestFocus();
     await tester.pump();
@@ -143,18 +149,60 @@ void main() {
       find.byKey(const Key('login-mode-create-account')),
     );
     expect(createModeSemantics.flagsCollection.isSelected, Tristate.isTrue);
+    expect(
+      createModeSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+      isTrue,
+    );
+    final material = tester.widget<Material>(
+      find.byKey(const Key('login-mode-create-account')),
+    );
+    expect((material.shape! as RoundedRectangleBorder).side.width, 3);
+  });
+
+  testWidgets('create-account mode uses new-password autofill and sign-up', (
+    tester,
+  ) async {
+    final auth = _FakeLoginAuthActions();
+    await pumpLogin(tester, auth: auth);
+
+    await tester.tap(find.text('Create Account').first);
+    await tester.pump();
+    expect(_editable(tester, const Key('login-password-field')).autofillHints, [
+      AutofillHints.newPassword,
+    ]);
+
+    await tester.enterText(
+      find.byKey(const Key('login-name-field')),
+      'Member Name',
+    );
+    await tester.enterText(
+      find.byKey(const Key('login-email-field')),
+      'member@example.com',
+    );
+    await tester.enterText(
+      find.byKey(const Key('login-password-field')),
+      'new password',
+    );
+    await tester.tap(find.byKey(const Key('login-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(auth.signInSubmissions, isEmpty);
+    expect(auth.signUpSubmissions, [
+      (
+        email: 'member@example.com',
+        password: 'new password',
+        displayName: 'Member Name',
+      ),
+    ]);
   });
 
   testWidgets('validation and transport errors are rendered and announced', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    await pumpLogin(
-      tester,
-      onSubmit: ({required email, required password, displayName}) async {
-        throw Exception('[firebase_auth/wrong-password] rejected');
-      },
-    );
+    final auth = _FakeLoginAuthActions()
+      ..signInError = Exception('[firebase_auth/wrong-password] rejected');
+    await pumpLogin(tester, auth: auth);
 
     await tester.tap(find.byKey(const Key('login-submit-button')));
     await tester.pump();
@@ -220,6 +268,46 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+}
+
+class _FakeLoginAuthActions implements LoginAuthActions {
+  final signInSubmissions = <({String email, String password})>[];
+  final signUpSubmissions =
+      <({String email, String password, String displayName})>[];
+  Completer<void>? signInPending;
+  Object? signInError;
+  int googleSignIns = 0;
+  int appleSignIns = 0;
+
+  @override
+  Future<void> signIn({required String email, required String password}) async {
+    signInSubmissions.add((email: email, password: password));
+    if (signInError case final error?) throw error;
+    await signInPending?.future;
+  }
+
+  @override
+  Future<void> signUpFan({
+    required String email,
+    required String password,
+    required String displayName,
+  }) async {
+    signUpSubmissions.add((
+      email: email,
+      password: password,
+      displayName: displayName,
+    ));
+  }
+
+  @override
+  Future<void> signInWithApple() async {
+    appleSignIns++;
+  }
+
+  @override
+  Future<void> signInWithGoogle() async {
+    googleSignIns++;
+  }
 }
 
 EditableText _editable(WidgetTester tester, Key fieldKey) {
