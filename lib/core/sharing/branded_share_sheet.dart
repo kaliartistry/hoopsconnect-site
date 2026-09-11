@@ -1,12 +1,14 @@
 import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/association_branding_model.dart';
 import '../constants/app_constants.dart';
+import '../widgets/app_state_message.dart';
+import 'branded_share_actions.dart';
 import 'branded_share_payload.dart';
 
 Future<void> showBrandedShareSheet({
@@ -26,20 +28,36 @@ Future<void> showBrandedShareSheet({
 class BrandedShareSheet extends StatefulWidget {
   final AssociationBrandingModel branding;
   final BrandedSharePayload payload;
+  final BrandedShareActions? actions;
+  final Future<Uint8List> Function()? captureImage;
 
   const BrandedShareSheet({
     super.key,
     required this.branding,
     required this.payload,
+    this.actions,
+    this.captureImage,
   });
 
   @override
   State<BrandedShareSheet> createState() => _BrandedShareSheetState();
 }
 
+enum _ShareBusy { share, copy, download }
+
 class _BrandedShareSheetState extends State<BrandedShareSheet> {
   final _cardKey = GlobalKey();
-  bool _sharing = false;
+  late final BrandedShareActions _actions;
+  _ShareBusy? _busy;
+  String? _messageTitle;
+  String? _message;
+  AppStateTone _messageTone = AppStateTone.neutral;
+
+  @override
+  void initState() {
+    super.initState();
+    _actions = widget.actions ?? PlatformBrandedShareActions();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,13 +93,13 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Share this result',
+                  'Share this published result',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Share to WhatsApp, Instagram, X, and more.',
+                  'Choose Share, copy the text, or save the image.',
                   style: TextStyle(color: AppColors.textSecondary),
                   textAlign: TextAlign.center,
                 ),
@@ -93,23 +111,58 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
                     payload: widget.payload,
                   ),
                 ),
+                if (_message != null) ...[
+                  const SizedBox(height: 12),
+                  AppStateMessage(
+                    title: _messageTitle!,
+                    message: _message!,
+                    tone: _messageTone,
+                    compact: true,
+                  ),
+                ],
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: _sharing ? null : _share,
-                  icon: _sharing
+                  onPressed: _busy == null ? _share : null,
+                  icon: _busy == _ShareBusy.share
                       ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.ios_share),
-                  label: Text(_sharing ? 'Preparing card…' : 'Share'),
+                  label: Text(
+                    _busy == _ShareBusy.share ? 'Preparing card…' : 'Share',
+                  ),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
-                  onPressed: _copy,
-                  icon: const Icon(Icons.copy_outlined),
-                  label: const Text('Copy text'),
+                  onPressed: _busy == null ? _copy : null,
+                  icon: _busy == _ShareBusy.copy
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.copy_outlined),
+                  label: Text(
+                    _busy == _ShareBusy.copy ? 'Copying…' : 'Copy text',
+                  ),
                 ),
+                if (_actions.canDownload) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _busy == null ? _download : null,
+                    icon: _busy == _ShareBusy.download
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_outlined),
+                    label: Text(
+                      _busy == _ShareBusy.download
+                          ? 'Saving image…'
+                          : 'Download image',
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -119,63 +172,166 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
   }
 
   Future<void> _share() async {
-    setState(() => _sharing = true);
+    setState(() {
+      _busy = _ShareBusy.share;
+      _message = null;
+    });
+    Object? imageFailure;
     try {
-      final boundary =
-          _cardKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      final box = context.findRenderObject() as RenderBox?;
-      final origin = box == null
-          ? null
-          : box.localToGlobal(Offset.zero) & box.size;
-
-      if (boundary == null) {
-        await _shareText(origin);
-        return;
+      final origin = _shareOrigin;
+      Uint8List? imageBytes;
+      try {
+        imageBytes = await _capturePng();
+      } catch (error) {
+        imageFailure = error;
       }
 
-      final image = await boundary.toImage(pixelRatio: 3);
-      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (bytes == null) {
-        await _shareText(origin);
-        return;
+      if (imageBytes != null) {
+        try {
+          final result = await _actions.shareImage(
+            title: widget.payload.title,
+            text: widget.payload.shareText,
+            fileName: widget.payload.fileName,
+            imageBytes: imageBytes,
+            sharePositionOrigin: origin,
+          );
+          _reportShareResult(result, textFallback: false);
+          return;
+        } catch (error) {
+          imageFailure = error;
+        }
       }
 
-      await SharePlus.instance.share(
-        ShareParams(
+      try {
+        final result = await _actions.shareText(
           title: widget.payload.title,
-          subject: widget.payload.title,
           text: widget.payload.shareText,
-          files: [
-            XFile.fromData(bytes.buffer.asUint8List(), mimeType: 'image/png'),
-          ],
-          fileNameOverrides: [widget.payload.fileName],
           sharePositionOrigin: origin,
-        ),
-      );
-    } catch (_) {
-      await _shareText(null);
+        );
+        _reportShareResult(result, textFallback: imageFailure != null);
+        return;
+      } catch (_) {
+        _setMessage(
+          title: 'Could not share',
+          message:
+              'Neither the image nor text could be shared. Copy the text or download the image instead.',
+          tone: AppStateTone.error,
+        );
+      }
     } finally {
-      if (mounted) setState(() => _sharing = false);
+      if (mounted) setState(() => _busy = null);
     }
   }
 
-  Future<void> _shareText(Rect? origin) {
-    return SharePlus.instance.share(
-      ShareParams(
-        title: widget.payload.title,
-        subject: widget.payload.title,
-        text: widget.payload.shareText,
-        sharePositionOrigin: origin,
-      ),
-    );
+  Rect? get _shareOrigin {
+    final box = context.findRenderObject() as RenderBox?;
+    return box == null ? null : box.localToGlobal(Offset.zero) & box.size;
   }
 
   Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: widget.payload.shareText));
+    setState(() {
+      _busy = _ShareBusy.copy;
+      _message = null;
+    });
+    try {
+      await _actions.copyText(widget.payload.shareText);
+      _setMessage(
+        title: 'Text copied',
+        message: 'The published result text is on your clipboard.',
+        tone: AppStateTone.success,
+      );
+    } catch (_) {
+      _setMessage(
+        title: 'Could not copy',
+        message: 'Clipboard access was denied. Try Share or Download image.',
+        tone: AppStateTone.error,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  Future<void> _download() async {
+    setState(() {
+      _busy = _ShareBusy.download;
+      _message = null;
+    });
+    try {
+      final bytes = await _capturePng();
+      final destination = await _actions.download(
+        bytes: bytes,
+        fileName: widget.payload.fileName,
+        mimeType: 'image/png',
+      );
+      _setMessage(
+        title: 'Image download started',
+        message: 'The platform accepted $destination.',
+        tone: AppStateTone.success,
+      );
+    } catch (_) {
+      _setMessage(
+        title: 'Could not download',
+        message: 'The image was not saved. Try again or use Copy text.',
+        tone: AppStateTone.error,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  Future<Uint8List> _capturePng() async {
+    if (widget.captureImage != null) return widget.captureImage!();
+    final boundary =
+        _cardKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+    if (boundary == null) {
+      throw StateError('Share card is not ready.');
+    }
+    final image = await boundary.toImage(pixelRatio: 3);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (bytes == null) {
+      throw StateError('Share card image could not be encoded.');
+    }
+    return bytes.buffer.asUint8List();
+  }
+
+  void _reportShareResult(ShareResult result, {required bool textFallback}) {
+    switch (result.status) {
+      case ShareResultStatus.success:
+        _setMessage(
+          title: textFallback ? 'Text shared' : 'Share completed',
+          message: textFallback
+              ? 'The image was unavailable, so HoopsConnect shared the published text instead.'
+              : 'The platform reported that the published result was shared.',
+          tone: AppStateTone.success,
+        );
+      case ShareResultStatus.dismissed:
+        _setMessage(
+          title: 'Share canceled',
+          message: 'Nothing was reported as shared.',
+          tone: AppStateTone.neutral,
+        );
+      case ShareResultStatus.unavailable:
+        _setMessage(
+          title: 'Share outcome unknown',
+          message: textFallback
+              ? 'The image was unavailable and the platform did not confirm whether the text was sent.'
+              : 'The platform did not confirm whether the result was sent. Use Copy or Download if you need a confirmed artifact.',
+          tone: AppStateTone.info,
+        );
+    }
+  }
+
+  void _setMessage({
+    required String title,
+    required String message,
+    required AppStateTone tone,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Share text copied')));
+    setState(() {
+      _messageTitle = title;
+      _message = message;
+      _messageTone = tone;
+    });
   }
 }
 
@@ -318,10 +474,10 @@ class BrandedShareCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 10),
-                        const Column(
+                        Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            const Text(
                               'HOOPSCONNECT',
                               style: TextStyle(
                                 color: Colors.white,
@@ -331,12 +487,20 @@ class BrandedShareCard extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              'Official league result',
-                              style: TextStyle(
+                              payload.sourceLabel,
+                              style: const TextStyle(
                                 color: Colors.white60,
                                 fontSize: 10,
                               ),
                             ),
+                            if (payload.versionLabel != null)
+                              Text(
+                                payload.versionLabel!,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 9,
+                                ),
+                              ),
                           ],
                         ),
                       ],

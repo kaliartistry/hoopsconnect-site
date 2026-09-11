@@ -1,0 +1,120 @@
+# Workstream E integration request: public routes and result release
+
+Status: ready for A/D/I review; no route or production activation change is in
+this branch.
+
+Baseline: Stage 0 integration commit `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
+
+## What E now provides
+
+- A compatibility public snapshot fingerprint shared by the league screen,
+  public game/team/player detail models, media result view, share payload, and
+  CSV exports.
+- Explicit published, unavailable, and retracted states. Retracted documents
+  discard stale rows in the client model and the public snapshot builder.
+- Public-only result detail screens. They receive a `PublicLeagueSnapshot` and
+  cannot import private game, user, post, acknowledgment, or roster readers.
+- Result artifacts require one versioned published snapshot and one matching
+  result version. The compatibility fingerprint is not an official-stat v2
+  certificate or release ID.
+- The media dashboard uses that same public snapshot for result discovery,
+  today's schedule, leaders, recap/detail, and capability-gated game/season CSV.
+  It has no private result, schedule, or leader fallback.
+- Player rows cross the compatibility projector only through the explicitly
+  pre-whitelisted `publicPlayerLines[].publicDisplayName` and
+  `rankings[].publicDisplayName` fields. Legacy name/player maps are not a
+  fallback.
+- The client keeps legacy v1 games and standings readable but suppresses legacy
+  player/leader identity rows. Those rows return only with the v1.1 allowlist
+  and an explicit privacy epoch, so integration should expect Leaders to remain
+  unavailable until that policy-bound snapshot exists.
+
+## Request to A: publish the public route namespace
+
+Please publish route names and path builders for these destinations before E
+edits `lib/app/`:
+
+1. public league landing;
+2. public game detail by stable game ID;
+3. public team detail by stable team ID;
+4. public player detail by stable player ID.
+
+The routes must be classified as unauthenticated public routes before the global
+auth redirect, preserve browser Back/refresh and permitted requested deep links,
+and expose a canonical URI builder to the share layer. Unknown IDs must remain a
+public 404/unavailable state and must never redirect to a similarly named private
+detail route. Query parameters for division/season filters may be added after
+their canonical encoding is agreed.
+
+Until that contract lands, `PublicLeagueScreen` uses local `Navigator` pushes so
+the detail UI can be tested without claiming shareable public URLs. Share text
+therefore omits a URL unless a canonical URI is explicitly supplied.
+
+## Request to D: publish the accepted result interface
+
+E needs the following immutable, read-only fields from the accepted D release:
+
+- release ID, projection version, publication epoch, privacy epoch, state, and
+  generated/published time;
+- stable game ID, result revision/hash, schedule revision, status, team IDs and
+  display names, score, period scores, and public recap;
+- nullable, provenance-preserving player fields for minutes, 2PM/2PA, 3PM/3PA,
+  FTM/FTA, offensive/defensive rebounds, assists, steals, blocks, turnovers,
+  fouls, and points;
+- division/season scope, published standings order/rank state and policy label,
+  leaderboard qualification label, team IDs, player IDs, and field-level public
+  identity decisions.
+
+When D activates the official-stat v2 publication contract, E's Firestore
+compatibility repository must be replaced by the bounded HTTP projection client
+specified in `docs/planning/official-stat-contract.md`. HTTP `409`, `410`, and
+`404` must map to stale, retracted, and unavailable/private UI states without a
+private-model fallback. Do not reinterpret E's compatibility snapshot hash as a
+v2 `releaseId` or legacy `approved` as certification.
+
+There is also a deliberate compatibility gate in the current branch:
+`firestore.rules` only permits public snapshot reads when
+`certificationStatus == 'certified'` and `published == true`. E's revised
+projector emits `legacyApproved`, and a retracted snapshot emits
+`published == false`. Therefore the revised projector must not be deployed by
+itself: clients would receive a denied/unavailable read, and they could not
+distinguish a retraction. D/I must either keep the existing projector dormant
+until the v2 HTTP `404`/`409`/`410` transport lands, or review and atomically
+publish an explicit compatibility rule/status contract. Do not restore the
+`certified` label merely to satisfy the old rule, and do not loosen the public
+rule to any private source collection.
+
+## Request to I: integration and cutover
+
+- Merge E after A's route patch and D's adapter decision, resolving only the
+  published interfaces above.
+- Keep the app and `public_functions` compatibility update in one candidate so
+  artifact creation is not enabled against an unversioned live snapshot.
+- Add the accepted public projection path to the I-owned shared
+  `FirestorePaths` constants and switch E's read-only repository to that helper
+  during integration. This branch keeps the exact legacy path local rather than
+  editing a shared root concurrently.
+- Run public Functions tests, Flutter model/widget/export/share tests, the frozen
+  security/account-deletion suite, optimized web build, and unauthenticated
+  browser URL refresh/Back checks.
+- Do not deploy `onPublicAssociationWritten`, rebuild a live snapshot, migrate
+  data, or activate v2 as part of merging this branch. Those remain separate
+  provider-readback and release gates.
+- Update the isolated QA seed through I so synthetic player/leader rows use the
+  explicit `publicDisplayName`/`publicPlayerLines` allowlist. E intentionally
+  removed the legacy `name` and `playerLines` privacy fallbacks, so the current
+  Stage 1 seed's public-snapshot wait condition will otherwise fail.
+- Seed an explicit `publicLeagueState: published` and a nonnegative
+  `publicPrivacyEpoch` only in the isolated QA project. Missing or unrecognized
+  publication state now fails closed as unavailable, and missing privacy epoch
+  suppresses every player-identity row.
+
+## Remaining acceptance dependencies
+
+- A route namespace and canonical URLs.
+- D's actual accepted revision/publication transport and complete stat fields.
+- I's atomic public-rule/transport choice and explicit-public-field QA fixture.
+- The approved standings/qualification policy.
+- The player/guardian field-level publication policy and privacy-epoch source.
+- Platform browser/device checks for share permission denial, image/text
+  fallback, download behavior, refresh, Back, and stale/retracted responses.

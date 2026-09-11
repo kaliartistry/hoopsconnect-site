@@ -4,9 +4,10 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
+import '../../models/association_branding_model.dart';
 import '../../models/standings_model.dart';
-import '../../providers/association_branding_providers.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/standings_providers.dart';
 
@@ -39,6 +40,7 @@ class _StandingsScreenState extends ConsumerState<StandingsScreen>
         actions: [
           _StandingsShareButton(
             standings: standingsAsync?.valueOrNull?.standings ?? const [],
+            divisionId: selectedDivisionId,
             divisionName: selectedDivision?.name,
           ),
         ],
@@ -95,29 +97,54 @@ class _StandingsScreenState extends ConsumerState<StandingsScreen>
 
 class _StandingsShareButton extends ConsumerWidget {
   final List<TeamStanding> standings;
+  final String? divisionId;
   final String? divisionName;
 
   const _StandingsShareButton({
     required this.standings,
+    required this.divisionId,
     required this.divisionName,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (standings.isEmpty) return const SizedBox.shrink();
-    final branding = ref.watch(effectiveAssociationBrandingProvider);
+    final snapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
+    final publicRows =
+        snapshot?.standings
+            .where((row) => row.divisionId == divisionId)
+            .toList(growable: false) ??
+        const [];
+    final canShare =
+        snapshot != null &&
+        snapshot.canCreatePublishedArtifacts &&
+        publicRows.isNotEmpty;
     return IconButton(
       icon: const Icon(Icons.share_outlined),
-      tooltip: 'Share standings',
-      onPressed: () => showBrandedShareSheet(
-        context: context,
-        branding: branding,
-        payload: BrandedSharePayload.standings(
-          standings: standings,
-          branding: branding,
-          divisionName: divisionName,
-        ),
-      ),
+      tooltip: canShare
+          ? 'Share published standings'
+          : 'Published standings are not available to share',
+      onPressed: !canShare
+          ? null
+          : () {
+              final branding =
+                  AssociationBrandingModel.jba(
+                    associationId: snapshot.associationId,
+                  ).copyWith(
+                    leagueName: snapshot.leagueName,
+                    shortName: snapshot.leagueShortName,
+                  );
+              showBrandedShareSheet(
+                context: context,
+                branding: branding,
+                payload: BrandedSharePayload.publicStandings(
+                  snapshot: snapshot,
+                  standings: publicRows,
+                  branding: branding,
+                  divisionName: divisionName,
+                ),
+              );
+            },
     );
   }
 }

@@ -4,9 +4,10 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
+import '../../models/association_branding_model.dart';
 import '../../models/leaderboard_model.dart';
-import '../../providers/association_branding_providers.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../core/widgets/skeleton_loader.dart';
@@ -63,7 +64,7 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Season Leaderboard'),
-        actions: [_buildShareAction(context, category, leaderboardAsync)],
+        actions: [_buildShareAction(context, category, selectedDivisionId)],
         bottom: TabBar(
           controller: _tabController,
           labelColor: Colors.white,
@@ -117,25 +118,46 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
   Widget _buildShareAction(
     BuildContext context,
     String category,
-    AsyncValue<LeaderboardModel?>? leaderboardAsync,
+    String? divisionId,
   ) {
+    final snapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
+    final publicBoard = snapshot?.leaderboards
+        .where(
+          (board) =>
+              board.category == category && board.divisionId == divisionId,
+        )
+        .firstOrNull;
+    final canShare =
+        snapshot != null &&
+        snapshot.canCreatePublishedArtifacts &&
+        snapshot.version.privacyEpoch != null &&
+        publicBoard != null &&
+        publicBoard.rankings.isNotEmpty;
     return IconButton(
       icon: const Icon(Icons.share_outlined),
-      tooltip: 'Share leaderboard',
-      onPressed: () {
-        final leaderboard = leaderboardAsync?.valueOrNull;
-        if (leaderboard == null || leaderboard.rankings.isEmpty) return;
-        final branding = ref.read(effectiveAssociationBrandingProvider);
-        showBrandedShareSheet(
-          context: context,
-          branding: branding,
-          payload: BrandedSharePayload.leaderboard(
-            rankings: leaderboard.rankings,
-            category: category,
-            branding: branding,
-          ),
-        );
-      },
+      tooltip: canShare
+          ? 'Share published leaderboard'
+          : 'Published leaderboard is not available to share',
+      onPressed: !canShare
+          ? null
+          : () {
+              final branding =
+                  AssociationBrandingModel.jba(
+                    associationId: snapshot.associationId,
+                  ).copyWith(
+                    leagueName: snapshot.leagueName,
+                    shortName: snapshot.leagueShortName,
+                  );
+              showBrandedShareSheet(
+                context: context,
+                branding: branding,
+                payload: BrandedSharePayload.publicLeaderboard(
+                  snapshot: snapshot,
+                  leaderboard: publicBoard,
+                  branding: branding,
+                ),
+              );
+            },
     );
   }
 
