@@ -1,79 +1,147 @@
 import '../../models/game_stats_model.dart';
+import '../../models/official_stats/canonical_encoding.dart';
 
-/// Pre-submission validation for game stats — wireframe §02-A2.
+enum StatsRulesDecisionState { unresolved, referenceOnly, adopted }
+
+/// Named, versioned rule constraints supplied by league policy.
 ///
-/// Returns a list of human-readable error messages. Empty list means valid.
-/// All callers must block submission when the list is non-empty.
+/// A null limit means the selected profile does not establish that rule. The
+/// validator never substitutes 48 minutes, five fouls, 240 team-minutes, or a
+/// universal box-score cap.
+class StatsValidationRulesProfile {
+  StatsValidationRulesProfile({
+    required this.profileId,
+    required this.rulesetVersion,
+    required this.decisionState,
+    this.playerMinutesLimit,
+    this.teamMinutesLimit,
+    this.disqualifyingFoulCount,
+    Map<String, int> playerStatReviewLimits = const {},
+  }) : playerStatReviewLimits = Map.unmodifiable(playerStatReviewLimits) {
+    OfficialStatIdentifiers.requireValid('profileId', profileId);
+    OfficialStatIdentifiers.requireValid('rulesetVersion', rulesetVersion);
+    for (final limit in [
+      playerMinutesLimit,
+      teamMinutesLimit,
+      disqualifyingFoulCount,
+      ...this.playerStatReviewLimits.values,
+    ]) {
+      if (limit != null && limit <= 0) {
+        throw ArgumentError('Rules-profile limits must be positive integers');
+      }
+    }
+    const supportedReviewLimits = {'PTS', 'REB', 'AST', 'STL', 'BLK'};
+    if (!supportedReviewLimits.containsAll(this.playerStatReviewLimits.keys)) {
+      throw ArgumentError('Unsupported player stat review limit');
+    }
+  }
+
+  /// Current explicit state until JBA/NBL records the adopted rules and local
+  /// exceptions. It deliberately supplies no playing-rule limits.
+  static final pendingJbaAdoption = StatsValidationRulesProfile(
+    profileId: 'jba_rules_decision_pending_v1',
+    rulesetVersion: 'jba_rules_decision_pending_v1',
+    decisionState: StatsRulesDecisionState.unresolved,
+  );
+
+  final String profileId;
+  final String rulesetVersion;
+  final StatsRulesDecisionState decisionState;
+  final int? playerMinutesLimit;
+  final int? teamMinutesLimit;
+  final int? disqualifyingFoulCount;
+
+  /// Optional profile-specific review bounds keyed by the legacy wire labels
+  /// PTS, REB, AST, STL, or BLK. They are not universal basketball rules.
+  final Map<String, int> playerStatReviewLimits;
+}
+
+/// Pre-submission validation for legacy game stats.
+///
+/// V2 normalization and certification use the separate exact calculator and
+/// revision contracts. This compatibility validator now requires an explicit
+/// named rules profile and applies only the limits that profile establishes.
 class StatsValidator {
   StatsValidator._();
 
-  /// Hard caps that catch fat-finger mistakes without blocking edge cases.
-  static const _maxMin = 48;
-  static const _maxPts = 100;
-  static const _maxFls = 5;
-  static const _maxReb = 50;
-  static const _maxAst = 50;
-  static const _maxStl = 20;
-  static const _maxBlk = 20;
-  static const _maxTeamMin = 240; // 5 players × 48 minutes
-
-  static List<String> validate(GameStatsModel stats) {
+  static List<String> validate(
+    GameStatsModel stats, {
+    required StatsValidationRulesProfile rulesProfile,
+  }) {
     final errors = <String>[];
-    int homeMin = 0;
-    int awayMin = 0;
+    var homeMinutes = 0;
+    var awayMinutes = 0;
 
     for (final line in stats.playerLines.values) {
-      // Negatives — guards against bad data shape, not user input directly.
-      final negStat = _firstNegative(line);
-      if (negStat != null) {
-        errors.add('${line.name}: $negStat cannot be negative.');
+      final negativeStat = _firstNegative(line);
+      if (negativeStat != null) {
+        errors.add('${line.name}: $negativeStat cannot be negative.');
       }
 
-      if (line.min > _maxMin) {
-        errors.add('${line.name}: MIN must be 0–$_maxMin.');
-      }
-      if (line.pts > _maxPts) {
-        errors.add('${line.name}: PTS must be 0–$_maxPts.');
-      }
-      if (line.fls > _maxFls) {
-        errors.add(
-          '${line.name}: FLS must be 0–$_maxFls — player would have fouled out.',
+      _checkOptionalLimit(
+        errors,
+        playerName: line.name,
+        label: 'MIN',
+        value: line.min,
+        limit: rulesProfile.playerMinutesLimit,
+      );
+      _checkOptionalLimit(
+        errors,
+        playerName: line.name,
+        label: 'FLS',
+        value: line.fls,
+        limit: rulesProfile.disqualifyingFoulCount,
+      );
+      for (final entry in <String, int>{
+        'PTS': line.pts,
+        'REB': line.reb,
+        'AST': line.ast,
+        'STL': line.stl,
+        'BLK': line.blk,
+      }.entries) {
+        _checkOptionalLimit(
+          errors,
+          playerName: line.name,
+          label: entry.key,
+          value: entry.value,
+          limit: rulesProfile.playerStatReviewLimits[entry.key],
         );
-      }
-      if (line.reb > _maxReb) {
-        errors.add('${line.name}: REB must be 0–$_maxReb.');
-      }
-      if (line.ast > _maxAst) {
-        errors.add('${line.name}: AST must be 0–$_maxAst.');
-      }
-      if (line.stl > _maxStl) {
-        errors.add('${line.name}: STL must be 0–$_maxStl.');
-      }
-      if (line.blk > _maxBlk) {
-        errors.add('${line.name}: BLK must be 0–$_maxBlk.');
       }
 
       if (line.teamId == stats.homeTeamId) {
-        homeMin += line.min;
+        homeMinutes += line.min;
       } else if (line.teamId == stats.awayTeamId) {
-        awayMin += line.min;
+        awayMinutes += line.min;
       }
     }
 
-    if (homeMin > _maxTeamMin) {
+    final teamLimit = rulesProfile.teamMinutesLimit;
+    if (teamLimit != null && homeMinutes > teamLimit) {
       errors.add(
-        '${stats.homeTeamName} total MIN ($homeMin) exceeds $_maxTeamMin '
-        '(5 players × 48 minutes).',
+        '${stats.homeTeamName} total MIN ($homeMinutes) exceeds $teamLimit '
+        'under ${rulesProfile.profileId}.',
       );
     }
-    if (awayMin > _maxTeamMin) {
+    if (teamLimit != null && awayMinutes > teamLimit) {
       errors.add(
-        '${stats.awayTeamName} total MIN ($awayMin) exceeds $_maxTeamMin '
-        '(5 players × 48 minutes).',
+        '${stats.awayTeamName} total MIN ($awayMinutes) exceeds $teamLimit '
+        'under ${rulesProfile.profileId}.',
       );
     }
 
     return errors;
+  }
+
+  static void _checkOptionalLimit(
+    List<String> errors, {
+    required String playerName,
+    required String label,
+    required int value,
+    required int? limit,
+  }) {
+    if (limit != null && value > limit) {
+      errors.add('$playerName: $label exceeds $limit in the selected profile.');
+    }
   }
 
   static String? _firstNegative(PlayerStatLine line) {

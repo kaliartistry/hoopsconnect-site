@@ -672,7 +672,10 @@ class _LiveStatsScreenState extends ConsumerState<LiveStatsScreen> {
       final userId = ref.read(authStateProvider).value?.uid;
 
       // 1. Validate before submit — wireframe §02-A2.
-      final errors = StatsValidator.validate(model);
+      final errors = StatsValidator.validate(
+        model,
+        rulesProfile: StatsValidationRulesProfile.pendingJbaAdoption,
+      );
       if (errors.isNotEmpty) {
         if (mounted) {
           setState(() => _syncStatus = _SyncStatus.idle);
