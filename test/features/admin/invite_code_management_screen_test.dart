@@ -17,7 +17,7 @@ import 'package:hoops_connect/providers/team_providers.dart';
 import 'package:hoops_connect/services/repositories/invite_code_repository.dart';
 
 void main() {
-  testWidgets('uses an association-scoped team picker instead of a raw ID', (
+  testWidgets('scoped picker filters mixed lifecycle documents independently', (
     tester,
   ) async {
     final store = _MemoryAttemptStore();
@@ -40,6 +40,10 @@ void main() {
     expect(find.textContaining('Future Flyers'), findsNothing);
     expect(find.textContaining('Inactive Current Team'), findsNothing);
     expect(find.textContaining('Legacy Disabled Team'), findsNothing);
+    expect(find.textContaining('Explicit Null Status Team'), findsNothing);
+    expect(find.textContaining('Unknown Status Team'), findsNothing);
+    expect(find.textContaining('Numeric Status Team'), findsNothing);
+    expect(find.text('Malformed Active Team • Premier'), findsOneWidget);
     await tester.tap(find.text('Blue Mountains • Premier').last);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('generate-invite-submit')));
@@ -554,6 +558,42 @@ List<TeamModel> _testTeams({bool blueActive = true}) => [
     divisionId: 'division-1',
     seasonId: 'season-1',
     active: false,
+  ),
+  TeamModel.fromMap(
+    id: 'team-null-status',
+    data: const {
+      'name': 'Explicit Null Status Team',
+      'divisionId': 'division-1',
+      'seasonId': 'season-1',
+      'status': null,
+    },
+  ),
+  TeamModel.fromMap(
+    id: 'team-unknown-status',
+    data: const {
+      'name': 'Unknown Status Team',
+      'divisionId': 'division-1',
+      'seasonId': 'season-1',
+      'status': 'enabled',
+    },
+  ),
+  TeamModel.fromMap(
+    id: 'team-numeric-status',
+    data: const {
+      'name': 'Numeric Status Team',
+      'divisionId': 'division-1',
+      'seasonId': 'season-1',
+      'status': 1,
+    },
+  ),
+  TeamModel.fromMap(
+    id: 'team-malformed-active',
+    data: const {
+      'name': 'Malformed Active Team',
+      'divisionId': 'division-1',
+      'seasonId': 'season-1',
+      'active': 'false',
+    },
   ),
   TeamModel(
     id: 'team-archived',

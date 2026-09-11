@@ -87,29 +87,62 @@ void main() {
     expect(parse({'active': false}).toFirestore()['active'], isFalse);
   });
 
-  test('unknown or mistyped explicit team lifecycle fails closed', () {
-    Map<String, dynamic> data(Object? status, Object? active) {
-      final value = <String, dynamic>{
+  test('lifecycle round trip preserves field presence and raw values', () {
+    TeamModel parse(Map<String, dynamic> lifecycle) => TeamModel.fromMap(
+      id: 'team-1',
+      data: {
         'name': 'Kingston Lions',
         'divisionId': 'premier',
         'seasonId': '2026',
-      };
-      if (status != null) value['status'] = status;
-      if (active != null) value['active'] = active;
-      return value;
-    }
+        ...lifecycle,
+      },
+    );
 
-    expect(
-      () => TeamModel.fromMap(id: 'team-1', data: data('enabled', null)),
-      throwsFormatException,
+    final absent = parse({});
+    expect(absent.hasStatus, isFalse);
+    expect(absent.hasLegacyActive, isFalse);
+    expect(absent.toFirestore().containsKey('status'), isFalse);
+    expect(absent.toFirestore().containsKey('active'), isFalse);
+
+    final explicitNulls = parse({'status': null, 'active': null});
+    expect(explicitNulls.hasStatus, isTrue);
+    expect(explicitNulls.hasLegacyActive, isTrue);
+    expect(explicitNulls.toFirestore().containsKey('status'), isTrue);
+    expect(explicitNulls.toFirestore()['status'], isNull);
+    expect(explicitNulls.toFirestore().containsKey('active'), isTrue);
+    expect(explicitNulls.toFirestore()['active'], isNull);
+
+    final malformed = parse({'status': 7, 'active': 'false'});
+    expect(malformed.toFirestore()['status'], 7);
+    expect(malformed.toFirestore()['active'], 'false');
+    final copied = malformed.copyWith(name: 'Renamed');
+    expect(copied.hasStatus, isTrue);
+    expect(copied.status, 7);
+    expect(copied.hasLegacyActive, isTrue);
+    expect(copied.active, 'false');
+  });
+
+  test('explicit status and legacy active use exact server predicates', () {
+    TeamModel parse(Map<String, dynamic> lifecycle) => TeamModel.fromMap(
+      id: 'team-1',
+      data: {
+        'name': 'Kingston Lions',
+        'divisionId': 'premier',
+        'seasonId': '2026',
+        ...lifecycle,
+      },
     );
+
+    expect(parse({'status': null}).acceptsNewReferences, isFalse);
+    expect(parse({'status': 'unknown'}).acceptsNewReferences, isFalse);
+    expect(parse({'status': 1}).acceptsNewReferences, isFalse);
+    expect(parse({'active': null}).acceptsNewReferences, isTrue);
+    expect(parse({'active': 'false'}).acceptsNewReferences, isTrue);
+    expect(parse({'active': 0}).acceptsNewReferences, isTrue);
+    expect(parse({'active': false}).acceptsNewReferences, isFalse);
     expect(
-      () => TeamModel.fromMap(id: 'team-1', data: data(1, null)),
-      throwsFormatException,
-    );
-    expect(
-      () => TeamModel.fromMap(id: 'team-1', data: data(null, 'false')),
-      throwsFormatException,
+      parse({'status': null, 'active': true}).acceptsNewReferences,
+      isFalse,
     );
   });
 
