@@ -55,6 +55,62 @@ void main() {
     expect(team.id, 'stable-team-id');
     expect(team.normalizedName, 'montego bay storm');
     expect(team.toFirestore()['normalizedName'], 'montego bay storm');
+    expect(team.acceptsNewReferences, isTrue);
+    expect(team.toFirestore().containsKey('status'), isFalse);
+    expect(team.toFirestore().containsKey('active'), isFalse);
+  });
+
+  test('team lifecycle matches the legacy-compatible server contract', () {
+    TeamModel parse(Map<String, dynamic> lifecycle) => TeamModel.fromMap(
+      id: 'team-1',
+      data: {
+        'name': 'Kingston Lions',
+        'divisionId': 'premier',
+        'seasonId': '2026',
+        ...lifecycle,
+      },
+    );
+
+    expect(parse({'status': 'active'}).acceptsNewReferences, isTrue);
+    expect(
+      parse({'status': 'active', 'active': true}).acceptsNewReferences,
+      isTrue,
+    );
+    expect(parse({'status': 'inactive'}).acceptsNewReferences, isFalse);
+    expect(parse({'status': 'archived'}).acceptsNewReferences, isFalse);
+    expect(parse({'active': false}).acceptsNewReferences, isFalse);
+    expect(
+      parse({'status': 'archived', 'active': true}).acceptsNewReferences,
+      isFalse,
+    );
+    expect(parse({'status': 'active'}).toFirestore()['status'], 'active');
+    expect(parse({'active': false}).toFirestore()['active'], isFalse);
+  });
+
+  test('unknown or mistyped explicit team lifecycle fails closed', () {
+    Map<String, dynamic> data(Object? status, Object? active) {
+      final value = <String, dynamic>{
+        'name': 'Kingston Lions',
+        'divisionId': 'premier',
+        'seasonId': '2026',
+      };
+      if (status != null) value['status'] = status;
+      if (active != null) value['active'] = active;
+      return value;
+    }
+
+    expect(
+      () => TeamModel.fromMap(id: 'team-1', data: data('enabled', null)),
+      throwsFormatException,
+    );
+    expect(
+      () => TeamModel.fromMap(id: 'team-1', data: data(1, null)),
+      throwsFormatException,
+    );
+    expect(
+      () => TeamModel.fromMap(id: 'team-1', data: data(null, 'false')),
+      throwsFormatException,
+    );
   });
 
   test('schedule eligibility requires the exact season and division', () {

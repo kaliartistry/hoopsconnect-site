@@ -38,6 +38,8 @@ void main() {
     expect(find.textContaining('Archived Bears'), findsNothing);
     expect(find.textContaining('Archived Division Bears'), findsNothing);
     expect(find.textContaining('Future Flyers'), findsNothing);
+    expect(find.textContaining('Inactive Current Team'), findsNothing);
+    expect(find.textContaining('Legacy Disabled Team'), findsNothing);
     await tester.tap(find.text('Blue Mountains • Premier').last);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('generate-invite-submit')));
@@ -278,6 +280,79 @@ void main() {
     expect(find.text('Close'), findsOneWidget);
   });
 
+  testWidgets(
+    'restored unavailable team is blocked and can be cleared without replay',
+    (tester) async {
+      final store = _MemoryAttemptStore()
+        ..attempt = const InviteCreationAttempt(
+          role: 'rep',
+          teamId: 'team-inactive-status',
+          daysValid: 7,
+          operationId: 'fixed_create_operation_0001',
+        );
+      final repository = _FakeInviteCodeRepository();
+      await _pumpScreen(tester, repository: repository, attemptStore: store);
+
+      await tester.tap(find.text('Generate invite'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('cannot be replayed or shown'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('generate-invite-submit')), findsNothing);
+      expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+      expect(repository.createCalls, isEmpty);
+      await tester.tap(find.text('Discard unavailable request'));
+      await tester.pumpAndSettle();
+
+      expect(store.attempt, isNull);
+      expect(repository.createCalls, isEmpty);
+      expect(find.textContaining('cleared without replaying'), findsOneWidget);
+      expect(
+        find.textContaining('review the refreshed invite list'),
+        findsOneWidget,
+      );
+      expect(find.text('Close'), findsOneWidget);
+      expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'team becoming inactive before presentation suppresses the secret',
+    (tester) async {
+      final teamStream = StreamController<List<TeamModel>>();
+      addTearDown(teamStream.close);
+      teamStream.add(_testTeams());
+      final pendingVerification = Completer<IssuedInviteUsability>();
+      final repository = _FakeInviteCodeRepository(
+        pendingVerify: pendingVerification,
+      );
+      await _pumpScreen(
+        tester,
+        repository: repository,
+        teamStream: teamStream.stream,
+      );
+      await _openAndSelectBlueTeam(tester);
+      await tester.tap(find.byKey(const Key('generate-invite-submit')));
+      await tester.pump();
+      await tester.pump();
+
+      teamStream.add(_testTeams(blueActive: false));
+      await tester.pump();
+      pendingVerification.complete(IssuedInviteUsability.usable);
+      await tester.pumpAndSettle();
+
+      expect(repository.createCalls, hasLength(1));
+      expect(find.byKey(const Key('issued-invite-secret')), findsNothing);
+      expect(find.text(_issuedInvite.code), findsNothing);
+      expect(
+        find.textContaining('team that is no longer active'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('blocks duplicate submits while creation is in flight', (
     tester,
   ) async {
@@ -395,6 +470,7 @@ Future<void> _pumpScreen(
   required _FakeInviteCodeRepository repository,
   InviteSecretCopier? copySecret,
   InviteCreationAttemptStore? attemptStore,
+  Stream<List<TeamModel>>? teamStream,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(390, 844);
@@ -417,38 +493,7 @@ Future<void> _pumpScreen(
         currentAssociationIdProvider.overrideWithValue('jba'),
         inviteCodeRepositoryProvider.overrideWithValue(repository),
         teamsStreamProvider.overrideWith(
-          (ref) => Stream.value([
-            TeamModel(
-              id: 'team-blue',
-              name: 'Blue Mountains',
-              divisionId: 'division-1',
-              seasonId: 'season-1',
-            ),
-            TeamModel(
-              id: 'team-kingston',
-              name: 'Kingston Lions',
-              divisionId: 'division-1',
-              seasonId: 'season-1',
-            ),
-            TeamModel(
-              id: 'team-archived',
-              name: 'Archived Bears',
-              divisionId: 'division-old',
-              seasonId: 'season-0',
-            ),
-            TeamModel(
-              id: 'team-archived-division',
-              name: 'Archived Division Bears',
-              divisionId: 'division-archived',
-              seasonId: 'season-1',
-            ),
-            TeamModel(
-              id: 'team-future',
-              name: 'Future Flyers',
-              divisionId: 'division-future',
-              seasonId: 'season-2',
-            ),
-          ]),
+          (ref) => teamStream ?? Stream.value(_testTeams()),
         ),
         divisionsStreamProvider.overrideWith(
           (ref) => Stream.value(const [
@@ -481,6 +526,54 @@ Future<void> _pumpScreen(
   );
   await tester.pumpAndSettle();
 }
+
+List<TeamModel> _testTeams({bool blueActive = true}) => [
+  TeamModel(
+    id: 'team-blue',
+    name: 'Blue Mountains',
+    divisionId: 'division-1',
+    seasonId: 'season-1',
+    active: blueActive,
+  ),
+  TeamModel(
+    id: 'team-kingston',
+    name: 'Kingston Lions',
+    divisionId: 'division-1',
+    seasonId: 'season-1',
+  ),
+  TeamModel(
+    id: 'team-inactive-status',
+    name: 'Inactive Current Team',
+    divisionId: 'division-1',
+    seasonId: 'season-1',
+    status: 'inactive',
+  ),
+  TeamModel(
+    id: 'team-inactive-legacy',
+    name: 'Legacy Disabled Team',
+    divisionId: 'division-1',
+    seasonId: 'season-1',
+    active: false,
+  ),
+  TeamModel(
+    id: 'team-archived',
+    name: 'Archived Bears',
+    divisionId: 'division-old',
+    seasonId: 'season-0',
+  ),
+  TeamModel(
+    id: 'team-archived-division',
+    name: 'Archived Division Bears',
+    divisionId: 'division-archived',
+    seasonId: 'season-1',
+  ),
+  TeamModel(
+    id: 'team-future',
+    name: 'Future Flyers',
+    divisionId: 'division-future',
+    seasonId: 'season-2',
+  ),
+];
 
 Future<void> _openAndSelectBlueTeam(WidgetTester tester) async {
   await tester.tap(find.text('Generate invite'));

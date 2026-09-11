@@ -20,6 +20,27 @@ import '../../services/repositories/invite_code_repository.dart';
 typedef InviteSecretCopier = Future<void> Function(String secret);
 typedef InviteOperationIdFactory = String Function();
 
+List<TeamModel> _eligibleInviteTeams({
+  required Iterable<TeamModel> teams,
+  required Iterable<DivisionModel> divisions,
+  required String activeSeasonId,
+}) {
+  final activeDivisionIds = {
+    for (final division in divisions)
+      if (!division.isArchived &&
+          (division.seasonId == null || division.seasonId == activeSeasonId))
+        division.id,
+  };
+  return teams
+      .where(
+        (team) =>
+            team.seasonId == activeSeasonId &&
+            team.acceptsNewReferences &&
+            activeDivisionIds.contains(team.divisionId),
+      )
+      .toList(growable: false);
+}
+
 Future<void> _copyInviteSecret(String secret) {
   return Clipboard.setData(ClipboardData(text: secret));
 }
@@ -257,12 +278,31 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
   bool _copied = false;
   bool _restoring = true;
   bool _verifying = false;
+  bool _discarding = false;
   String? _error;
   String? _copyError;
   String? _verificationError;
   String? _nonSendableOutcome;
 
   bool get _requestLocked => _attempt != null;
+
+  Set<String>? _eligibleTeamIdsNow() {
+    final teamsAsync = ref.read(teamsStreamProvider);
+    final divisionsAsync = ref.read(divisionsStreamProvider);
+    final activeSeasonAsync = ref.read(activeSeasonIdProvider);
+    final activeSeasonId = activeSeasonAsync.valueOrNull;
+    if (!teamsAsync.hasValue ||
+        !divisionsAsync.hasValue ||
+        !activeSeasonAsync.hasValue ||
+        activeSeasonId == null) {
+      return null;
+    }
+    return _eligibleInviteTeams(
+      teams: teamsAsync.value!,
+      divisions: divisionsAsync.value!,
+      activeSeasonId: activeSeasonId,
+    ).map((team) => team.id).toSet();
+  }
 
   @override
   void initState() {
@@ -301,6 +341,24 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
 
   Future<void> _submit() async {
     if (_submitting || _issued != null) return;
+    final eligibleTeamIds = _eligibleTeamIdsNow();
+    if (eligibleTeamIds == null) {
+      setState(() {
+        _error =
+            'The active team list could not be confirmed. Refresh it before creating or recovering an invite.';
+      });
+      return;
+    }
+    if (_teamId != null && !eligibleTeamIds.contains(_teamId)) {
+      final recovering = _attempt != null;
+      setState(() {
+        if (!recovering) _teamId = null;
+        _error = recovering
+            ? 'This unfinished request targets a team that is no longer eligible. It cannot be replayed or shown. Discard it to start a new request.'
+            : 'That team is no longer active in the current season. Choose an eligible team.';
+      });
+      return;
+    }
     if (_role == 'rep' && _teamId == null) {
       setState(() => _error = 'Choose the team this representative manages.');
       return;
@@ -429,6 +487,25 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
         });
         return;
       }
+      final eligibleTeamIds = _eligibleTeamIdsNow();
+      if (pending.invite.teamId != null && eligibleTeamIds == null) {
+        setState(() {
+          _verifying = false;
+          _verificationError =
+              'The invite is active, but its team eligibility could not be confirmed. Refresh the team data and check again before sending it.';
+        });
+        return;
+      }
+      if (pending.invite.teamId != null &&
+          !eligibleTeamIds!.contains(pending.invite.teamId)) {
+        setState(() {
+          _pendingVerification = null;
+          _verifying = false;
+          _nonSendableOutcome =
+              'This invite targets a team that is no longer active in the current season. No sendable code will be shown.';
+        });
+        return;
+      }
       setState(() {
         _pendingVerification = null;
         _issued = pending;
@@ -452,6 +529,36 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
       await _clearRecoveryAndVerify(pending);
     } else {
       await _verifyPendingInvite();
+    }
+  }
+
+  Future<void> _discardUnavailableAttempt() async {
+    if (_attempt == null || _discarding) return;
+    setState(() {
+      _discarding = true;
+      _error = null;
+    });
+    try {
+      await widget.attemptStore.clear(
+        actorId: widget.actorId,
+        associationId: widget.associationId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _attempt = null;
+        _teamId = null;
+        _ambiguous = false;
+        _discarding = false;
+        _nonSendableOutcome =
+            'The unavailable-team recovery request was cleared without replaying it or showing a code. If the server had already created that invite, review the refreshed invite list and revoke it before starting a new request.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _discarding = false;
+        _error =
+            'The unavailable request could not be cleared safely. Keep this window open and try again.';
+      });
     }
   }
 
@@ -496,25 +603,36 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
           in divisionsAsync.valueOrNull ?? const <DivisionModel>[])
         if (activeDivisionIds.contains(division.id)) division.id: division.name,
     };
-    final teams = [
-      ...?teamsAsync.valueOrNull?.where(
-        (team) =>
-            team.seasonId == activeSeasonId &&
-            activeDivisionIds.contains(team.divisionId),
-      ),
-    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final selectedTeamUnavailable =
-        _teamId != null && teams.every((team) => team.id != _teamId);
-    final teamsReady =
+    final teams =
+        activeSeasonId == null
+              ? <TeamModel>[]
+              : _eligibleInviteTeams(
+                  teams: teamsAsync.valueOrNull ?? const <TeamModel>[],
+                  divisions:
+                      divisionsAsync.valueOrNull ?? const <DivisionModel>[],
+                  activeSeasonId: activeSeasonId,
+                )
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+    final eligibilityResolved =
         teamsAsync.hasValue &&
         divisionsAsync.hasValue &&
-        activeSeasonAsync.hasValue &&
-        activeSeasonId != null;
+        activeSeasonAsync.hasValue;
+    final teamsReady = eligibilityResolved && activeSeasonId != null;
+    final selectedTeamUnavailable =
+        eligibilityResolved &&
+        _teamId != null &&
+        (activeSeasonId == null || teams.every((team) => team.id != _teamId));
+    final createError = _attempt != null && selectedTeamUnavailable
+        ? 'This unfinished request targets a team that is no longer active in the current season. It cannot be replayed or shown. Discard it to start a new request.'
+        : _error;
     final canSubmit =
         teamsReady &&
         !_restoring &&
         !_submitting &&
         (_role != 'rep' || _teamId != null) &&
+        (_teamId == null || !selectedTeamUnavailable) &&
         _pendingVerification == null &&
         _issued == null;
 
@@ -698,12 +816,12 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                           color: AppColors.textSecondary,
                         ),
                       ),
-                      if (_error != null) ...[
+                      if (createError != null) ...[
                         const SizedBox(height: 12),
                         Semantics(
                           liveRegion: true,
                           child: Text(
-                            _error!,
+                            createError,
                             key: const Key('invite-create-error'),
                             style: const TextStyle(color: AppColors.urgent),
                           ),
@@ -744,6 +862,21 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                 FilledButton(
                   onPressed: () => Navigator.pop(context, true),
                   child: const Text('Done'),
+                ),
+              ]
+            : _attempt != null && selectedTeamUnavailable
+            ? [
+                FilledButton.icon(
+                  onPressed: _discarding ? null : _discardUnavailableAttempt,
+                  icon: _discarding
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline),
+                  label: Text(
+                    _discarding ? 'Clearing…' : 'Discard unavailable request',
+                  ),
                 ),
               ]
             : [
