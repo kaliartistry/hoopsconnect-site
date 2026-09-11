@@ -1,8 +1,26 @@
 # HoopsConnect QA remediation and execution plan
 
-Status: implementation in progress. Stage 0 is integrated and independently reviewed; Stage 1 dispatch follows the accepted Stage 0 platform, interface, and statistics contracts.
+Status: implementation in progress. Stage 0 and the reviewed Stage 1 access, statistics-lifecycle, and league-integrity packets are integrated. Stage 2 server, public/media, account-lifecycle, and courtside-recovery work remains in progress.
 
 Prepared: 11 September 2026.
+
+## Implementation progress snapshot
+
+Snapshot commit: `5780ab8` on `codex/qa-remediation-integration`.
+
+| Packet | State | Evidence at this snapshot |
+| --- | --- | --- |
+| Stage 0 platform, browser/CSP, CI, QA fixtures, interface foundation | Integrated and independently reviewed | Commits through `6e74ba1`; local and GitHub local-QA gates pass |
+| Independent acceptance ledger | Integrated and independently reviewed | `9c7b91e`; 81 Node and 28 Python checks pass |
+| Stage 1 access, routes, capabilities, recovery, role preview | Integrated and independently reviewed | `fe7b3d6` through `1248bb1`; access dormancy transition reviewed |
+| Stage 1 official-stat lifecycle candidate | Integrated but dormant | `de03084` through `b8f0b48`; unreachable from production entrypoints pending activation decisions |
+| Stage 1 league models, schedule validation, roster proposals, Jamaica time | Integrated and independently reviewed | `13092f2` through `5780ab8` |
+| Stage 2 trusted league callables/rules | In progress | Isolated implementation and hostile-client contract review active |
+| Stage 2 fan/media/public output | In progress | Isolated implementation active; independent review and integration still required |
+| Account lifecycle | Revision in progress, dormant | First candidate rejected for custody, route, retry, receipt, and cleanup-binding gaps |
+| Combined regression state | Passing locally | 675 Flutter tests pass, 16 intentionally skip; 50 dormancy checks and 109 acceptance-script checks pass |
+
+Production deployment, live rule activation, store submission, and real-data migration are not authorized by this implementation snapshot. JBA rules, ranking/qualification, roster authority, and account-deletion G1-G11 decisions remain explicit activation gates.
 
 ## 1. Outcome and verified starting point
 
