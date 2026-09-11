@@ -6,7 +6,7 @@ Prepared: 11 September 2026.
 
 ## Implementation progress snapshot
 
-Code candidate snapshot: `ab26cfd` on `codex/qa-remediation-integration`.
+Code candidate snapshot: `7fdf4b0` on `codex/qa-remediation-integration`.
 
 | Packet | State | Evidence at this snapshot |
 | --- | --- | --- |
@@ -22,7 +22,7 @@ Code candidate snapshot: `ab26cfd` on `codex/qa-remediation-integration`.
 | Invitations, acknowledgments, deadlines, and admin communications | Integrated and independently reviewed | Once-visible invite secret and retry semantics, honest acknowledgment feedback, explicit deadline state, and callable-backed admin workflows pass local tests |
 | Association branding | Integrated and independently reviewed | Conflict-safe serialized saves, accessible live preview, discard protection, and responsive desktop/mobile rendering are verified locally |
 | Governed season lifecycle | Integrated but dormant, independently reviewed | Prepare/activate/archive/restore callables, atomic pointers, recovery receipts, and direct-write denial pass; the UI honestly shows the readiness lock |
-| Rendered browser QA | Complete for the local web candidate | Chromium verified real keyboard sign-in, branding and season screens, public discovery, canonical URLs, refresh and Back at desktop/mobile viewports with zero console errors or warnings |
+| Rendered browser QA | Complete for the local web candidate | Chromium verified real keyboard sign-in, prominent guest discovery with a public league sneak peek, branding and season screens, canonical URLs, refresh and Back at desktop/mobile viewports with zero console errors or warnings |
 | Combined regression state | Passing locally | Flutter, Node, callable, rules, Storage, lifecycle, and browser suites pass at the code candidate; GitHub readback is required again after this progress record is pushed |
 
 Production deployment, live rule activation, store submission, and real-data migration are not authorized by this implementation snapshot. JBA rules, ranking/qualification, roster authority, and account-deletion G1-G11 decisions remain explicit activation gates.

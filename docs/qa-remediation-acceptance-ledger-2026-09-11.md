@@ -15,7 +15,7 @@ Status: integrated local candidate accepted for continued release-gate evaluatio
   `a099df5dc1da2445619c12cdaf9e0903f491f6d696323911b4014150a1302ee8`.
 - Stage 0 implementation checkpoint:
   `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
-- Integrated code candidate checkpoint: `ab26cfd` on
+- Integrated code candidate checkpoint: `7fdf4b0` on
   `codex/qa-remediation-integration`.
 - Synthetic target: `demo-hoopsconnect-stage0-platform` through
   `lib/main_qa.dart` and loopback emulators only.
@@ -76,18 +76,18 @@ screen readers, poor-network recovery or any Stage 1/2 feature is verified.
 ## Integrated candidate readback
 
 The integration owner and independent packet reviewers subsequently assembled
-and exercised the candidate through `ab26cfd`. No production credentials,
+and exercised the candidate through `7fdf4b0`. No production credentials,
 production data, deployment, external delivery, live activation, migration, or
 store action was used.
 
 | Check | Result | Evidence boundary |
 | --- | --- | --- |
-| Flutter test suite | Pass: 925 passed, 16 intentionally skipped | Complete repository suite; skips are the documented activation/provider cases |
+| Flutter test suite | Pass: 926 passed, 16 intentionally skipped | Complete repository suite; skips are the documented activation/provider cases |
 | Security emulator gate | Pass | Contracts, Functions, notifications, callables, Firestore Rules, Storage Rules, and dormant account-lifecycle suites ran against the isolated demo project |
 | Public Functions suite | Pass: 23/23 | Version-bound public output and private-data separation remain enforced |
 | CSP and QA fixture regression suite | Pass: 13/13 | Exact font origin, isolated Hosting headers, certified synthetic legacy projection, and ranked fixture rows are covered |
 | Rendered sign-in | Pass in local Chromium | Real keyboard Return submitted the form and reached the super-admin shell with no console errors or warnings |
-| Rendered public journey | Pass at desktop and phone viewports | Games, standings, and team details used canonical `/public/...` URLs; direct load, refresh, in-app Back, and browser Back retained the route |
+| Rendered public journey | Pass at desktop and phone viewports | The login surface promotes guest access with the latest result and next upcoming game; games, standings, and team details use canonical `/public/...` URLs with direct load, refresh, in-app Back, and browser Back |
 | Rendered admin journey | Pass at desktop and phone viewports | Branding preview/discard protection and the locked season-management surface rendered and behaved as designed |
 
 This readback accepts the local web candidate, not the live product. Physical
@@ -111,7 +111,7 @@ rendered, backend and persistence evidence.
 | F-04 | `F04-RESULT-INTEGRITY` | Planned | Contradictions cannot certify/publish; normal and exceptional results remain consistent everywhere |
 | F-05 | `F05-LEAGUE-TIME` | Planned | Cross-midnight Jamaica/New York case and New York DST fold agree across every consumer |
 | F-06 | `F06-KEYBOARD-SIGNIN` | Candidate partial: focused widgets and real Chromium Return-to-submit pass | Add visible-focus and physical assistive-technology evidence |
-| F-07 | `F07-FAN-LANDING` | Candidate partial: guest public routing, refresh, direct URL and Back pass locally | Complete first/returning authenticated fan and native-device journeys |
+| F-07 | `F07-FAN-LANDING` | Candidate partial: prominent public-data-only guest preview, public routing, refresh, direct URL and Back pass locally | Complete first/returning authenticated fan and native-device journeys |
 | F-08 | `F08-PASSWORD-RECOVERY` | Planned | Generic non-enumerating recovery plus provider-aware failure/retry behavior |
 | F-09 | `F09-REP-ROSTER` | Planned | Own-team proposal/approval works; unrelated team and stale authority fail closed |
 | F-10 | `F10-ADMIN-CAPABILITIES` | Planned | Each menu/route/mutation follows its actual capability for admin and superAdmin |
@@ -134,7 +134,7 @@ rendered, backend and persistence evidence.
 | X-01 | `X01-DELETION-ROUTES`, `X01-PROVIDERS-CUSTODY`, `X01-DISPOSITION-PRIVACY`, `X01-CLIENT-CLEANUP`, `X01-RELEASE-GATES` | Candidate contracts dormant; all G1-G11 remain closed | Lifecycle/provider/custody/27-adapter/privacy/restore plus session/listener/cache/token cleanup scenarios pass and every gate has real owner/evidence |
 | X-02 | `X02-OFFLINE-RECOVERY`, `F16-COURTSIDE-INTERACTION` | Journal contract dormant | Loss/restart/receipt/conflict/quota/revocation/correction/deletion plus courtside shortcut/caret/leave-reenter cases pass with honest visible state |
 | X-03 | `X03-LOCAL-BACKEND` | Candidate pass: complete isolated security emulator gate covers contracts, Functions, callables, Rules, Storage, delivery guards and dormant lifecycle modules | Repeat against the exact release checkpoint and authorized isolated staging when that gate opens |
-| X-04 | `X04-VISUAL-MATRIX` | Candidate partial: login, public, branding, and season screens pass desktop/phone Chromium review with zero console findings | Complete every role/state at 375/768/1440 plus native and assistive-technology evidence |
+| X-04 | `X04-VISUAL-MATRIX` | Candidate partial: the guest-preview login, public, branding, and season screens pass desktop/phone Chromium review with zero console findings | Complete every role/state at 375/768/1440 plus native and assistive-technology evidence |
 | X-05 | `X05-RELEASE-REHEARSAL` | Planned for Stage 4 | Exact candidate, authorized isolated staging, dry run, restore/rollback and authoritative provider readback |
 
 ## Executable scenario catalog
