@@ -33,7 +33,7 @@ const pinnedMergedMainBlobs = Object.freeze({
     '9fc65f3dfaf0d0a219b42d73a2cf91d2aa3d493f',
   'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': 'abb289e0f8765d2c996798f5acd80eaff03b7151',
+  'lib/app/router/app_router.dart': 'dc7cc1b435db6d50b147dd8a4128061b20bedc6f',
 });
 
 function read(relativePath) {

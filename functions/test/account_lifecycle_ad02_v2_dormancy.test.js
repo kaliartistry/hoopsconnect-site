@@ -14,9 +14,9 @@ const baselineGitBlobHashes = Object.freeze({
   'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
   'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': 'abb289e0f8765d2c996798f5acd80eaff03b7151',
+  'lib/app/router/app_router.dart': 'dc7cc1b435db6d50b147dd8a4128061b20bedc6f',
   'lib/services/notification_service.dart': 'd17c7c10ca2620d97adf56fae0408cec0647fba8',
-  'lib/services/repositories/auth_repository.dart': 'b209f1c031acbfc3582b96985f7d561c93d8ad36',
+  'lib/services/repositories/auth_repository.dart': '533f850d12b4b7d50428149f5c2af0c816717c0f',
   'lib/core/constants/firestore_paths.dart': '59571aec275caa239e4fc3bb6ffa259c1c12dcb7',
 });
 const candidateSources = [
