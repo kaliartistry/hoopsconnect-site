@@ -17,22 +17,27 @@ abstract final class LegacyGameStatsV2AdapterContract {
   static const String adapterVersion =
       'legacy-game-stats-to-official-v2-candidate-v1';
   static const String sourceSchemaVersion = 'legacy-game-stats-v1';
+  static const String sourceIdentityEncodingVersion = 'utf8-hex-v1';
   static const String missingReasonCode = 'not_recorded_legacy_game_stats';
   static const String nullReasonCode = 'null_legacy_game_stats_value';
   static const String identityMappingReasonCode =
       'identity_mapping_not_reviewed';
 }
 
-String _canonicalLegacyKey(String field, String value) {
+String _requireRawLegacyKey(String field, String value) {
   if (value.isEmpty) {
     throw FormatException('$field must not be empty');
   }
-  final normalized = OfficialStatUnicodeNormalization.nfc(value);
-  if (normalized.isEmpty) {
-    throw FormatException('$field must remain nonempty after Unicode NFC');
-  }
-  return normalized;
+  return value;
 }
+
+String _legacyComparisonKey(String value) =>
+    OfficialStatUnicodeNormalization.nfc(value);
+
+String _utf8Hex(String value) => utf8
+    .encode(value)
+    .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+    .join();
 
 /// A named immutable rules dependency supplied by the integration owner.
 ///
@@ -69,8 +74,8 @@ final class LegacyGameStatsSourceReference {
     required String documentId,
     required String sourcePath,
     required this.sourcePayloadHash,
-  }) : documentId = _canonicalLegacyKey('documentId', documentId),
-       sourcePath = OfficialStatUnicodeNormalization.nfc(sourcePath) {
+  }) : documentId = _requireRawLegacyKey('documentId', documentId),
+       sourcePath = _requireRawLegacyKey('sourcePath', sourcePath) {
     final segments = this.sourcePath.split('/');
     if (segments.length != 4 ||
         segments[0] != 'associations' ||
@@ -96,7 +101,9 @@ final class LegacyGameStatsSourceReference {
 
   Map<String, Object?> toContractMap() => {
     'documentId': documentId,
+    'documentIdUtf8Hex': _utf8Hex(documentId),
     'sourcePath': sourcePath,
+    'sourcePathUtf8Hex': _utf8Hex(sourcePath),
     'sourcePayloadHash': sourcePayloadHash,
     'sourceSchemaVersion': LegacyGameStatsV2AdapterContract.sourceSchemaVersion,
   };
@@ -122,12 +129,12 @@ final class LegacyGameStatsReviewedScopeMapping {
     required String targetGameId,
     required this.mappingVersion,
     required this.evidenceHash,
-  }) : sourceDocumentId = _canonicalLegacyKey(
+  }) : sourceDocumentId = _requireRawLegacyKey(
          'sourceDocumentId',
          sourceDocumentId,
        ),
-       sourceEventId = _canonicalLegacyKey('sourceEventId', sourceEventId),
-       targetGameId = _canonicalLegacyKey('targetGameId', targetGameId) {
+       sourceEventId = _requireRawLegacyKey('sourceEventId', sourceEventId),
+       targetGameId = _requireRawLegacyKey('targetGameId', targetGameId) {
     OfficialStatIdentifiers.requireValid('mappingVersion', mappingVersion);
     OfficialStatIdentifiers.requireSha256('evidenceHash', evidenceHash);
   }
@@ -136,7 +143,9 @@ final class LegacyGameStatsReviewedScopeMapping {
     'evidenceHash': evidenceHash,
     'mappingVersion': mappingVersion,
     'sourceDocumentId': sourceDocumentId,
+    'sourceDocumentIdUtf8Hex': _utf8Hex(sourceDocumentId),
     'sourceEventId': sourceEventId,
+    'sourceEventIdUtf8Hex': _utf8Hex(sourceEventId),
     'targetGameId': targetGameId,
   };
 }
@@ -168,8 +177,11 @@ final class LegacyGameStatsScopeBinding {
           ).toContractMap((value) => value)
         : {'state': 'known', 'value': reviewedMapping!.toContractMap()},
     'sourceAssociationId': sourceAssociationId,
+    'sourceAssociationIdUtf8Hex': _utf8Hex(sourceAssociationId),
     'sourceDocumentId': sourceDocumentId,
+    'sourceDocumentIdUtf8Hex': _utf8Hex(sourceDocumentId),
     'sourceEventId': sourceEventId,
+    'sourceEventIdUtf8Hex': _utf8Hex(sourceEventId),
     'targetGameId': targetGameId,
   };
 }
@@ -212,6 +224,7 @@ final class LegacyTeamStatEvidence {
 
   Map<String, Object?> toContractMap() => {
     'legacyTeamId': legacyTeamId,
+    'legacyTeamIdUtf8Hex': _utf8Hex(legacyTeamId),
     'legacyTeamName': legacyTeamName,
     'reportedScore': reportedScore.toContractMap((value) => value),
     'side': side,
@@ -285,7 +298,9 @@ final class LegacyPlayerStatEvidence {
 
   Map<String, Object?> toContractMap() => {
     'legacyPlayerKey': legacyPlayerKey,
+    'legacyPlayerKeyUtf8Hex': _utf8Hex(legacyPlayerKey),
     'legacyTeamId': legacyTeamId.toContractMap((value) => value),
+    'legacyTeamIdUtf8Hex': legacyTeamId.toContractMap(_utf8Hex),
     'mappedIdentity': {
       'participantId': const Fact<String>.unknown(
         reasonCode: LegacyGameStatsV2AdapterContract.identityMappingReasonCode,
@@ -428,6 +443,8 @@ final class LegacyGameStatsV2Candidate {
     'scope': scope.toContractMap(),
     'scopeBinding': scopeBinding.toContractMap(),
     'source': source.toContractMap(),
+    'sourceIdentityEncodingVersion':
+        LegacyGameStatsV2AdapterContract.sourceIdentityEncodingVersion,
     'targetCalculatorVersion': normalizedBoxScoreCalculatorVersion,
     'teams': [for (final team in teams) team.toContractMap()],
     'unicodeNormalizationImplementationVersion':
@@ -502,7 +519,7 @@ final class ReadOnlyLegacyGameStatsV2Adapter
         'Rules profile and game scope must share one association',
       );
     }
-    final sourceEventId = _requiredIdentityKey(legacyDocument, 'eventId');
+    final sourceEventId = _requiredText(legacyDocument, 'eventId');
     final scopeBinding = _bindScope(
       source: source,
       sourceEventId: sourceEventId,
@@ -512,14 +529,14 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     _requireScopeMatch(legacyDocument, 'seasonId', scope.seasonId);
     _requireScopeMatch(legacyDocument, 'divisionId', scope.divisionId);
 
-    final homeTeamId = _requiredIdentityKey(legacyDocument, 'homeTeamId');
-    final awayTeamId = _requiredIdentityKey(legacyDocument, 'awayTeamId');
+    final homeTeamId = _requiredText(legacyDocument, 'homeTeamId');
+    final awayTeamId = _requiredText(legacyDocument, 'awayTeamId');
     final homeTeamName = _requiredText(legacyDocument, 'homeTeamName');
     final awayTeamName = _requiredText(legacyDocument, 'awayTeamName');
     final homeScore = _intFact(legacyDocument, 'homeScore', r'$.homeScore');
     final awayScore = _intFact(legacyDocument, 'awayScore', r'$.awayScore');
     final issues = <LegacyGameStatsAdapterIssue>[];
-    if (homeTeamId == awayTeamId) {
+    if (_legacyComparisonKey(homeTeamId) == _legacyComparisonKey(awayTeamId)) {
       issues.add(
         const LegacyGameStatsAdapterIssue(
           code: LegacyGameStatsAdapterIssueCode.homeAwayTeamCollision,
@@ -637,8 +654,15 @@ final class ReadOnlyLegacyGameStatsV2Adapter
         'Legacy source association does not match the reviewed v2 scope',
       );
     }
+    final hasExactSourceGameIdentity =
+        source.documentId == scope.gameId && sourceEventId == scope.gameId;
+    if (reviewedScopeMapping != null && hasExactSourceGameIdentity) {
+      throw FormatException(
+        'Reviewed scope mapping is redundant for exact source game identity',
+      );
+    }
     if (reviewedScopeMapping == null) {
-      if (source.documentId != scope.gameId || sourceEventId != scope.gameId) {
+      if (!hasExactSourceGameIdentity) {
         throw FormatException(
           'Legacy document and event IDs must match the v2 game or use a reviewed mapping',
         );
@@ -680,11 +704,6 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     return value;
   }
 
-  static String _requiredIdentityKey(
-    Map<String, Object?> source,
-    String field,
-  ) => _canonicalLegacyKey(field, _requiredText(source, field));
-
   static Fact<String> _stringFact(
     Map<String, Object?> source,
     String field,
@@ -714,7 +733,9 @@ final class ReadOnlyLegacyGameStatsV2Adapter
   ) {
     final fact = _stringFact(source, field, path);
     final value = fact.valueOrNull;
-    return value == null ? fact : Fact.known(_canonicalLegacyKey(field, value));
+    return value == null
+        ? fact
+        : Fact.known(_requireRawLegacyKey(field, value));
   }
 
   static Fact<int> _intFact(
@@ -754,7 +775,6 @@ final class ReadOnlyLegacyGameStatsV2Adapter
       throw FormatException(r'$.playerLines must be an object when present');
     }
     final entries = <MapEntry<String, Map<String, Object?>>>[];
-    final normalizedKeys = <String>{};
     for (final entry in raw.entries) {
       if (entry.key is! String || (entry.key as String).isEmpty) {
         throw FormatException(r'$.playerLines keys must be nonempty strings');
@@ -762,26 +782,25 @@ final class ReadOnlyLegacyGameStatsV2Adapter
       if (entry.value is! Map) {
         throw FormatException(r'$.playerLines values must be objects');
       }
-      final normalizedKey = OfficialStatUnicodeNormalization.nfc(
-        entry.key as String,
-      );
-      if (!normalizedKeys.add(normalizedKey)) {
-        throw FormatException(
-          r'$.playerLines keys must remain unique after Unicode NFC',
-        );
-      }
       entries.add(
-        MapEntry(normalizedKey, Map<String, Object?>.from(entry.value as Map)),
+        MapEntry(
+          entry.key as String,
+          Map<String, Object?>.from(entry.value as Map),
+        ),
       );
     }
-    entries.sort((left, right) => left.key.compareTo(right.key));
+    entries.sort(
+      (left, right) => _utf8Hex(left.key).compareTo(_utf8Hex(right.key)),
+    );
     final result = <LegacyPlayerStatEvidence>[];
     for (final entry in entries) {
       final line = entry.value;
       final path = r'$.playerLines.' + entry.key;
       final teamId = _identityFact(line, 'teamId', '$path.teamId');
       if (teamId.valueOrNull case final String value
-          when value != homeTeamId && value != awayTeamId) {
+          when _legacyComparisonKey(value) !=
+                  _legacyComparisonKey(homeTeamId) &&
+              _legacyComparisonKey(value) != _legacyComparisonKey(awayTeamId)) {
         issues.add(
           LegacyGameStatsAdapterIssue(
             code: LegacyGameStatsAdapterIssueCode.playerTeamOutsideGame,

@@ -151,6 +151,10 @@ void main() {
         LegacyGameStatsV2AdapterContract.candidateSchemaVersion,
       );
       expect(
+        fixture['sourceIdentityEncodingVersion'],
+        LegacyGameStatsV2AdapterContract.sourceIdentityEncodingVersion,
+      );
+      expect(
         fixture['canonicalEncodingVersion'],
         OfficialStatContractVersions.canonicalEncoding,
       );
@@ -180,6 +184,10 @@ void main() {
       expect(
         first.toContractMap()['unicodeNormalizationVersion'],
         fixture['unicodeNormalizationVersion'],
+      );
+      expect(
+        first.toContractMap()['sourceIdentityEncodingVersion'],
+        fixture['sourceIdentityEncodingVersion'],
       );
       expect(first.candidateHash, expected['candidateHash']);
       expect(first.canonicalByteLength, expected['canonicalByteLength']);
@@ -408,6 +416,27 @@ void main() {
       },
     );
 
+    test('reviewed mapping is rejected for exact source game identity', () {
+      final redundantMapping = LegacyGameStatsReviewedScopeMapping(
+        sourceDocumentId: 'game_1',
+        sourceEventId: 'game_1',
+        targetGameId: 'game_1',
+        mappingVersion: 'redundant_mapping_v1',
+        evidenceHash: List.filled(64, 'c').join(),
+      );
+
+      expect(
+        () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: _baseSource(),
+          legacyDocument: _baseLegacyDocument(),
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+          reviewedScopeMapping: redundantMapping,
+        ),
+        throwsFormatException,
+      );
+    });
+
     test('source path is bound to the exact source document ID', () {
       expect(
         () => LegacyGameStatsSourceReference(
@@ -418,6 +447,101 @@ void main() {
         throwsFormatException,
       );
     });
+
+    test(
+      'canonically equivalent source documents preserve distinct raw identity',
+      () {
+        const decomposedId = 'Cafe\u0301';
+        const composedId = 'Café';
+        final decomposedSource = LegacyGameStatsSourceReference(
+          documentId: decomposedId,
+          sourcePath: 'associations/jba/gameStats/$decomposedId',
+          sourcePayloadHash: List.filled(64, 'a').join(),
+        );
+        final composedSource = LegacyGameStatsSourceReference(
+          documentId: composedId,
+          sourcePath: 'associations/jba/gameStats/$composedId',
+          sourcePayloadHash: List.filled(64, 'a').join(),
+        );
+        final decomposedLegacy = _baseLegacyDocument()
+          ..['eventId'] = decomposedId;
+        final composedLegacy = _baseLegacyDocument()..['eventId'] = composedId;
+
+        LegacyGameStatsV2Candidate adapt(
+          LegacyGameStatsSourceReference source,
+          Map<String, Object?> legacy,
+          String sourceId,
+        ) => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: source,
+          legacyDocument: legacy,
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+          reviewedScopeMapping: LegacyGameStatsReviewedScopeMapping(
+            sourceDocumentId: sourceId,
+            sourceEventId: sourceId,
+            targetGameId: 'game_1',
+            mappingVersion: 'unicode_source_mapping_v1',
+            evidenceHash: List.filled(64, 'c').join(),
+          ),
+        );
+
+        final decomposedCandidate = adapt(
+          decomposedSource,
+          decomposedLegacy,
+          decomposedId,
+        );
+        final composedCandidate = adapt(
+          composedSource,
+          composedLegacy,
+          composedId,
+        );
+        final decomposedContract = decomposedSource.toContractMap();
+        final composedContract = composedSource.toContractMap();
+
+        expect(decomposedCandidate.source.documentId, decomposedId);
+        expect(
+          decomposedCandidate.source.sourcePath,
+          'associations/jba/gameStats/$decomposedId',
+        );
+        expect(composedCandidate.source.documentId, composedId);
+        expect(
+          decomposedContract['documentIdUtf8Hex'],
+          isNot(composedContract['documentIdUtf8Hex']),
+        );
+        expect(
+          decomposedContract['sourcePathUtf8Hex'],
+          isNot(composedContract['sourcePathUtf8Hex']),
+        );
+        expect(
+          decomposedCandidate.candidateHash,
+          isNot(composedCandidate.candidateHash),
+        );
+        expect(
+          () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+            source: decomposedSource,
+            legacyDocument: decomposedLegacy,
+            scope: _baseScope(),
+            rulesProfile: _baseRules(),
+            reviewedScopeMapping: LegacyGameStatsReviewedScopeMapping(
+              sourceDocumentId: composedId,
+              sourceEventId: decomposedId,
+              targetGameId: 'game_1',
+              mappingVersion: 'unicode_source_mapping_v1',
+              evidenceHash: List.filled(64, 'c').join(),
+            ),
+          ),
+          throwsFormatException,
+        );
+        expect(
+          () => LegacyGameStatsSourceReference(
+            documentId: decomposedId,
+            sourcePath: 'associations/jba/gameStats/$composedId',
+            sourcePayloadHash: List.filled(64, 'a').join(),
+          ),
+          throwsFormatException,
+        );
+      },
+    );
 
     test('contradictions remain visible and cannot be certified', () {
       final source = _baseLegacyDocument()
@@ -472,21 +596,32 @@ void main() {
       );
     });
 
-    test('source player keys cannot collide after canonical Unicode NFC', () {
+    test('canonically equivalent player keys remain distinct source keys', () {
       final source = _baseLegacyDocument()
         ..['playerLines'] = {
           'Cafe\u0301': {'name': 'First'},
           'Café': {'name': 'Second'},
         };
 
+      final candidate = ReadOnlyLegacyGameStatsV2Adapter().adapt(
+        source: _baseSource(),
+        legacyDocument: source,
+        scope: _baseScope(),
+        rulesProfile: _baseRules(),
+      );
+
       expect(
-        () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
-          source: _baseSource(),
-          legacyDocument: source,
-          scope: _baseScope(),
-          rulesProfile: _baseRules(),
-        ),
-        throwsFormatException,
+        candidate.playerLines.map((line) => line.legacyPlayerKey).toSet(),
+        {'Cafe\u0301', 'Café'},
+      );
+      expect(
+        candidate.playerLines
+            .map(
+              (line) =>
+                  line.toContractMap()['legacyPlayerKeyUtf8Hex'] as String,
+            )
+            .toSet(),
+        hasLength(2),
       );
     });
 
@@ -501,8 +636,12 @@ void main() {
         rulesProfile: _baseRules(),
       );
 
-      expect(candidate.teams[0].legacyTeamId, 'Café');
+      expect(candidate.teams[0].legacyTeamId, 'Cafe\u0301');
       expect(candidate.teams[1].legacyTeamId, 'Café');
+      expect(
+        candidate.teams[0].toContractMap()['legacyTeamIdUtf8Hex'],
+        isNot(candidate.teams[1].toContractMap()['legacyTeamIdUtf8Hex']),
+      );
       expect(
         candidate.issues.map((issue) => issue.code),
         contains(LegacyGameStatsAdapterIssueCode.homeAwayTeamCollision),
@@ -522,7 +661,14 @@ void main() {
         rulesProfile: _baseRules(),
       );
 
-      expect(candidate.playerLines.single.legacyTeamId.valueOrNull, 'Café');
+      expect(
+        candidate.playerLines.single.legacyTeamId.valueOrNull,
+        'Cafe\u0301',
+      );
+      expect(
+        candidate.playerLines.single.toContractMap()['legacyTeamIdUtf8Hex'],
+        isNot(candidate.teams.first.toContractMap()['legacyTeamIdUtf8Hex']),
+      );
       expect(
         candidate.issues.map((issue) => issue.code),
         isNot(contains(LegacyGameStatsAdapterIssueCode.playerTeamOutsideGame)),

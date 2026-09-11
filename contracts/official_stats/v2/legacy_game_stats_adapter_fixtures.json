@@ -3,6 +3,7 @@
   "canonicalEncodingVersion": "official-stat-canonical-json-v1",
   "candidateSchemaVersion": 1,
   "fixtureSchemaVersion": 1,
+  "sourceIdentityEncodingVersion": "utf8-hex-v1",
   "unicodeNormalizationImplementationVersion": "unicode-17.0-unorm-dart-0.3.2-hangul-boundary-patch1",
   "unicodeNormalizationVersion": "official-stat-unicode-nfc-v2",
   "cases": [
@@ -84,8 +85,8 @@
         }
       },
       "expected": {
-        "candidateHash": "990c85cae504ad04a4421a48fd4f8dd57ce8d441c1b3997cde4ecd31ad3a5bae",
-        "canonicalByteLength": 7558,
+        "candidateHash": "bcc6be9352f1bfce0f85ccad7971eddaacd3f3944247f640edad97ef7cbc67d0",
+        "canonicalByteLength": 8201,
         "evidenceClassification": "unverified",
         "issueCodes": [
           "legacyApprovalIsNotCertification"
