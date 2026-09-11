@@ -57,7 +57,15 @@ Response:
     "status": "pending",
     "teamId": "opaque",
     "seasonId": "opaque",
-    "playerId": null,
+    "before": null,
+    "after": {
+      "playerId": null,
+      "registrationId": null,
+      "displayName": "Aaliyah Brown",
+      "jerseyNumber": "00",
+      "position": "Guard"
+    },
+    "reason": "New registration",
     "requestedByName": "Team Representative",
     "requestedAt": "2026-09-11T18:00:00Z",
     "reviewNote": null
@@ -93,6 +101,10 @@ Server behavior:
 3. Reject an unrelated representative before reading or writing roster facts.
 4. An authorized representative creates an immutable pending proposal. It does
    not mutate the roster, eligibility, player identity, or derived statistics.
+   The proposal stores the immutable normalized `before` and `after` player
+   facts plus the submitted reason. Add has `before: null`; update has both;
+   remove has `after: null`. Each fact object carries display name, exact jersey
+   string, optional position, and existing stable IDs where applicable.
 5. An authorized roster manager may apply the same validated change directly.
 6. New people/players/registrations receive server-generated stable opaque IDs
    and identity version records. Never derive identity from a display name,
@@ -115,8 +127,10 @@ Request fields are `schemaVersion`, `operationId`, `proposalId`, `teamId`,
 optional note. Rejection requires a note. Only verified roster-management
 authority may review. Approval must revalidate proposal scope, current roster
 version, eligibility constraints, lifecycle/custody fences, and identity state
-inside the applying transaction. A stale or already-decided proposal returns a
-deterministic receipt/error; it is never applied twice.
+inside the applying transaction. The review response and audit record must
+retain the exact immutable before/after/reason facts presented to the reviewer.
+A stale or already-decided proposal returns a deterministic receipt/error; it
+is never applied twice.
 
 ## Read projection and migration compatibility
 
@@ -135,18 +149,114 @@ path is retired.
 
 ## Atomic division deletion
 
-The current candidate performs two dependency reads and stops deletion when it
-finds named team or event references. This is useful UI protection but cannot
-close the race between its final query and a direct document delete.
+The client now exposes archive and a read-only dependency inventory. It has no
+direct division-delete method or enabled delete action. Every query result is a
+blocker even when its name/title is missing or malformed; the UI uses the
+document ID as a fallback label instead of dropping the reference.
 
-Add `deleteDivisionIfUnreferenced` as an idempotent admin callable. In one
-server-controlled operation, verify lifecycle/custody and association-management
-authority, query all reference classes (at minimum legacy teams and events plus
-canonical team entries/schedule records), and delete only when zero references
-remain. Return named dependency summaries when blocked. Then replace the
-candidate repository's direct delete with this callable and keep archive as the
-safe alternative. No rule should permit representatives or ordinary readers to
-delete divisions.
+Add `deleteDivisionIfUnreferenced` as an idempotent admin callable. Request:
+
+```json
+{"schemaVersion":1,"operationId":"opaque","divisionId":"opaque","expectedDivisionVersion":7}
+```
+
+Result, with every reference represented even if its display label is absent:
+
+```json
+{
+  "operationId":"opaque",
+  "status":"blocked",
+  "divisionVersion":7,
+  "references":[
+    {"kind":"legacyTeam","id":"team_1","displayName":"Kingston Lions"},
+    {"kind":"canonicalGame","id":"game_1","displayName":null}
+  ]
+}
+```
+
+Successful replays return the same `{status:"deleted"}` receipt. Changed
+semantics under the same operation ID are rejected.
+
+The server inventory must include legacy `teams` and `events`, canonical
+season `teamEntries`, canonical `games`, schedule revisions, and any current or
+immutable operational/stat record whose scope contains the division ID. A
+historical immutable reference may mean archive is the only legal outcome
+unless the canonical contract introduces a retained division tombstone.
+
+An empty query followed by delete is not concurrency-safe because a new
+reference can arrive between those operations. Before enabling deletion:
+
+1. add a versioned `deletionPending` guard on the division through the callable;
+2. require every legacy and canonical reference writer to verify that the
+   division is active and not deletion-pending in its server transaction;
+3. remove any direct client rule that can create a reference without that
+   guard;
+4. enumerate references after the guard, then compare the division version and
+   guard token before deletion; and
+5. clear the guard and return all blockers when any reference exists.
+
+No rule should permit representatives or ordinary readers to delete divisions.
+The client delete action remains unavailable until the emulator proves this
+cross-writer concurrency invariant.
+
+## Idempotent scheduling integration
+
+Manual and generated schedule commit actions are disabled. Local preview and
+conflict checks are advisory only and never write Firestore. Add fixed-purpose
+`scheduleGame` and `createScheduleBatch` callables before enabling them.
+
+`scheduleGame` request:
+
+```json
+{
+  "schemaVersion":1,
+  "operationId":"schedule_opaque",
+  "seasonId":"opaque",
+  "divisionId":"opaque",
+  "homeTeamId":"opaque",
+  "awayTeamId":"opaque",
+  "startTimeUtc":"2026-09-13T01:00:00.000Z",
+  "endTimeUtc":"2026-09-13T03:00:00.000Z",
+  "location":"National Arena"
+}
+```
+
+The client creates its operation ID once when the form opens and retains it
+unchanged across checks and exact retries. The server must derive actor and
+association, verify the requested season is the association's active season,
+verify an active division, and verify both teams belong to that exact season
+and division. It must atomically reject an unordered-pair duplicate at the same
+start instant and any overlap for either team. Exact operation/payload replays
+return the same `{operationId,status:"created",eventId,scheduleVersion}`
+receipt; changed semantics conflict. UTC instants are canonical and the
+schedule revision records `America/Jamaica` as its civil timezone.
+
+The batch callable uses one parent operation ID plus a deterministic item key
+per preview row, validates the same invariants for every row and against other
+rows in the request, and returns per-item results plus an overall
+`created|blocked` status. It must not leave a partially created schedule after
+a retry or validation failure. If the backend cannot provide one atomic batch,
+use a durable server job with idempotent item receipts and expose honest
+progress/recovery state before enabling the client action.
+
+## League-time consumer inventory
+
+Firestore and callable schedule instants are UTC. America/Jamaica is the sole
+league civil timezone and is UTC-05:00 year-round. The shared `LeagueTime`
+utility is now used by every identified schedule consumer in this packet:
+
+- manual game date/time input, day conflict-query bounds, and request preview;
+- schedule-generator civil dates, UTC slot generation, week grouping, and
+  preview labels;
+- calendar range queries, day grouping, date scroller, and game cards;
+- statistician game selector;
+- public league schedule;
+- press dashboard "today" query boundaries and game-time labels.
+
+New York daylight-saving conversion remains a comparison test only. Device
+local timezone is not used for league dates or game times. `approvedAt`, post
+deadlines, invite expiry, local journal receipt times, and other audit/account
+timestamps are not schedule consumers and remain outside this migration.
 
 ## Emulator acceptance required
 
@@ -165,6 +275,12 @@ delete divisions.
 - A lifecycle/custody-fenced actor cannot load, submit, or review.
 - Division delete names blocking teams/events, survives a concurrent new
   reference without orphaning it, and succeeds only with no references.
+- Malformed or missing dependency names still block division deletion and are
+  returned with stable IDs.
+- Manual scheduling rejects inactive season/division, cross-season or
+  cross-division teams, pair duplicates, and either-team overlap; an exact
+  operation replay returns one event.
+- Batch scheduling cannot partially duplicate games after retry or failure.
 
 No production activation, migration, rule deployment, or real league-data
 change is part of this integration request.

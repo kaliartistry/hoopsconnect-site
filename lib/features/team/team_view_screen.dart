@@ -3,13 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
+import '../../models/roster_workflow_model.dart';
 import '../../models/standings_model.dart';
 import '../../models/team_season_stats_model.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/auth_providers.dart';
+import '../../providers/roster_workflow_providers.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/standings_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
+import '../../services/repositories/roster_workflow_repository.dart';
 import 'roster_management_panel.dart';
 
 class TeamViewScreen extends ConsumerWidget {
@@ -25,6 +29,18 @@ class TeamViewScreen extends ConsumerWidget {
     final divisions =
         ref.watch(divisionsStreamProvider).valueOrNull ?? const [];
     final seasonId = ref.watch(activeSeasonIdProvider).value;
+    final currentUser = ref.watch(currentUserProvider).valueOrNull;
+    final rosterTarget =
+        seasonId == null ||
+            team == null ||
+            currentUser == null ||
+            rosterClientAuthority(user: currentUser, teamId: teamId) ==
+                RosterClientAuthority.denied
+        ? null
+        : (teamId: teamId, seasonId: seasonId);
+    final canonicalRosterAsync = rosterTarget == null
+        ? null
+        : ref.watch(rosterWorkspaceProvider(rosterTarget));
     final teamStatsAsync = seasonId == null
         ? null
         : ref.watch(
@@ -70,6 +86,10 @@ class TeamViewScreen extends ConsumerWidget {
           }
 
           final roster = rosterAsync.valueOrNull ?? [];
+          final playerCount = preferredRosterPlayerCount(
+            canonicalWorkspace: canonicalRosterAsync?.valueOrNull,
+            legacyAggregateCount: roster.length,
+          );
           var divisionName = team.divisionId;
           for (final division in divisions) {
             if (division.id == team.divisionId) {
@@ -146,11 +166,7 @@ class TeamViewScreen extends ConsumerWidget {
               Row(
                 children: [
                   Expanded(
-                    child: _infoCard(
-                      'Players',
-                      '${roster.length}',
-                      Icons.people,
-                    ),
+                    child: _infoCard('Players', '$playerCount', Icons.people),
                   ),
                   const SizedBox(width: 8),
                   Expanded(

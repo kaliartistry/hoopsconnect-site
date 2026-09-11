@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/firestore_paths.dart';
+import '../core/time/league_time.dart';
 import '../models/game_stats_model.dart';
 import '../models/event_model.dart';
 import 'auth_providers.dart';
@@ -26,9 +27,9 @@ final todaysGamesProvider = StreamProvider<List<EventModel>>((ref) {
   final assocId = ref.watch(currentAssociationIdProvider);
   if (assocId == null) return Stream.value([]);
 
-  final now = DateTime.now();
-  final startOfDay = DateTime(now.year, now.month, now.day);
-  final endOfDay = startOfDay.add(const Duration(days: 1));
+  final jamaicaDate = LeagueTime.jamaicaDate(DateTime.now());
+  final startOfDay = LeagueTime.startOfJamaicaDayUtc(jamaicaDate);
+  final endOfDay = LeagueTime.endExclusiveOfJamaicaDayUtc(jamaicaDate);
 
   return FirebaseFirestore.instance
       .collection(FirestorePaths.events(assocId))

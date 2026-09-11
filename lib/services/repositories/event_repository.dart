@@ -1,9 +1,26 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/event_model.dart';
 
 class EventRepository {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFirestore? _firestore;
+  final Random _random;
+
+  EventRepository({FirebaseFirestore? firestore, Random? random})
+    : _firestore = firestore,
+      _random = random ?? Random.secure();
+
+  FirebaseFirestore get _db => _firestore ?? FirebaseFirestore.instance;
+
+  String newScheduleOperationId({DateTime? now}) {
+    final entropy = List.generate(
+      12,
+      (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    return 'schedule_${(now ?? DateTime.now()).toUtc().microsecondsSinceEpoch}_$entropy';
+  }
 
   CollectionReference<EventModel> _eventsRef(String assocId) {
     return _db
@@ -20,23 +37,28 @@ class EventRepository {
     DateTime? from,
     DateTime? to,
   }) {
-    Query<EventModel> query =
-        _eventsRef(assocId).orderBy('startTime');
+    Query<EventModel> query = _eventsRef(assocId).orderBy('startTime');
 
     if (from != null) {
-      query = query.where('startTime',
-          isGreaterThanOrEqualTo: Timestamp.fromDate(from));
+      query = query.where(
+        'startTime',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(from),
+      );
     }
     if (to != null) {
-      query = query.where('startTime',
-          isLessThanOrEqualTo: Timestamp.fromDate(to));
+      query = query.where(
+        'startTime',
+        isLessThanOrEqualTo: Timestamp.fromDate(to),
+      );
     }
 
     return query.snapshots().map((snap) {
-  final events = snap.docs.map((d) => d.data());
-  return events
-      .where((event) => divisionId == null || event.divisionId == divisionId)
-      .toList();
+      final events = snap.docs.map((d) => d.data());
+      return events
+          .where(
+            (event) => divisionId == null || event.divisionId == divisionId,
+          )
+          .toList();
     });
   }
 
@@ -61,9 +83,9 @@ class EventRepository {
 
   /// Watch a single event by ID.
   Stream<EventModel?> watchEvent(String assocId, String eventId) {
-    return _eventsRef(assocId).doc(eventId).snapshots().map(
-          (snap) => snap.exists ? snap.data() : null,
-        );
+    return _eventsRef(
+      assocId,
+    ).doc(eventId).snapshots().map((snap) => snap.exists ? snap.data() : null);
   }
 
   Future<void> createEvent(String assocId, EventModel event) {

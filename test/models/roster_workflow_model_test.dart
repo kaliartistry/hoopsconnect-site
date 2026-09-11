@@ -84,4 +84,66 @@ void main() {
     expect(player.toFirestore(), isNot(contains('gamesPlayed')));
     expect(player.toFirestore(), isNot(contains('totals')));
   });
+
+  test('proposal requires immutable before and after facts for its kind', () {
+    expect(
+      () => RosterProposalSummary.fromMap(const {
+        'proposalId': 'proposal_1',
+        'kind': 'updatePlayer',
+        'status': 'pending',
+        'teamId': 'team_1',
+        'seasonId': 'season_1',
+        'reason': 'Correct jersey',
+        'requestedByName': 'Team Rep',
+        'after': {
+          'playerId': 'player_1',
+          'registrationId': 'registration_1',
+          'displayName': 'Aaliyah Brown',
+          'jerseyNumber': '00',
+        },
+      }),
+      throwsArgumentError,
+    );
+  });
+
+  test('proposal preserves exact before and after facts for review', () {
+    final proposal = RosterProposalSummary.fromMap(const {
+      'proposalId': 'proposal_2',
+      'kind': 'updatePlayer',
+      'status': 'pending',
+      'teamId': 'team_1',
+      'seasonId': 'season_1',
+      'reason': 'Correct jersey',
+      'requestedByName': 'Team Rep',
+      'before': {
+        'playerId': 'player_1',
+        'registrationId': 'registration_1',
+        'displayName': 'Aaliyah Brown',
+        'jerseyNumber': '0',
+        'position': 'Forward',
+      },
+      'after': {
+        'playerId': 'player_1',
+        'registrationId': 'registration_1',
+        'displayName': 'Aaliyah Brown',
+        'jerseyNumber': '00',
+        'position': 'Guard',
+      },
+    });
+
+    expect(proposal.before!.jerseyNumber, '0');
+    expect(proposal.after!.jerseyNumber, '00');
+    expect(proposal.after!.position, 'Guard');
+    expect(proposal.reason, 'Correct jersey');
+  });
+
+  test('canonical registration count overrides stale legacy aggregates', () {
+    expect(
+      preferredRosterPlayerCount(
+        canonicalWorkspace: const RosterWorkspace(rosterVersion: 1),
+        legacyAggregateCount: 7,
+      ),
+      0,
+    );
+  });
 }

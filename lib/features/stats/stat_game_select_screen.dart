@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
 import '../../models/event_model.dart';
 import '../../models/game_stats_model.dart';
 import '../../providers/stats_providers.dart';
@@ -76,8 +76,11 @@ class _GameCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final gameStatsAsync = ref.watch(gameStatsProvider(game.id));
     final gameStats = gameStatsAsync.valueOrNull;
-    final dateStr = DateFormat('EEE, MMM d').format(game.startTime);
-    final timeStr = DateFormat('h:mm a').format(game.startTime);
+    final dateStr = LeagueTime.formatJamaicaDate(
+      game.startTime,
+      pattern: 'EEE, MMM d',
+    );
+    final timeStr = LeagueTime.formatJamaicaTime(game.startTime);
     final isApproved =
         game.statsStatus == StatsStatus.approved ||
         gameStats?.status == GameStatsStatus.approved;

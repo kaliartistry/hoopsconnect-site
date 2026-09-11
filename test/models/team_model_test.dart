@@ -56,4 +56,36 @@ void main() {
     expect(team.normalizedName, 'montego bay storm');
     expect(team.toFirestore()['normalizedName'], 'montego bay storm');
   });
+
+  test('schedule eligibility requires the exact season and division', () {
+    final teams = [
+      TeamModel(
+        id: 'eligible',
+        name: 'Eligible',
+        seasonId: 'season_1',
+        divisionId: 'premier',
+      ),
+      TeamModel(
+        id: 'wrong_season',
+        name: 'Wrong Season',
+        seasonId: 'season_2',
+        divisionId: 'premier',
+      ),
+      TeamModel(
+        id: 'wrong_division',
+        name: 'Wrong Division',
+        seasonId: 'season_1',
+        divisionId: 'development',
+      ),
+    ];
+
+    expect(
+      teamsEligibleForSchedule(
+        teams: teams,
+        seasonId: 'season_1',
+        divisionId: 'premier',
+      ).map((team) => team.id),
+      ['eligible'],
+    );
+  });
 }

@@ -23,14 +23,54 @@ void main() {
     expect(division.toFirestore()['status'], 'archived');
   });
 
+  test('unknown explicit division status fails closed', () {
+    expect(
+      () => DivisionModel.fromMap(
+        id: 'premier',
+        data: const {'name': 'Premier', 'status': 'deleted-ish'},
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('dependency report names reference classes and blocks deletion', () {
     const report = DivisionDependencyReport(
-      teamNames: ['Kingston Lions'],
-      eventTitles: ['Lions vs Storm'],
+      teamReferences: [
+        DivisionReference(
+          kind: DivisionReferenceKind.team,
+          id: 'team_1',
+          path: 'associations/jba/teams/team_1',
+          displayName: 'Kingston Lions',
+        ),
+      ],
+      eventReferences: [
+        DivisionReference(
+          kind: DivisionReferenceKind.event,
+          id: 'event_1',
+          path: 'associations/jba/events/event_1',
+          displayName: 'Lions vs Storm',
+        ),
+      ],
     );
 
-    expect(report.canDelete, isFalse);
+    expect(report.hasReferences, isTrue);
     expect(report.totalReferences, 2);
     expect(report.summary, '1 team and 1 scheduled event');
+  });
+
+  test('malformed dependency names retain an explicit blocking label', () {
+    expect(
+      divisionReferenceDisplayName(const {
+        'unexpected': 'shape',
+      }, fallback: 'Unnamed team (team_bad)'),
+      'Unnamed team (team_bad)',
+    );
+    expect(
+      divisionReferenceDisplayName(
+        '   ',
+        fallback: 'Untitled event (event_bad)',
+      ),
+      'Untitled event (event_bad)',
+    );
   });
 }

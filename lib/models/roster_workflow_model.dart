@@ -45,22 +45,40 @@ class RosterProposalSummary {
   final RosterApprovalStatus status;
   final String teamId;
   final String seasonId;
-  final String? playerId;
+  final RosterPlayerFacts? before;
+  final RosterPlayerFacts? after;
+  final String reason;
   final String requestedByName;
   final DateTime? requestedAt;
   final String? reviewNote;
 
-  const RosterProposalSummary({
+  RosterProposalSummary({
     required this.proposalId,
     required this.kind,
     required this.status,
     required this.teamId,
     required this.seasonId,
-    this.playerId,
+    required this.before,
+    required this.after,
+    required this.reason,
     required this.requestedByName,
     this.requestedAt,
     this.reviewNote,
-  });
+  }) {
+    if (reason.trim().isEmpty) {
+      throw ArgumentError.value(reason, 'reason', 'must be nonempty');
+    }
+    final validFacts = switch (kind) {
+      RosterChangeKind.addPlayer => before == null && after != null,
+      RosterChangeKind.updatePlayer => before != null && after != null,
+      RosterChangeKind.removePlayer => before != null && after == null,
+    };
+    if (!validFacts) {
+      throw ArgumentError(
+        'Proposal before/after facts do not match ${kind.name}',
+      );
+    }
+  }
 
   factory RosterProposalSummary.fromMap(Map<String, dynamic> map) {
     return RosterProposalSummary(
@@ -69,10 +87,57 @@ class RosterProposalSummary {
       status: RosterApprovalStatus.values.byName(_requiredText(map, 'status')),
       teamId: _requiredText(map, 'teamId'),
       seasonId: _requiredText(map, 'seasonId'),
-      playerId: _optionalText(map['playerId']),
+      before: _optionalMap(map['before'], RosterPlayerFacts.fromMap),
+      after: _optionalMap(map['after'], RosterPlayerFacts.fromMap),
+      reason: _requiredText(map, 'reason'),
       requestedByName: _requiredText(map, 'requestedByName'),
       requestedAt: _optionalUtcDateTime(map['requestedAt']),
       reviewNote: _optionalText(map['reviewNote']),
+    );
+  }
+}
+
+class RosterPlayerFacts {
+  final String? playerId;
+  final String? registrationId;
+  final String displayName;
+  final String jerseyNumber;
+  final String? position;
+
+  const RosterPlayerFacts({
+    this.playerId,
+    this.registrationId,
+    required this.displayName,
+    required this.jerseyNumber,
+    this.position,
+  });
+
+  factory RosterPlayerFacts.fromMap(Map<String, dynamic> map) {
+    final playerId = _optionalText(map['playerId']);
+    final registrationId = _optionalText(map['registrationId']);
+    if ((playerId == null) != (registrationId == null)) {
+      throw const FormatException(
+        'playerId and registrationId must both be present or both be absent',
+      );
+    }
+    if (playerId != null) {
+      _requireId('playerId', playerId);
+      _requireId('registrationId', registrationId);
+    }
+    final displayName = _requiredText(map, 'displayName');
+    if (displayName.length > 120) {
+      throw const FormatException('displayName must be at most 120 characters');
+    }
+    final position = _optionalText(map['position']);
+    if ((position?.length ?? 0) > 40) {
+      throw const FormatException('position must be at most 40 characters');
+    }
+    return RosterPlayerFacts(
+      playerId: playerId,
+      registrationId: registrationId,
+      displayName: displayName,
+      jerseyNumber: _requiredJersey(map['jerseyNumber']),
+      position: position,
     );
   }
 }
@@ -106,6 +171,11 @@ class RosterWorkspace {
     );
   }
 }
+
+int preferredRosterPlayerCount({
+  required RosterWorkspace? canonicalWorkspace,
+  required int legacyAggregateCount,
+}) => canonicalWorkspace?.registrations.length ?? legacyAggregateCount;
 
 class RosterChangeRequest {
   static const schemaVersion = 1;
@@ -338,4 +408,10 @@ List<Map<String, dynamic>> _mapList(Object? value) {
         return Map<String, dynamic>.from(entry);
       })
       .toList(growable: false);
+}
+
+T? _optionalMap<T>(Object? value, T Function(Map<String, dynamic>) decode) {
+  if (value == null) return null;
+  if (value is! Map) throw const FormatException('Expected an object');
+  return decode(Map<String, dynamic>.from(value));
 }

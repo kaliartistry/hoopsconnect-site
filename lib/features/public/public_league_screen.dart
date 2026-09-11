@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
 import '../../models/public_league_snapshot.dart';
 import '../../providers/public_league_provider.dart';
 
@@ -129,9 +129,7 @@ class _GamesTab extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          DateFormat(
-                            'EEE, MMM d • h:mm a',
-                          ).format(game.startTime.toLocal()),
+                          '${LeagueTime.formatJamaicaDate(game.startTime, pattern: 'EEE, MMM d')} • ${LeagueTime.formatJamaicaTime(game.startTime)}',
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
 import '../../core/widgets/skeleton_loader.dart';
 import '../../models/game_stats_model.dart';
 import '../../models/event_model.dart';
@@ -384,7 +385,7 @@ class _TodayGameCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeStr = DateFormat('h:mm a').format(event.startTime);
+    final timeStr = LeagueTime.formatJamaicaTime(event.startTime);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),

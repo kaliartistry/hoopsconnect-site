@@ -27,14 +27,21 @@ class DivisionModel {
     required String id,
     required Map<String, dynamic> data,
   }) {
+    final statusValue = data['status'];
+    final status = switch (statusValue) {
+      null => DivisionStatus.active,
+      String value when DivisionStatus.values.asNameMap().containsKey(value) =>
+        DivisionStatus.values.byName(value),
+      _ => throw FormatException(
+        'Division $id has an unsupported explicit status: $statusValue',
+      ),
+    };
     return DivisionModel(
       id: id,
       name: data['name'] as String,
       seasonId: data['seasonId'] as String?,
       description: data['description'] as String?,
-      status:
-          DivisionStatus.values.asNameMap()[data['status']] ??
-          DivisionStatus.active,
+      status: status,
     );
   }
 

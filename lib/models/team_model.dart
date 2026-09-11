@@ -87,3 +87,11 @@ List<TeamModel> teamNameConflicts({
       )
       .toList(growable: false);
 }
+
+List<TeamModel> teamsEligibleForSchedule({
+  required Iterable<TeamModel> teams,
+  required String seasonId,
+  required String divisionId,
+}) => teams
+    .where((team) => team.seasonId == seasonId && team.divisionId == divisionId)
+    .toList(growable: false);

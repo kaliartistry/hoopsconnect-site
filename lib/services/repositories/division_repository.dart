@@ -67,58 +67,85 @@ class DivisionRepository {
           .get(),
     ]);
     final teams = results[0].docs
-        .map((doc) => doc.data()['name'])
-        .whereType<String>()
-        .where((name) => name.trim().isNotEmpty)
+        .map(
+          (doc) => DivisionReference(
+            kind: DivisionReferenceKind.team,
+            id: doc.id,
+            path: doc.reference.path,
+            displayName: divisionReferenceDisplayName(
+              doc.data()['name'],
+              fallback: 'Unnamed team (${doc.id})',
+            ),
+          ),
+        )
         .toList(growable: false);
     final events = results[1].docs
-        .map((doc) => doc.data()['title'])
-        .whereType<String>()
-        .where((title) => title.trim().isNotEmpty)
+        .map(
+          (doc) => DivisionReference(
+            kind: DivisionReferenceKind.event,
+            id: doc.id,
+            path: doc.reference.path,
+            displayName: divisionReferenceDisplayName(
+              doc.data()['title'],
+              fallback: 'Untitled scheduled event (${doc.id})',
+            ),
+          ),
+        )
         .toList(growable: false);
-    return DivisionDependencyReport(teamNames: teams, eventTitles: events);
-  }
-
-  /// Best-effort legacy protection. The integration request replaces this
-  /// client-side check with one server transaction before release.
-  Future<DivisionDependencyReport> deleteIfUnreferenced(
-    String assocId,
-    String divisionId,
-  ) async {
-    final dependencies = await inspectDependencies(assocId, divisionId);
-    if (!dependencies.canDelete) return dependencies;
-    await deleteDivision(assocId, divisionId);
-    return dependencies;
-  }
-
-  Future<void> deleteDivision(String assocId, String divisionId) {
-    return _db.doc(FirestorePaths.division(assocId, divisionId)).delete();
+    return DivisionDependencyReport(
+      teamReferences: teams,
+      eventReferences: events,
+    );
   }
 }
 
+enum DivisionReferenceKind { team, event }
+
+class DivisionReference {
+  final DivisionReferenceKind kind;
+  final String id;
+  final String path;
+  final String displayName;
+
+  const DivisionReference({
+    required this.kind,
+    required this.id,
+    required this.path,
+    required this.displayName,
+  });
+}
+
 class DivisionDependencyReport {
-  final List<String> teamNames;
-  final List<String> eventTitles;
+  final List<DivisionReference> teamReferences;
+  final List<DivisionReference> eventReferences;
 
   const DivisionDependencyReport({
-    this.teamNames = const [],
-    this.eventTitles = const [],
+    this.teamReferences = const [],
+    this.eventReferences = const [],
   });
 
-  bool get canDelete => teamNames.isEmpty && eventTitles.isEmpty;
+  bool get hasReferences =>
+      teamReferences.isNotEmpty || eventReferences.isNotEmpty;
 
-  int get totalReferences => teamNames.length + eventTitles.length;
+  int get totalReferences => teamReferences.length + eventReferences.length;
 
   String get summary {
     final parts = <String>[];
-    if (teamNames.isNotEmpty) {
-      parts.add('${teamNames.length} team${teamNames.length == 1 ? '' : 's'}');
-    }
-    if (eventTitles.isNotEmpty) {
+    if (teamReferences.isNotEmpty) {
       parts.add(
-        '${eventTitles.length} scheduled event${eventTitles.length == 1 ? '' : 's'}',
+        '${teamReferences.length} team${teamReferences.length == 1 ? '' : 's'}',
+      );
+    }
+    if (eventReferences.isNotEmpty) {
+      parts.add(
+        '${eventReferences.length} scheduled event${eventReferences.length == 1 ? '' : 's'}',
       );
     }
     return parts.join(' and ');
   }
+}
+
+String divisionReferenceDisplayName(Object? value, {required String fallback}) {
+  if (value is! String || value.trim().isEmpty) return fallback;
+  return value.trim();
 }

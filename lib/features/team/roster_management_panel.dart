@@ -109,26 +109,83 @@ class TeamRosterManagementPanel extends ConsumerWidget {
             ),
           ),
         const SizedBox(height: 10),
-        legacyRoster.when(
-          data: (players) => _RosterList(
-            players: players,
-            workspace: workspace?.valueOrNull,
-            user: user,
-            authority: authority,
-            target: target,
-          ),
-          loading: () =>
-              const AppLoadingState(label: 'Loading roster', compact: true),
-          error: (error, _) => AppStateMessage(
-            title: 'Roster could not be loaded',
-            message: ErrorMapper.map(error),
-            tone: AppStateTone.error,
-            actionLabel: 'Try again',
-            onAction: () => ref.invalidate(teamRosterProvider(team.id)),
-            compact: true,
-          ),
+        _buildRosterProjection(
+          ref: ref,
+          legacyRoster: legacyRoster,
+          workspace: workspace?.valueOrNull,
+          user: user,
+          authority: authority,
+          target: target,
+          teamId: team.id,
         ),
       ],
+    );
+  }
+
+  Widget _buildRosterProjection({
+    required WidgetRef ref,
+    required AsyncValue<List<PlayerSeasonStatsModel>> legacyRoster,
+    required RosterWorkspace? workspace,
+    required UserModel? user,
+    required RosterClientAuthority authority,
+    required ({String teamId, String seasonId})? target,
+    required String teamId,
+  }) {
+    final canonicalAvailable = workspace != null;
+    return legacyRoster.when(
+      data: (players) => _RosterList(
+        players: players,
+        workspace: workspace,
+        user: user,
+        authority: authority,
+        target: target,
+      ),
+      loading: () => canonicalAvailable
+          ? Column(
+              children: [
+                _RosterList(
+                  players: const [],
+                  workspace: workspace,
+                  user: user,
+                  authority: authority,
+                  target: target,
+                ),
+                const AppLoadingState(
+                  label: 'Loading season statistics',
+                  compact: true,
+                ),
+              ],
+            )
+          : const AppLoadingState(label: 'Loading roster', compact: true),
+      error: (error, _) => canonicalAvailable
+          ? Column(
+              children: [
+                _RosterList(
+                  players: const [],
+                  workspace: workspace,
+                  user: user,
+                  authority: authority,
+                  target: target,
+                ),
+                AppStateMessage(
+                  title: 'Season statistics unavailable',
+                  message:
+                      'Canonical registrations are shown. Historical aggregates could not be loaded: ${ErrorMapper.map(error)}',
+                  tone: AppStateTone.warning,
+                  actionLabel: 'Retry statistics',
+                  onAction: () => ref.invalidate(teamRosterProvider(teamId)),
+                  compact: true,
+                ),
+              ],
+            )
+          : AppStateMessage(
+              title: 'Roster could not be loaded',
+              message: ErrorMapper.map(error),
+              tone: AppStateTone.error,
+              actionLabel: 'Try again',
+              onAction: () => ref.invalidate(teamRosterProvider(teamId)),
+              compact: true,
+            ),
     );
   }
 
@@ -207,8 +264,19 @@ class _WorkspaceStatusState extends ConsumerState<_WorkspaceStatus> {
             child: ListTile(
               leading: const Icon(Icons.pending_actions_outlined),
               title: Text(_proposalLabel(proposal.kind)),
-              subtitle: Text(
-                'Requested by ${proposal.requestedByName} • Pending admin approval',
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Requested by ${proposal.requestedByName} • Pending admin approval',
+                  ),
+                  const SizedBox(height: 6),
+                  if (proposal.before != null)
+                    Text('Before: ${_formatFacts(proposal.before!)}'),
+                  if (proposal.after != null)
+                    Text('After: ${_formatFacts(proposal.after!)}'),
+                  Text('Reason: ${proposal.reason}'),
+                ],
               ),
               trailing: _reviewing.contains(proposal.proposalId)
                   ? const SizedBox(
@@ -267,13 +335,31 @@ class _WorkspaceStatusState extends ConsumerState<_WorkspaceStatus> {
               ? 'Approve roster request?'
               : 'Reject roster request?',
         ),
-        content: TextField(
-          controller: noteController,
-          maxLines: 3,
-          decoration: InputDecoration(
-            labelText: decision == RosterProposalDecision.reject
-                ? 'Reason for rejection'
-                : 'Review note (optional)',
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (proposal.before != null)
+                  Text('Before: ${_formatFacts(proposal.before!)}'),
+                if (proposal.after != null)
+                  Text('After: ${_formatFacts(proposal.after!)}'),
+                const SizedBox(height: 8),
+                Text('Requested reason: ${proposal.reason}'),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: noteController,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: decision == RosterProposalDecision.reject
+                        ? 'Reason for rejection'
+                        : 'Review note (optional)',
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -360,7 +446,8 @@ class _RosterList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final registrations =
         workspace?.registrations ?? const <RosterRegistration>[];
-    if (players.isEmpty && registrations.isEmpty) {
+    if ((workspace == null && players.isEmpty) ||
+        (workspace != null && registrations.isEmpty)) {
       return const AppStateMessage(
         title: 'No registered players',
         message: 'This team does not have a roster for the active season yet.',
@@ -375,10 +462,9 @@ class _RosterList extends ConsumerWidget {
     final statsByPlayer = {
       for (final player in players) player.playerId: player,
     };
-    final playerIds = <String>{
-      ...statsByPlayer.keys,
-      ...registrationsByPlayer.keys,
-    };
+    final playerIds = workspace == null
+        ? statsByPlayer.keys.toSet()
+        : registrationsByPlayer.keys.toSet();
     final ordered =
         playerIds
             .map(
@@ -735,6 +821,12 @@ String _proposalLabel(RosterChangeKind kind) => switch (kind) {
   RosterChangeKind.updatePlayer => 'Update registration',
   RosterChangeKind.removePlayer => 'Remove player',
 };
+
+String _formatFacts(RosterPlayerFacts facts) => [
+  facts.displayName,
+  '#${facts.jerseyNumber}',
+  if (facts.position != null) facts.position!,
+].join(' • ');
 
 String _receiptMessage(RosterChangeReceipt receipt) => switch (receipt.status) {
   RosterApprovalStatus.pending =>

@@ -145,8 +145,8 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
                     onSelected: (action) {
                       if (action == 'archive') {
                         _setArchived(!division.isArchived);
-                      } else if (action == 'delete') {
-                        _inspectAndConfirmDelete();
+                      } else if (action == 'dependencies') {
+                        _showDependencies();
                       }
                     },
                     itemBuilder: (_) => [
@@ -165,11 +165,11 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
                         ),
                       ),
                       const PopupMenuItem(
-                        value: 'delete',
+                        value: 'dependencies',
                         child: ListTile(
                           contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.delete_outline),
-                          title: Text('Delete permanently'),
+                          leading: Icon(Icons.account_tree_outlined),
+                          title: Text('Review dependencies'),
                         ),
                       ),
                     ],
@@ -210,7 +210,7 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
     }
   }
 
-  Future<void> _inspectAndConfirmDelete() async {
+  Future<void> _showDependencies() async {
     final assocId = ref.read(currentAssociationIdProvider);
     if (assocId == null) return;
     setState(() => _updating = true);
@@ -219,88 +219,59 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
           .read(divisionRepositoryProvider)
           .inspectDependencies(assocId, widget.division.id);
       if (!mounted) return;
-      if (!report.canDelete) {
-        await showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Division cannot be deleted'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${widget.division.name} is still used by ${report.summary}. Move those records to another division first, or archive this division.',
-                  ),
-                  if (report.teamNames.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Teams',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    ...report.teamNames.take(5).map((name) => Text('• $name')),
-                  ],
-                  if (report.eventTitles.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Scheduled events',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    ...report.eventTitles
-                        .take(5)
-                        .map((title) => Text('• $title')),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-        );
-        return;
-      }
-
-      final confirmed = await showDialog<bool>(
+      await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Delete division permanently?'),
-          content: Text(
-            '${widget.division.name} has no teams or scheduled events linked to it. Deleting it cannot be undone.',
+          title: const Text('Division dependencies'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  report.hasReferences
+                      ? '${widget.division.name} is still used by ${report.summary}. Move those records first, or archive the division.'
+                      : '${widget.division.name} has no legacy team or scheduled-event references in this check.',
+                ),
+                if (report.teamReferences.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Teams',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  ...report.teamReferences
+                      .take(10)
+                      .map((reference) => Text('• ${reference.displayName}')),
+                ],
+                if (report.eventReferences.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Scheduled events',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  ...report.eventReferences
+                      .take(10)
+                      .map((reference) => Text('• ${reference.displayName}')),
+                ],
+                const SizedBox(height: 16),
+                const AppStateMessage(
+                  title: 'Permanent deletion is unavailable',
+                  message:
+                      'An atomic server check must inspect legacy and canonical references in the same transaction before deleting. Archive is available now.',
+                  tone: AppStateTone.warning,
+                  compact: true,
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Delete permanently'),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
             ),
           ],
         ),
       );
-      if (confirmed != true || !mounted) return;
-      final secondReport = await ref
-          .read(divisionRepositoryProvider)
-          .deleteIfUnreferenced(assocId, widget.division.id);
-      if (!mounted) return;
-      if (!secondReport.canDelete) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Deletion stopped because ${secondReport.summary} was linked while you were reviewing.',
-            ),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${widget.division.name} deleted.')),
-        );
-      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(

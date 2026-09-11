@@ -67,7 +67,7 @@ void main() {
   testWidgets('manager sees registration facts without fabricated stats', (
     tester,
   ) async {
-    const workspace = RosterWorkspace(
+    final workspace = RosterWorkspace(
       rosterVersion: 2,
       registrations: [
         RosterRegistration(
@@ -109,10 +109,124 @@ void main() {
     expect(find.textContaining('Season stats not calculated'), findsOneWidget);
   });
 
-  testWidgets('pending representative proposal is clearly not approved', (
+  testWidgets('canonical registrations remain visible when aggregates fail', (
     tester,
   ) async {
     const workspace = RosterWorkspace(
+      rosterVersion: 2,
+      registrations: [
+        RosterRegistration(
+          registrationId: 'registration_1',
+          playerId: 'player_1',
+          displayName: 'Canonical Player',
+          teamId: 'team_1',
+          seasonId: 'season_1',
+          jerseyNumber: '0',
+          status: 'active',
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(AsyncValue.data(manager())),
+          rosterWorkspaceProvider.overrideWith(
+            (ref, target) async => workspace,
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TeamRosterManagementPanel(
+              team: team,
+              seasonId: 'season_1',
+              legacyRoster: AsyncValue.error(
+                StateError('legacy aggregate unavailable'),
+                StackTrace.empty,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Canonical Player'), findsOneWidget);
+    expect(find.text('0'), findsOneWidget);
+    expect(find.text('Season statistics unavailable'), findsOneWidget);
+  });
+
+  testWidgets('canonical empty roster does not revive stale aggregate rows', (
+    tester,
+  ) async {
+    const workspace = RosterWorkspace(rosterVersion: 3);
+    const staleAggregate = PlayerSeasonStatsModel(
+      id: 'stale_season_1',
+      playerId: 'stale',
+      playerName: 'Stale Legacy Player',
+      teamId: 'team_1',
+      seasonId: 'season_1',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(AsyncValue.data(manager())),
+          rosterWorkspaceProvider.overrideWith(
+            (ref, target) async => workspace,
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TeamRosterManagementPanel(
+              team: team,
+              seasonId: 'season_1',
+              legacyRoster: const AsyncValue.data([staleAggregate]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('No registered players'), findsOneWidget);
+    expect(find.text('Stale Legacy Player'), findsNothing);
+  });
+
+  testWidgets('canonical empty roster survives aggregate failure', (
+    tester,
+  ) async {
+    const workspace = RosterWorkspace(rosterVersion: 3);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(AsyncValue.data(manager())),
+          rosterWorkspaceProvider.overrideWith(
+            (ref, target) async => workspace,
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TeamRosterManagementPanel(
+              team: team,
+              seasonId: 'season_1',
+              legacyRoster: AsyncValue.error(
+                StateError('legacy aggregate unavailable'),
+                StackTrace.empty,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('No registered players'), findsOneWidget);
+    expect(find.text('Season statistics unavailable'), findsOneWidget);
+  });
+
+  testWidgets('pending representative proposal is clearly not approved', (
+    tester,
+  ) async {
+    final workspace = RosterWorkspace(
       rosterVersion: 2,
       proposals: [
         RosterProposalSummary(
@@ -121,6 +235,13 @@ void main() {
           status: RosterApprovalStatus.pending,
           teamId: 'team_1',
           seasonId: 'season_1',
+          before: null,
+          after: const RosterPlayerFacts(
+            displayName: 'Aaliyah Brown',
+            jerseyNumber: '00',
+            position: 'Guard',
+          ),
+          reason: 'New registration',
           requestedByName: 'Team Rep',
         ),
       ],
@@ -153,6 +274,91 @@ void main() {
     expect(find.text('Propose player'), findsOneWidget);
     expect(find.textContaining('pending roster request'), findsOneWidget);
     expect(find.textContaining('Pending admin approval'), findsOneWidget);
+    expect(
+      find.textContaining('After: Aaliyah Brown • #00 • Guard'),
+      findsOneWidget,
+    );
+    expect(find.text('Reason: New registration'), findsOneWidget);
     expect(find.text('Approve'), findsNothing);
+  });
+
+  testWidgets('admin sees immutable proposal facts before approval', (
+    tester,
+  ) async {
+    final workspace = RosterWorkspace(
+      rosterVersion: 4,
+      proposals: [
+        RosterProposalSummary(
+          proposalId: 'proposal_2',
+          kind: RosterChangeKind.updatePlayer,
+          status: RosterApprovalStatus.pending,
+          teamId: 'team_1',
+          seasonId: 'season_1',
+          before: const RosterPlayerFacts(
+            playerId: 'player_1',
+            registrationId: 'registration_1',
+            displayName: 'Aaliyah Brown',
+            jerseyNumber: '0',
+            position: 'Forward',
+          ),
+          after: const RosterPlayerFacts(
+            playerId: 'player_1',
+            registrationId: 'registration_1',
+            displayName: 'Aaliyah Brown',
+            jerseyNumber: '00',
+            position: 'Guard',
+          ),
+          reason: 'Correct jersey and position',
+          requestedByName: 'Team Rep',
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(AsyncValue.data(manager())),
+          rosterWorkspaceProvider.overrideWith(
+            (ref, target) async => workspace,
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TeamRosterManagementPanel(
+              team: team,
+              seasonId: 'season_1',
+              legacyRoster: const AsyncValue.data([]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Before: Aaliyah Brown • #0 • Forward'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('After: Aaliyah Brown • #00 • Guard'),
+      findsOneWidget,
+    );
+    expect(find.text('Reason: Correct jersey and position'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Approve roster request?'), findsOneWidget);
+    expect(
+      find.text('Requested reason: Correct jersey and position'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Before: Aaliyah Brown • #0 • Forward'),
+      findsNWidgets(2),
+    );
+    expect(
+      find.textContaining('After: Aaliyah Brown • #00 • Guard'),
+      findsNWidgets(2),
+    );
   });
 }
