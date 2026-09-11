@@ -15,6 +15,27 @@ void main() {
       expect(branding.sponsor.isActive, false);
     });
 
+    test('preserves the exact JBA green and gold defaults', () {
+      final branding = AssociationBrandingModel.jba();
+      final serialized = branding.toBrandingMap();
+
+      expect(branding.primaryColorHex, '#2E7D32');
+      expect(branding.secondaryColorHex, '#1B5E20');
+      expect(branding.accentColorHex, '#F9A825');
+      expect(serialized['primaryColorHex'], '#2E7D32');
+      expect(serialized['secondaryColorHex'], '#1B5E20');
+      expect(serialized['accentColorHex'], '#F9A825');
+    });
+
+    test('accepts only complete six-digit color hex values', () {
+      expect(AssociationBrandingModel.isValidColorHex('#2E7D32'), isTrue);
+      expect(AssociationBrandingModel.isValidColorHex('#f9a825'), isTrue);
+      expect(AssociationBrandingModel.isValidColorHex('2E7D32'), isFalse);
+      expect(AssociationBrandingModel.isValidColorHex('#FFF'), isFalse);
+      expect(AssociationBrandingModel.isValidColorHex('#12ZZ99'), isFalse);
+      expect(AssociationBrandingModel.isValidColorHex('#2E7D3200'), isFalse);
+    });
+
     test('reads a valid league and sponsor configuration', () {
       final branding = AssociationBrandingModel.fromMap(
         associationId: 'league-1',
