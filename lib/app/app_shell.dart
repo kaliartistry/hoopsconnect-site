@@ -154,22 +154,6 @@ class AppShell extends ConsumerWidget {
               labelType: desktop
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.selected,
-              selectedIconTheme: IconThemeData(
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              selectedLabelTextStyle: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-              unselectedIconTheme: const IconThemeData(
-                color: AppColors.textSecondary,
-              ),
-              unselectedLabelTextStyle: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
-              ),
-              indicatorColor: Theme.of(context).colorScheme.primaryContainer,
               destinations: tabs
                   .map(
                     (tab) => NavigationRailDestination(
