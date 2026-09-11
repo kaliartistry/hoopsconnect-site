@@ -29,8 +29,9 @@ const pinnedMergedMainBlobs = Object.freeze({
     '4b91340f8932e4998685f854e46e304d9d0375ab',
   'docs/planning/official-stat-account-deletion-addendum.md':
     '214910b936b9a876eff6dd72143ef982e2d15fb8',
+  // Reviewed dormant courtside-recovery contract; AD03 stays absent.
   'docs/planning/local-game-journal-v1.md':
-    '9fc65f3dfaf0d0a219b42d73a2cf91d2aa3d493f',
+    'd63191edfe1de6ec26da2e2029c6260d255e9bcf',
   // Reviewed public deep-link transition: URL strategy only; AD03 stays absent.
   'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
