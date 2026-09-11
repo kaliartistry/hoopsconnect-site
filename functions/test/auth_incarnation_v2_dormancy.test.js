@@ -11,9 +11,11 @@ const baselineGitBlobHashes = Object.freeze({
   'functions/src/index.ts': '78ebe0c51a1550132da8201b0f2e7b783260cb38',
   'firestore.rules': '9dc99cf1f7c597dd556898424b2911154abe3fc3',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
+  // Reviewed public deep-link transition: URL strategy only; V2 stays absent.
+  'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': 'dc7cc1b435db6d50b147dd8a4128061b20bedc6f',
+  // Reviewed public detail-route mount; V2 candidate imports stay excluded.
+  'lib/app/router/app_router.dart': '32e9c991342d9da2d40185b634e3db0285b5200e',
   'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
 });
 

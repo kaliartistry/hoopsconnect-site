@@ -31,9 +31,11 @@ const pinnedMergedMainBlobs = Object.freeze({
     '214910b936b9a876eff6dd72143ef982e2d15fb8',
   'docs/planning/local-game-journal-v1.md':
     '9fc65f3dfaf0d0a219b42d73a2cf91d2aa3d493f',
-  'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
+  // Reviewed public deep-link transition: URL strategy only; AD03 stays absent.
+  'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': 'dc7cc1b435db6d50b147dd8a4128061b20bedc6f',
+  // Reviewed public detail-route mount; AD03 candidate imports stay excluded.
+  'lib/app/router/app_router.dart': '32e9c991342d9da2d40185b634e3db0285b5200e',
 });
 
 function read(relativePath) {
