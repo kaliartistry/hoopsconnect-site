@@ -4,7 +4,7 @@ Owner: Workstream Q
 
 Prepared: 11 September 2026
 
-Status: Stage 0 baseline accepted for scenario execution; no production or release action authorized
+Status: integrated local candidate accepted for continued release-gate evaluation; no production, deployment, migration, merge, or store action authorized
 
 ## Acceptance source and checkpoint
 
@@ -15,6 +15,8 @@ Status: Stage 0 baseline accepted for scenario execution; no production or relea
   `a099df5dc1da2445619c12cdaf9e0903f491f6d696323911b4014150a1302ee8`.
 - Stage 0 implementation checkpoint:
   `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
+- Integrated code candidate checkpoint: `ab26cfd` on
+  `codex/qa-remediation-integration`.
 - Synthetic target: `demo-hoopsconnect-stage0-platform` through
   `lib/main_qa.dart` and loopback emulators only.
 
@@ -71,6 +73,28 @@ This accepts the Stage 0 platform as the base for later checkpoint testing. It
 does not claim that live Hosting, social-provider flows, physical devices,
 screen readers, poor-network recovery or any Stage 1/2 feature is verified.
 
+## Integrated candidate readback
+
+The integration owner and independent packet reviewers subsequently assembled
+and exercised the candidate through `ab26cfd`. No production credentials,
+production data, deployment, external delivery, live activation, migration, or
+store action was used.
+
+| Check | Result | Evidence boundary |
+| --- | --- | --- |
+| Flutter test suite | Pass: 925 passed, 16 intentionally skipped | Complete repository suite; skips are the documented activation/provider cases |
+| Security emulator gate | Pass | Contracts, Functions, notifications, callables, Firestore Rules, Storage Rules, and dormant account-lifecycle suites ran against the isolated demo project |
+| Public Functions suite | Pass: 23/23 | Version-bound public output and private-data separation remain enforced |
+| CSP and QA fixture regression suite | Pass: 13/13 | Exact font origin, isolated Hosting headers, certified synthetic legacy projection, and ranked fixture rows are covered |
+| Rendered sign-in | Pass in local Chromium | Real keyboard Return submitted the form and reached the super-admin shell with no console errors or warnings |
+| Rendered public journey | Pass at desktop and phone viewports | Games, standings, and team details used canonical `/public/...` URLs; direct load, refresh, in-app Back, and browser Back retained the route |
+| Rendered admin journey | Pass at desktop and phone viewports | Branding preview/discard protection and the locked season-management surface rendered and behaved as designed |
+
+This readback accepts the local web candidate, not the live product. Physical
+iOS/Android devices, VoiceOver/TalkBack, live Firebase/App Check and identity
+providers, production Hosting, poor-network recovery, and JBA policy adoption
+remain explicit external gates.
+
 ## Finding ledger
 
 `Planned` means the scenario is ready but the integrated implementation has not
@@ -79,15 +103,15 @@ slice passed, but the complete user-facing closure proof remains open. A finding
 becomes `Verified` only on a named full integrated SHA with the required
 rendered, backend and persistence evidence.
 
-| ID | Q scenario(s) | Stage 0 Q state | Closure condition |
+| ID | Q scenario(s) | Current Q state | Closure condition |
 | --- | --- | --- | --- |
-| F-01 | `F01-WEB-BOOT` | Partial Stage 0: local fresh/update boot passes both QA and production-header CSP profiles | Repeat on accepted clean candidate; read live URL separately before describing deployment state |
+| F-01 | `F01-WEB-BOOT` | Candidate pass locally: fresh/update boot and rendered Chromium load pass under exact QA/production-header CSP profiles | Read the live URL separately after deployment authorization before describing production state |
 | F-02 | `F02-STATISTICIAN-ROUTES` | Planned | Assigned statistician reaches entry/revision; every unauthorized role is denied by route and backend |
 | F-03 | `F03-ACK-FEEDBACK`, `F03-SHARE-FEEDBACK`, `F03-ROLE-CHANGE-FEEDBACK` | Planned, intentionally split | Success, refusal, unavailable backend/platform, lost response, duplicate action and retry for each action |
 | F-04 | `F04-RESULT-INTEGRITY` | Planned | Contradictions cannot certify/publish; normal and exceptional results remain consistent everywhere |
 | F-05 | `F05-LEAGUE-TIME` | Planned | Cross-midnight Jamaica/New York case and New York DST fold agree across every consumer |
-| F-06 | `F06-KEYBOARD-SIGNIN` | Partial Stage 0: focused widget suite passes | Real browser keyboard journey, visible focus, semantics and assistive-technology evidence |
-| F-07 | `F07-FAN-LANDING` | Planned | First/returning login, reload, deep link, Back and selected navigation agree |
+| F-06 | `F06-KEYBOARD-SIGNIN` | Candidate partial: focused widgets and real Chromium Return-to-submit pass | Add visible-focus and physical assistive-technology evidence |
+| F-07 | `F07-FAN-LANDING` | Candidate partial: guest public routing, refresh, direct URL and Back pass locally | Complete first/returning authenticated fan and native-device journeys |
 | F-08 | `F08-PASSWORD-RECOVERY` | Planned | Generic non-enumerating recovery plus provider-aware failure/retry behavior |
 | F-09 | `F09-REP-ROSTER` | Planned | Own-team proposal/approval works; unrelated team and stale authority fail closed |
 | F-10 | `F10-ADMIN-CAPABILITIES` | Planned | Each menu/route/mutation follows its actual capability for admin and superAdmin |
@@ -95,22 +119,22 @@ rendered, backend and persistence evidence.
 | F-12 | `F12-RULES-PROFILE` | Blocked-decision for activation | Candidate-profile tests pass; JBA adoption evidence names exact profile and exceptions before activation |
 | F-13 | `F13-WORKLIST`, `F13-POST-GAME-ONLY-MATCH` | Planned | Preparation, live, completed, review, revision and approved states appear only in correct queues; post-game matching uses explicit state rather than elapsed time |
 | F-14 | `F14-REVISION-N-NPLUS1` | Planned | N is sent back, stale approval fails, N+1 is approved and appears once in every consumer |
-| F-15 | `F15-PUBLIC-DISCOVERY`, `F15-CSV-SAFETY` | Planned | Public direct URLs, division/ranking policy, stale/retracted states, public-only reads and formula-safe CSV pass |
+| F-15 | `F15-PUBLIC-DISCOVERY`, `F15-CSV-SAFETY` | Candidate partial: public direct URLs, drill-through, refresh/Back, division labels, ranked rows and public-only reads pass locally | Adopt ranking/qualification policy and complete stale/retracted plus rendered CSV coverage |
 | F-16 | `F16-LIVE-START`, `F16-COURTSIDE-INTERACTION` | Planned | JBA identity, rule-correct start/continuation behavior, scoped shortcuts and durable leave/re-enter state pass |
-| F-17 | `F17-ACCESSIBILITY`, `F17-DETAIL-ROUTES`, `F16-COURTSIDE-INTERACTION` | Partial Stage 0 primitives only | Keyboard, dialog focus/caret, VoiceOver/TalkBack, semantics, direct URL, refresh and Back evidence |
+| F-17 | `F17-ACCESSIBILITY`, `F17-DETAIL-ROUTES`, `F16-COURTSIDE-INTERACTION` | Candidate partial: keyboard submit and public detail direct URL, refresh and Back pass in Chromium | Complete dialog focus/caret, VoiceOver/TalkBack, native semantics, and courtside evidence |
 | F-18 | `F18-MALFORMED-DISPLAY`, `F18-FAIL-CLOSED` | Planned | Optional display faults recover; authority/scope/result/publication faults remain closed |
 | F-19 | `F19-MEDIA-ALIAS`, `F19-COPY-OPTIONS` | Planned, intentionally split | Legacy `press` remains compatible; one Media choice and role-appropriate copy/options pass |
 | F-20 | `F20-VERSION-METADATA` | Planned | About matches installed package and artifact metadata on each candidate |
-| F-21 | `F21-DARK-CONTRAST` | Partial Stage 0: theme/widget suite passes | All changed screens pass light/dark/high-contrast, custom-brand and rendered contrast review |
-| F-22 | `F22-INVITE-LIFECYCLE` | Planned | One issuance across retries, once-visible secret, team picker, callable errors and real local redemption |
+| F-21 | `F21-DARK-CONTRAST` | Candidate partial: theme/widget suite plus responsive custom-brand editor and preview pass | Complete all-screen dark/high-contrast and physical assistive-technology review |
+| F-22 | `F22-INVITE-LIFECYCLE` | Candidate partial: one issuance across retries, once-visible secret, picker, callable errors and local redemption pass | Complete physical-platform clipboard/share and live-provider evidence |
 | F-23 | `F23-LEAGUE-SETUP`, `F23-DIVISION-LIFECYCLE` | Planned | Stable team/player/registration IDs, `0`/`00`, history, no fabricated aggregates, and safe unused/referenced/archive division behavior |
 | F-24 | `F24-SCHEDULE-GENERATOR`, `F24-MANUAL-SCHEDULE` | Planned | Impossible progression blocked; generated and manual scheduling enforce division, distinct-team, duplicate/conflict and idempotency rules |
-| F-25 | `F25-LABELS`, `F25-ACK-DEADLINE`, `F25-SEASON-CONSEQUENCES` | Planned, intentionally split | Labels match outcomes; deadline policy is explicit; activation/archive consequences and cancellation are safe |
+| F-25 | `F25-LABELS`, `F25-ACK-DEADLINE`, `F25-SEASON-CONSEQUENCES` | Candidate partial: labels, explicit deadline state, locked season UI, callables, cancellation and exact recovery pass locally | Adopt JBA lifecycle consequences and complete authorized staging rehearsal before activation |
 | F-26 | `F26-ROLE-PREVIEW` | Planned | Preview works at 375/768/1440, stays visibly marked and grants no mutation authority |
 | X-01 | `X01-DELETION-ROUTES`, `X01-PROVIDERS-CUSTODY`, `X01-DISPOSITION-PRIVACY`, `X01-CLIENT-CLEANUP`, `X01-RELEASE-GATES` | Candidate contracts dormant; all G1-G11 remain closed | Lifecycle/provider/custody/27-adapter/privacy/restore plus session/listener/cache/token cleanup scenarios pass and every gate has real owner/evidence |
 | X-02 | `X02-OFFLINE-RECOVERY`, `F16-COURTSIDE-INTERACTION` | Journal contract dormant | Loss/restart/receipt/conflict/quota/revocation/correction/deletion plus courtside shortcut/caret/leave-reenter cases pass with honest visible state |
-| X-03 | `X03-LOCAL-BACKEND` | Partial Stage 0: complete isolated environment boots | Each repaired callable/rules/aggregation/delivery journey is driven with allowed and denied roles |
-| X-04 | `X04-VISUAL-MATRIX` | Partial Stage 0 primitives only | Every changed screen/state/role at 375/768/1440 plus representative native and assistive-technology evidence |
+| X-03 | `X03-LOCAL-BACKEND` | Candidate pass: complete isolated security emulator gate covers contracts, Functions, callables, Rules, Storage, delivery guards and dormant lifecycle modules | Repeat against the exact release checkpoint and authorized isolated staging when that gate opens |
+| X-04 | `X04-VISUAL-MATRIX` | Candidate partial: login, public, branding, and season screens pass desktop/phone Chromium review with zero console findings | Complete every role/state at 375/768/1440 plus native and assistive-technology evidence |
 | X-05 | `X05-RELEASE-REHEARSAL` | Planned for Stage 4 | Exact candidate, authorized isolated staging, dry run, restore/rollback and authoritative provider readback |
 
 ## Executable scenario catalog

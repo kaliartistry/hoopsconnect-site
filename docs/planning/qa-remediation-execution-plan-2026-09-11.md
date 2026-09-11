@@ -1,12 +1,12 @@
 # HoopsConnect QA remediation and execution plan
 
-Status: implementation in progress. Stage 0, the reviewed Stage 1 packets, the dormant account-lifecycle candidate, and the public/media packet are integrated. Stage 2 league-server and courtside-recovery candidates remain in corrective review; invite, communications, season, branding, and final rendered QA remain in progress.
+Status: integrated release candidate assembled and locally verified. The reviewed platform, access, league, communications, public/media, invitation, branding, and governed season packets are on the integration branch. Official statistics, courtside recovery, account lifecycle, public v2, and season activation remain deliberately dormant behind their recorded policy and provider gates.
 
 Prepared: 11 September 2026.
 
 ## Implementation progress snapshot
 
-Snapshot commit: `f0ee642` on `codex/qa-remediation-integration`.
+Code candidate snapshot: `ab26cfd` on `codex/qa-remediation-integration`.
 
 | Packet | State | Evidence at this snapshot |
 | --- | --- | --- |
@@ -15,11 +15,15 @@ Snapshot commit: `f0ee642` on `codex/qa-remediation-integration`.
 | Stage 1 access, routes, capabilities, recovery, role preview | Integrated and independently reviewed | `fe7b3d6` through `1248bb1`; access dormancy transition reviewed |
 | Stage 1 official-stat lifecycle candidate | Integrated but dormant | `de03084` through `b8f0b48`; unreachable from production entrypoints pending activation decisions |
 | Stage 1 league models, schedule validation, roster proposals, Jamaica time | Integrated and independently reviewed | `13092f2` through `5780ab8` |
-| Stage 2 trusted league callables/rules | Corrective review in progress, dormant | Server authority and recovery candidate remains isolated; roster-workspace, division-delete recovery, and team-season invite blockers are being corrected |
+| Stage 2 trusted league callables/rules | Integrated and independently reviewed | Callable authority, idempotent recovery, roster workspace, division safety, schedule mutation, and invite season binding pass the isolated emulator gate |
 | Stage 2 fan/media/public output | Integrated and independently reviewed | Commits `fcbe898` through `f0ee642`; canonical history-mode routes, version-bound public reads, Jamaica time, and guarded synthetic projection are integrated |
 | Account lifecycle | Integrated but dormant | Commits `4781e33` through `6682f06`; independent review is clean, but production entrypoints and activation gates remain closed |
-| Stage 2 courtside recovery | Corrective review in progress, dormant | Exact revision receipt persistence and mixed recovery-action presentation remain isolated blockers |
-| Combined regression state | Passing locally and in GitHub | Pull request 30 build-and-test and isolated full-role local-QA jobs pass at `f0ee642`; production deployment and live activation remain outside scope |
+| Stage 2 courtside recovery | Integrated but dormant, independently reviewed | Exact revision receipts, recovery actions, and conflict handling pass candidate tests; production entrypoints remain closed |
+| Invitations, acknowledgments, deadlines, and admin communications | Integrated and independently reviewed | Once-visible invite secret and retry semantics, honest acknowledgment feedback, explicit deadline state, and callable-backed admin workflows pass local tests |
+| Association branding | Integrated and independently reviewed | Conflict-safe serialized saves, accessible live preview, discard protection, and responsive desktop/mobile rendering are verified locally |
+| Governed season lifecycle | Integrated but dormant, independently reviewed | Prepare/activate/archive/restore callables, atomic pointers, recovery receipts, and direct-write denial pass; the UI honestly shows the readiness lock |
+| Rendered browser QA | Complete for the local web candidate | Chromium verified real keyboard sign-in, branding and season screens, public discovery, canonical URLs, refresh and Back at desktop/mobile viewports with zero console errors or warnings |
+| Combined regression state | Passing locally | Flutter, Node, callable, rules, Storage, lifecycle, and browser suites pass at the code candidate; GitHub readback is required again after this progress record is pushed |
 
 Production deployment, live rule activation, store submission, and real-data migration are not authorized by this implementation snapshot. JBA rules, ranking/qualification, roster authority, and account-deletion G1-G11 decisions remain explicit activation gates.
 
