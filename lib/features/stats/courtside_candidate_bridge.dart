@@ -16,15 +16,34 @@ final class CourtsideCandidateBridge {
     CourtsideRecoverySnapshot recovery,
   ) {
     final active = workflow.activeRevision;
+    final recoveryRevision = recovery.boundRevision;
     if (active == null ||
         !active.hasSameIdentity(revision) ||
-        !_sameScope(workflow.scope, revision.scope)) {
+        !_sameScope(workflow.scope, revision.scope) ||
+        recoveryRevision.revisionId != revision.revisionId ||
+        recoveryRevision.revisionNumber != revision.revisionNumber ||
+        recoveryRevision.revisionHash != revision.revisionHash ||
+        !_sameScope(recoveryRevision.scope, revision.scope)) {
       throw const CandidateWorkflowException(
         'courtsideRevisionMismatch',
-        'Courtside delivery must bind the exact active candidate revision.',
+        'Courtside delivery and recovery must bind the exact active candidate revision.',
       );
     }
-    if (recovery.operations.isEmpty) return workflow;
+    final acceptedEvidence = recovery.submissionEvidence;
+    if (acceptedEvidence != null &&
+        (acceptedEvidence.revision.revisionId != revision.revisionId ||
+            acceptedEvidence.revision.revisionNumber !=
+                revision.revisionNumber ||
+            acceptedEvidence.revision.revisionHash != revision.revisionHash ||
+            !_sameScope(acceptedEvidence.revision.scope, revision.scope))) {
+      throw const CandidateWorkflowException(
+        'courtsideRevisionMismatch',
+        'Accepted courtside evidence belongs to a different candidate revision.',
+      );
+    }
+    if (recovery.operations.isEmpty && !recovery.revisionDeliveryAccepted) {
+      return workflow;
+    }
     final target = _aggregateDeliveryState(recovery);
     var current = workflow;
     for (final step in _transitionPath(current.deliveryState, target)) {

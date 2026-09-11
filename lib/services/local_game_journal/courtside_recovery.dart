@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../models/official_stats/assigned_game_bootstrap.dart';
+import '../../models/official_stats/candidate_review_workflow.dart';
 import '../../models/official_stats/command_contract.dart';
 import '../../models/official_stats/domain_contracts.dart';
 import '../../models/official_stats/domain_enums.dart';
@@ -29,6 +30,7 @@ final class CourtsidePreparationMaterial {
     required this.competitionPolicyVersion,
     required this.rosterSnapshotId,
     required this.rosterSnapshotHash,
+    required this.candidateRevision,
     required this.acceptedServerSequence,
     required this.acceptedJournalHead,
     required this.acceptedJournalHash,
@@ -46,6 +48,12 @@ final class CourtsidePreparationMaterial {
         'The selected calculator is not accepted by this game bootstrap.',
       );
     }
+    if (!_sameScope(bootstrapScope, candidateRevision.scope)) {
+      throw const CourtsideRecoveryException(
+        'candidateRevisionScopeMismatch',
+        'The candidate revision does not belong to the prepared assigned game.',
+      );
+    }
   }
 
   final AssignedGameBootstrap bootstrap;
@@ -59,12 +67,13 @@ final class CourtsidePreparationMaterial {
   final String competitionPolicyVersion;
   final String rosterSnapshotId;
   final String rosterSnapshotHash;
+  final CandidateRevisionReference candidateRevision;
   final Fact<int> acceptedServerSequence;
   final String acceptedJournalHead;
   final String acceptedJournalHash;
   final DateTime preparedAt;
 
-  GameScope get scope => GameScope(
+  GameScope get bootstrapScope => GameScope(
     associationId: bootstrap.scope['associationId']!,
     competitionId: bootstrap.scope['competitionId']!,
     seasonId: bootstrap.scope['seasonId']!,
@@ -72,6 +81,16 @@ final class CourtsidePreparationMaterial {
     phaseId: bootstrap.scope['phaseId']!,
     gameId: bootstrap.scope['gameId']!,
   );
+
+  GameScope get scope => candidateRevision.scope;
+
+  LocalCandidateRevisionIdentity get localCandidateRevision =>
+      LocalCandidateRevisionIdentity(
+        scope: candidateRevision.scope,
+        revisionId: candidateRevision.revisionId,
+        revisionNumber: candidateRevision.revisionNumber,
+        revisionHash: candidateRevision.revisionHash,
+      );
 
   JournalPartition get partition => JournalPartition(
     actorAccountId: bootstrap.actorAccountId,
@@ -96,6 +115,7 @@ final class CourtsidePreparationMaterial {
         acceptedServerSequence: acceptedServerSequence,
         acceptedJournalHead: acceptedJournalHead,
         acceptedJournalHash: acceptedJournalHash,
+        candidateRevision: localCandidateRevision,
         preparedAt: preparedAt,
       );
 }
@@ -131,6 +151,7 @@ final class CourtsideDeliveryRequest {
     required this.assignmentVersion,
     required this.rosterSnapshotId,
     required this.rosterSnapshotHash,
+    required this.candidateRevision,
   });
 
   final LocalGameJournalOperation operation;
@@ -139,6 +160,7 @@ final class CourtsideDeliveryRequest {
   final int assignmentVersion;
   final String rosterSnapshotId;
   final String rosterSnapshotHash;
+  final LocalCandidateRevisionIdentity candidateRevision;
 }
 
 sealed class CourtsideDeliveryResult {
@@ -148,7 +170,22 @@ sealed class CourtsideDeliveryResult {
 final class CourtsideDeliveryAccepted extends CourtsideDeliveryResult {
   const CourtsideDeliveryAccepted(this.receipt);
 
-  final OperationReceiptContract receipt;
+  final CourtsideRevisionReceipt receipt;
+}
+
+/// Exact server response envelope. The operation receipt alone does not name
+/// a candidate revision, so this wrapper must repeat the immutable revision
+/// and prepared-package checksum before local acceptance is possible.
+final class CourtsideRevisionReceipt {
+  const CourtsideRevisionReceipt({
+    required this.operationReceipt,
+    required this.candidateRevision,
+    required this.preparationPackageChecksum,
+  });
+
+  final OperationReceiptContract operationReceipt;
+  final LocalCandidateRevisionIdentity candidateRevision;
+  final String preparationPackageChecksum;
 }
 
 final class CourtsideDeliveryRejected extends CourtsideDeliveryResult {
@@ -169,6 +206,40 @@ final class CourtsideDeliveryResponseUnknown extends CourtsideDeliveryResult {
 
 abstract interface class CourtsideOperationServerAdapter {
   Future<CourtsideDeliveryResult> deliver(CourtsideDeliveryRequest request);
+}
+
+final class CourtsideReauthenticationRequest {
+  const CourtsideReauthenticationRequest({
+    required this.actorAccountId,
+    required this.operationId,
+    required this.commandId,
+    required this.errorCode,
+  });
+
+  final String actorAccountId;
+  final String operationId;
+  final String commandId;
+  final CommandErrorCode errorCode;
+}
+
+final class CourtsideVerifiedReauthentication {
+  const CourtsideVerifiedReauthentication({
+    required this.actorAccountId,
+    required this.operationId,
+    required this.commandId,
+    required this.verifiedAt,
+  });
+
+  final String actorAccountId;
+  final String operationId;
+  final String commandId;
+  final DateTime verifiedAt;
+}
+
+abstract interface class CourtsideReauthenticationVerifier {
+  Future<CourtsideVerifiedReauthentication?> verify(
+    CourtsideReauthenticationRequest request,
+  );
 }
 
 enum CourtsideRecoveryPhase {
@@ -199,6 +270,17 @@ final class CourtsideOperationStatus {
   final bool responseUnknown;
   final String? lastErrorCode;
   final String? pauseReason;
+
+  CommandErrorCode? get commandErrorCode => CommandErrorCode.values
+      .where((value) => value.name == lastErrorCode)
+      .firstOrNull;
+
+  RetryClassification? get retryClassification {
+    final error = commandErrorCode;
+    return error == null
+        ? null
+        : OfficialStatCommandErrors.policies[error]!.retry;
+  }
 }
 
 final class CourtsideRecoverySnapshot {
@@ -208,15 +290,21 @@ final class CourtsideRecoverySnapshot {
     required this.captureAvailability,
     required this.workspaceRecoveryState,
     required this.workspaceSubmissionState,
+    required this.boundRevision,
+    required this.submissionEvidence,
     required this.lastFailureCode,
   }) : operations = List.unmodifiable(operations);
 
-  factory CourtsideRecoverySnapshot.initial() => CourtsideRecoverySnapshot(
+  factory CourtsideRecoverySnapshot.initial({
+    required LocalCandidateRevisionIdentity boundRevision,
+  }) => CourtsideRecoverySnapshot(
     phase: CourtsideRecoveryPhase.notReady,
     operations: const [],
     captureAvailability: null,
     workspaceRecoveryState: null,
     workspaceSubmissionState: null,
+    boundRevision: boundRevision,
+    submissionEvidence: null,
     lastFailureCode: null,
   );
 
@@ -225,6 +313,8 @@ final class CourtsideRecoverySnapshot {
   final LocalCaptureAvailability? captureAvailability;
   final LocalWorkspaceRecoveryState? workspaceRecoveryState;
   final WorkspaceSubmissionState? workspaceSubmissionState;
+  final LocalCandidateRevisionIdentity boundRevision;
+  final LocalCandidateRevisionSubmissionEvidence? submissionEvidence;
   final String? lastFailureCode;
 
   /// Web delivery is foreground/resume only. Closing the PWA stops it.
@@ -244,7 +334,12 @@ final class CourtsideRecoverySnapshot {
 
   bool get revisionDeliveryAccepted =>
       workspaceSubmissionState == WorkspaceSubmissionState.submitted &&
-      allAccepted;
+      submissionEvidence?.state == WorkspaceSubmissionState.submitted &&
+      submissionEvidence!.revision.hasSameIdentity(boundRevision);
+
+  bool get submittedWithoutProvableRevision =>
+      workspaceSubmissionState == WorkspaceSubmissionState.submitted &&
+      !revisionDeliveryAccepted;
 
   bool get canCapture =>
       phase == CourtsideRecoveryPhase.ready &&
@@ -258,6 +353,8 @@ final class CourtsideRecoverySnapshot {
     LocalCaptureAvailability? captureAvailability,
     LocalWorkspaceRecoveryState? workspaceRecoveryState,
     WorkspaceSubmissionState? workspaceSubmissionState,
+    LocalCandidateRevisionIdentity? boundRevision,
+    LocalCandidateRevisionSubmissionEvidence? submissionEvidence,
     String? lastFailureCode,
     bool clearLastFailureCode = false,
   }) => CourtsideRecoverySnapshot(
@@ -268,6 +365,8 @@ final class CourtsideRecoverySnapshot {
         workspaceRecoveryState ?? this.workspaceRecoveryState,
     workspaceSubmissionState:
         workspaceSubmissionState ?? this.workspaceSubmissionState,
+    boundRevision: boundRevision ?? this.boundRevision,
+    submissionEvidence: submissionEvidence ?? this.submissionEvidence,
     lastFailureCode: clearLastFailureCode
         ? null
         : (lastFailureCode ?? this.lastFailureCode),
@@ -321,6 +420,7 @@ final class CourtsideRecoveryOrchestrator {
     required this.repository,
     required this.material,
     required this.serverAdapter,
+    this.reauthenticationVerifier,
   }) : preparedPackage = material.buildPackage() {
     if (repository.activeActorAccountId != material.bootstrap.actorAccountId) {
       throw const CourtsideRecoveryException(
@@ -328,14 +428,23 @@ final class CourtsideRecoveryOrchestrator {
         'The journal repository and assigned-game bootstrap use different accounts.',
       );
     }
+    final revision = preparedPackage.candidateRevision;
+    if (revision == null) {
+      throw const CourtsideRecoveryException(
+        'candidateRevisionMissing',
+        'Courtside recovery requires an exact candidate revision.',
+      );
+    }
+    _snapshot = CourtsideRecoverySnapshot.initial(boundRevision: revision);
   }
 
   final LocalGameJournalRepository repository;
   final CourtsidePreparationMaterial material;
   final CourtsideOperationServerAdapter serverAdapter;
+  final CourtsideReauthenticationVerifier? reauthenticationVerifier;
   final PreparedGameRecoveryPackage preparedPackage;
   final List<CourtsideSnapshotListener> _listeners = [];
-  CourtsideRecoverySnapshot _snapshot = CourtsideRecoverySnapshot.initial();
+  late CourtsideRecoverySnapshot _snapshot;
   Future<void> _exclusiveTail = Future.value();
   bool _initialized = false;
 
@@ -470,7 +579,21 @@ final class CourtsideRecoveryOrchestrator {
       await _refreshUnlocked(phase: CourtsideRecoveryPhase.delivering);
       final result = await _deliverPreservingUnknownResponse(entry.operation);
       if (result is CourtsideDeliveryAccepted) {
-        await repository.storeServerReceipt(material.partition, result.receipt);
+        try {
+          _requireExactRevisionReceipt(result.receipt);
+          await repository.storeServerReceipt(
+            material.partition,
+            result.receipt.operationReceipt,
+          );
+        } on LocalJournalException catch (error) {
+          if (error.code != LocalJournalErrorCode.receiptMismatch) rethrow;
+          await repository.recordDeliveryFailure(
+            material.partition,
+            entry.operation.operationId,
+            CommandErrorCode.payloadKeyConflict,
+            observedAt: observedAt,
+          );
+        }
       } else if (result is CourtsideDeliveryRejected) {
         await repository.recordDeliveryFailure(
           material.partition,
@@ -507,6 +630,7 @@ final class CourtsideRecoveryOrchestrator {
       assignmentVersion: preparedPackage.assignmentVersion,
       rosterSnapshotId: preparedPackage.rosterSnapshotId,
       rosterSnapshotHash: preparedPackage.rosterSnapshotHash,
+      candidateRevision: preparedPackage.candidateRevision!,
     );
     try {
       return await serverAdapter.deliver(request);
@@ -523,11 +647,17 @@ final class CourtsideRecoveryOrchestrator {
   /// arrive more than once or out of local sequence order; the repository
   /// validates every binding and advances only the contiguous accepted head.
   Future<CourtsideRecoverySnapshot> acceptRecoveredReceipt(
-    OperationReceiptContract receipt,
+    CourtsideRevisionReceipt receipt,
   ) => _exclusive(() async {
     _requireInitialized();
-    await repository.storeServerReceipt(material.partition, receipt);
-    await _finalizeSubmittedWorkspaceIfReceipted(receipt.acceptedAt);
+    _requireExactRevisionReceipt(receipt);
+    await repository.storeServerReceipt(
+      material.partition,
+      receipt.operationReceipt,
+    );
+    await _finalizeSubmittedWorkspaceIfReceipted(
+      receipt.operationReceipt.acceptedAt,
+    );
     return _refreshUnlocked();
   });
 
@@ -544,9 +674,9 @@ final class CourtsideRecoveryOrchestrator {
         'A candidate revision cannot be submitted without journal evidence.',
       );
     }
-    await repository.setSubmissionState(
+    await repository.queueCandidateRevisionSubmission(
       material.partition,
-      WorkspaceSubmissionState.submissionQueued,
+      preparedPackage.candidateRevision!,
       observedAt: observedAt,
     );
     await _refreshUnlocked();
@@ -558,12 +688,74 @@ final class CourtsideRecoveryOrchestrator {
     DateTime? now,
   }) => _exclusive(() async {
     _requireInitialized();
-    if (_snapshot.captureAvailability != LocalCaptureAvailability.ready ||
-        _snapshot.workspaceRecoveryState !=
-            LocalWorkspaceRecoveryState.active) {
+    if (_snapshot.captureAvailability != LocalCaptureAvailability.ready) {
       throw const CourtsideRecoveryException(
         'retryUnavailable',
-        'A preserved writer conflict or unavailable store cannot be retried automatically.',
+        'An unavailable durable store cannot be retried automatically.',
+      );
+    }
+    final operation = _snapshot.operations
+        .where((candidate) => candidate.operationId == operationId)
+        .firstOrNull;
+    if (operation == null ||
+        operation.state != JournalDeliveryState.needsAttention ||
+        operation.commandErrorCode == null) {
+      throw const CourtsideRecoveryException(
+        'retryUnavailable',
+        'Only a preserved operation with a typed retry policy can be resumed.',
+      );
+    }
+    final policy = operation.retryClassification!;
+    switch (policy) {
+      case RetryClassification.retrySameCommand:
+        break;
+      case RetryClassification.refreshAuthenticationThenRetrySameCommand:
+        final verifier = reauthenticationVerifier;
+        if (verifier == null) {
+          throw const CourtsideRecoveryException(
+            'reauthenticationRequired',
+            'Verified reauthentication is required before retrying this preserved command.',
+          );
+        }
+        final verified = await verifier.verify(
+          CourtsideReauthenticationRequest(
+            actorAccountId: repository.activeActorAccountId,
+            operationId: operation.operationId,
+            commandId: operation.commandId,
+            errorCode: operation.commandErrorCode!,
+          ),
+        );
+        if (verified == null ||
+            verified.actorAccountId != repository.activeActorAccountId ||
+            verified.operationId != operation.operationId ||
+            verified.commandId != operation.commandId) {
+          throw const CourtsideRecoveryException(
+            'reauthenticationNotVerified',
+            'Reauthentication did not verify the exact account and command.',
+          );
+        }
+        break;
+      case RetryClassification.refreshStateThenCreateNewCommand:
+        throw const CourtsideRecoveryException(
+          'refreshStateRequiresNewCommand',
+          'This preserved operation cannot be retried; refresh authority and create a new command.',
+        );
+      case RetryClassification.operatorResolutionRequired:
+        throw const CourtsideRecoveryException(
+          'operatorResolutionRequired',
+          'This preserved operation requires assignment or conflict resolution.',
+        );
+      case RetryClassification.never:
+        throw const CourtsideRecoveryException(
+          'retryProhibited',
+          'The persisted command error policy prohibits retry.',
+        );
+    }
+    if (_snapshot.workspaceRecoveryState !=
+        LocalWorkspaceRecoveryState.active) {
+      throw const CourtsideRecoveryException(
+        'retryUnavailable',
+        'A preserved writer conflict cannot be retried automatically.',
       );
     }
     await repository.resumePaused(material.partition, operationId);
@@ -646,6 +838,17 @@ final class CourtsideRecoveryOrchestrator {
     } while (cursor != null);
   }
 
+  void _requireExactRevisionReceipt(CourtsideRevisionReceipt receipt) {
+    final expectedRevision = preparedPackage.candidateRevision!;
+    if (!receipt.candidateRevision.hasSameIdentity(expectedRevision) ||
+        receipt.preparationPackageChecksum != preparedPackage.packageChecksum) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.receiptMismatch,
+        'Server receipt does not bind the exact prepared candidate revision',
+      );
+    }
+  }
+
   Future<void> _finalizeSubmittedWorkspaceIfReceipted(
     DateTime observedAt,
   ) async {
@@ -659,9 +862,8 @@ final class CourtsideRecoveryOrchestrator {
         checkpoint.acceptedThroughSequence.valueOrNull != last) {
       return;
     }
-    await repository.setSubmissionState(
+    await repository.finalizeCandidateRevisionSubmission(
       material.partition,
-      WorkspaceSubmissionState.submitted,
       observedAt: observedAt,
     );
   }
@@ -695,9 +897,17 @@ final class CourtsideRecoveryOrchestrator {
       }
       cursor = page.nextCursor;
     } while (cursor != null);
+    final submissionEvidence = checkpoint.candidateRevisionSubmissionEvidence;
+    final candidateEvidenceProblem =
+        checkpoint.submissionState != WorkspaceSubmissionState.captureOpen &&
+        (submissionEvidence == null ||
+            !submissionEvidence.revision.hasSameIdentity(
+              preparedPackage.candidateRevision!,
+            ));
     final hasAttention =
         checkpoint.recoveryState ==
             LocalWorkspaceRecoveryState.conflictBranch ||
+        candidateEvidenceProblem ||
         operations.any(
           (operation) => operation.state == JournalDeliveryState.needsAttention,
         );
@@ -712,15 +922,20 @@ final class CourtsideRecoveryOrchestrator {
         captureAvailability: repository.store.capability.availability,
         workspaceRecoveryState: checkpoint.recoveryState,
         workspaceSubmissionState: checkpoint.submissionState,
+        boundRevision: preparedPackage.candidateRevision!,
+        submissionEvidence: submissionEvidence,
         lastFailureCode: hasAttention
-            ? operations
-                  .where(
-                    (operation) =>
-                        operation.state == JournalDeliveryState.needsAttention,
-                  )
-                  .map((operation) => operation.lastErrorCode)
-                  .whereType<String>()
-                  .firstOrNull
+            ? (candidateEvidenceProblem
+                  ? 'candidateRevisionEvidenceMissing'
+                  : operations
+                        .where(
+                          (operation) =>
+                              operation.state ==
+                              JournalDeliveryState.needsAttention,
+                        )
+                        .map((operation) => operation.lastErrorCode)
+                        .whereType<String>()
+                        .firstOrNull)
             : null,
       ),
     );
@@ -803,3 +1018,11 @@ final class CourtsideRecoveryOrchestrator {
     }
   }
 }
+
+bool _sameScope(GameScope left, GameScope right) =>
+    left.associationId == right.associationId &&
+    left.competitionId == right.competitionId &&
+    left.seasonId == right.seasonId &&
+    left.divisionId == right.divisionId &&
+    left.phaseId == right.phaseId &&
+    left.gameId == right.gameId;

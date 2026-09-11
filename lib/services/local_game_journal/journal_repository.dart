@@ -950,6 +950,13 @@ final class LocalGameJournalRepository {
           transaction,
           partition,
         );
+        if (snapshot.preparedPackage.candidateRevision != null &&
+            snapshot.checkpoint.submissionState != state) {
+          throw LocalJournalException(
+            LocalJournalErrorCode.invalidStateTransition,
+            'Candidate revision workspaces require revision-bound submission evidence',
+          );
+        }
         final checkpoint = snapshot.checkpoint;
         final valid =
             checkpoint.submissionState == state ||
@@ -978,6 +985,126 @@ final class LocalGameJournalRepository {
         final updated = _copyCheckpoint(
           checkpoint,
           submissionState: state,
+          updatedAt: observedAt,
+        );
+        await transaction.put(
+          _checkpointKey(partition),
+          LocalJournalRecordCodec.encode(updated.toContractMap()),
+        );
+        return LocalWorkspaceCheckpoint.fromContractMap(
+          LocalJournalRecordCodec.decode(
+            LocalJournalRecordCodec.encode(updated.toContractMap()),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Atomically seals the journal and records which exact candidate revision
+  /// the immutable operation prefix represents.
+  Future<LocalWorkspaceCheckpoint> queueCandidateRevisionSubmission(
+    JournalPartition partition,
+    LocalCandidateRevisionIdentity revision, {
+    required DateTime observedAt,
+  }) async {
+    _requireReady();
+    _requirePartitionAccess(partition);
+    return _guardedTransaction(
+      partition: partition,
+      action: (transaction) async {
+        final snapshot = await _requireVerifiedWorkspaceSnapshot(
+          transaction,
+          partition,
+        );
+        final checkpoint = snapshot.checkpoint;
+        final preparedRevision = snapshot.preparedPackage.candidateRevision;
+        final lastSequence = checkpoint.lastLocalSequence.valueOrNull;
+        final lastHash = checkpoint.lastOperationHash.valueOrNull;
+        if (preparedRevision == null ||
+            !preparedRevision.hasSameIdentity(revision) ||
+            checkpoint.submissionState !=
+                WorkspaceSubmissionState.captureOpen ||
+            checkpoint.candidateRevisionSubmissionEvidence != null ||
+            lastSequence == null ||
+            lastHash == null) {
+          throw LocalJournalException(
+            LocalJournalErrorCode.invalidStateTransition,
+            'Candidate submission requires the exact prepared revision and a nonempty open journal',
+          );
+        }
+        final evidence = LocalCandidateRevisionSubmissionEvidence.queued(
+          revision: revision,
+          preparationPackageChecksum: snapshot.preparedPackage.packageChecksum,
+          submittedThroughSequence: lastSequence,
+          submittedThroughHash: lastHash,
+          observedAt: observedAt,
+        );
+        final updated = _copyCheckpoint(
+          checkpoint,
+          submissionState: WorkspaceSubmissionState.submissionQueued,
+          candidateRevisionSubmissionEvidence: evidence,
+          updatedAt: observedAt,
+        );
+        await transaction.put(
+          _checkpointKey(partition),
+          LocalJournalRecordCodec.encode(updated.toContractMap()),
+        );
+        return LocalWorkspaceCheckpoint.fromContractMap(
+          LocalJournalRecordCodec.decode(
+            LocalJournalRecordCodec.encode(updated.toContractMap()),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Atomically turns queued revision evidence into durable accepted evidence.
+  Future<LocalWorkspaceCheckpoint> finalizeCandidateRevisionSubmission(
+    JournalPartition partition, {
+    required DateTime observedAt,
+  }) async {
+    _requireReady();
+    _requirePartitionAccess(partition);
+    return _guardedTransaction(
+      partition: partition,
+      action: (transaction) async {
+        final snapshot = await _requireVerifiedWorkspaceSnapshot(
+          transaction,
+          partition,
+        );
+        final checkpoint = snapshot.checkpoint;
+        final evidence = checkpoint.candidateRevisionSubmissionEvidence;
+        final acceptedSequence = checkpoint.acceptedThroughSequence.valueOrNull;
+        final acceptedHead = checkpoint.acceptedJournalHead.valueOrNull;
+        final acceptedHash = checkpoint.acceptedJournalHash.valueOrNull;
+        if (checkpoint.submissionState !=
+                WorkspaceSubmissionState.submissionQueued ||
+            evidence == null ||
+            evidence.state != WorkspaceSubmissionState.submissionQueued ||
+            snapshot.preparedPackage.candidateRevision == null ||
+            !snapshot.preparedPackage.candidateRevision!.hasSameIdentity(
+              evidence.revision,
+            ) ||
+            acceptedSequence != evidence.submittedThroughSequence ||
+            acceptedSequence != checkpoint.lastLocalSequence.valueOrNull ||
+            acceptedHead == null ||
+            acceptedHash == null ||
+            checkpoint.recoveryState != LocalWorkspaceRecoveryState.active) {
+          throw LocalJournalException(
+            LocalJournalErrorCode.invalidStateTransition,
+            'Candidate revision cannot be finalized without exact contiguous receipt evidence',
+          );
+        }
+        final acceptedEvidence = evidence.accepted(
+          acceptedThroughSequence: acceptedSequence!,
+          acceptedJournalHead: acceptedHead,
+          acceptedJournalHash: acceptedHash,
+          observedAt: observedAt,
+        );
+        final updated = _copyCheckpoint(
+          checkpoint,
+          submissionState: WorkspaceSubmissionState.submitted,
+          candidateRevisionSubmissionEvidence: acceptedEvidence,
           updatedAt: observedAt,
         );
         await transaction.put(
@@ -2431,6 +2558,22 @@ final class LocalGameJournalRepository {
       checkpoint: checkpoint,
       errorCode: LocalJournalErrorCode.mutatedRecord,
     );
+    final preparedRevision = package.candidateRevision;
+    final submittedRevision = checkpoint.candidateRevisionSubmissionEvidence;
+    if ((submittedRevision != null &&
+            (preparedRevision == null ||
+                !preparedRevision.hasSameIdentity(
+                  submittedRevision.revision,
+                ))) ||
+        (preparedRevision != null &&
+            checkpoint.submissionState !=
+                WorkspaceSubmissionState.captureOpen &&
+            submittedRevision == null)) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.mutatedRecord,
+        'Candidate revision package and submission evidence do not agree',
+      );
+    }
     final prunedThrough = checkpoint.prunedThroughSequence.valueOrNull ?? -1;
     final pruned = index['pruned']! as bool;
     if (sequence >= checkpoint.nextLocalSequence ||
@@ -3726,6 +3869,8 @@ final class LocalGameJournalRepository {
     WorkspaceSubmissionState? submissionState,
     LocalWorkspaceRecoveryState? recoveryState,
     Fact<String>? preparationPackageChecksum,
+    LocalCandidateRevisionSubmissionEvidence?
+    candidateRevisionSubmissionEvidence,
     DateTime? updatedAt,
   }) => LocalWorkspaceCheckpoint(
     partition: source.partition,
@@ -3748,6 +3893,9 @@ final class LocalGameJournalRepository {
     recoveryState: recoveryState ?? source.recoveryState,
     preparationPackageChecksum:
         preparationPackageChecksum ?? source.preparationPackageChecksum,
+    candidateRevisionSubmissionEvidence:
+        candidateRevisionSubmissionEvidence ??
+        source.candidateRevisionSubmissionEvidence,
     updatedAt: updatedAt ?? source.updatedAt,
   );
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../models/official_stats/command_contract.dart';
 import '../../../models/official_stats/domain_enums.dart';
 import '../../../services/local_game_journal/courtside_recovery.dart';
 import '../../../services/local_game_journal/journal_models.dart';
@@ -14,20 +15,31 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
     required this.snapshot,
     this.onRecoverForeground,
     this.onRetryOperation,
+    this.onReauthenticateAndRetryOperation,
   });
 
   final CourtsideRecoverySnapshot snapshot;
   final VoidCallback? onRecoverForeground;
   final ValueChanged<String>? onRetryOperation;
+  final ValueChanged<String>? onReauthenticateAndRetryOperation;
 
   @override
   Widget build(BuildContext context) {
     final presentation = _presentation(snapshot);
-    final retryable = snapshot.operations
+    final attention = snapshot.operations
         .where(
           (operation) => operation.state == JournalDeliveryState.needsAttention,
         )
         .firstOrNull;
+    final retryable =
+        attention?.retryClassification == RetryClassification.retrySameCommand
+        ? attention
+        : null;
+    final reauthRequired =
+        attention?.retryClassification ==
+            RetryClassification.refreshAuthenticationThenRetrySameCommand
+        ? attention
+        : null;
     return Semantics(
       container: true,
       liveRegion: true,
@@ -100,7 +112,7 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
                         key: const ValueKey('courtside-recover-foreground'),
                         onPressed: onRecoverForeground,
                         icon: const Icon(Icons.sync),
-                        label: const Text('Retry while app is open'),
+                        label: const Text('Check queued delivery'),
                       ),
                     ),
                   ),
@@ -121,6 +133,24 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (reauthRequired != null &&
+                    onReauthenticateAndRetryOperation != null)
+                  FocusTraversalOrder(
+                    order: const NumericFocusOrder(2),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.icon(
+                        key: const ValueKey(
+                          'courtside-reauthenticate-operation',
+                        ),
+                        onPressed: () => onReauthenticateAndRetryOperation!(
+                          reauthRequired.operationId,
+                        ),
+                        icon: const Icon(Icons.lock_reset_outlined),
+                        label: const Text('Sign in again, then retry'),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -133,6 +163,14 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
 ({String title, String message, IconData icon}) _presentation(
   CourtsideRecoverySnapshot snapshot,
 ) {
+  if (snapshot.phase == CourtsideRecoveryPhase.signedOut) {
+    return (
+      title: 'Saved work stays on this device',
+      message:
+          'You are signed out. Nothing was discarded or sent under another account.',
+      icon: Icons.lock_outline,
+    );
+  }
   if (snapshot.phase == CourtsideRecoveryPhase.captureDisabled) {
     return (
       title: 'Stat capture is paused',
@@ -157,19 +195,27 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
       icon: Icons.inventory_2_outlined,
     );
   }
-  if (snapshot.operations.isEmpty) {
-    return (
-      title: 'Ready for stat entry',
-      message: 'No plays have been saved for this workspace yet.',
-      icon: Icons.sports_basketball_outlined,
-    );
-  }
   if (snapshot.revisionDeliveryAccepted) {
     return (
       title: 'Revision delivery accepted',
       message:
           'Capture is closed and every saved operation has an exact durable receipt.',
       icon: Icons.cloud_done_outlined,
+    );
+  }
+  if (snapshot.submittedWithoutProvableRevision) {
+    return (
+      title: 'Submitted revision needs recovery',
+      message:
+          'The workspace is closed, but exact accepted-revision evidence could not be proven.',
+      icon: Icons.report_problem_outlined,
+    );
+  }
+  if (snapshot.operations.isEmpty) {
+    return (
+      title: 'Ready for stat entry',
+      message: 'No plays have been saved for this workspace yet.',
+      icon: Icons.sports_basketball_outlined,
     );
   }
   if (snapshot.allAccepted) {
@@ -197,6 +243,45 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
     );
   }
   if (snapshot.phase == CourtsideRecoveryPhase.needsAttention) {
+    final attention = snapshot.operations
+        .where(
+          (operation) => operation.state == JournalDeliveryState.needsAttention,
+        )
+        .firstOrNull;
+    final policy = attention?.retryClassification;
+    if (policy ==
+        RetryClassification.refreshAuthenticationThenRetrySameCommand) {
+      return (
+        title: 'Sign in again to retry',
+        message:
+            'The preserved command can be retried unchanged only after this account is verified again.',
+        icon: Icons.lock_reset_outlined,
+      );
+    }
+    if (policy == RetryClassification.refreshStateThenCreateNewCommand) {
+      return (
+        title: 'Game state changed',
+        message:
+            'Refresh assignment and revision state, then create a new command. This preserved command will not be resent.',
+        icon: Icons.update_outlined,
+      );
+    }
+    if (policy == RetryClassification.operatorResolutionRequired) {
+      return (
+        title: 'Operator resolution required',
+        message:
+            'The preserved command will not be resent until assignment or conflict ownership is resolved.',
+        icon: Icons.support_agent_outlined,
+      );
+    }
+    if (policy == RetryClassification.never) {
+      return (
+        title: 'This command cannot be retried',
+        message:
+            'The server rejected the preserved command permanently. It remains available for review.',
+        icon: Icons.block_outlined,
+      );
+    }
     return (
       title: 'Saved work needs attention',
       message: 'The operations remain on this device and were not discarded.',

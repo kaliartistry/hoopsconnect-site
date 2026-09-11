@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/official_stats/assigned_game_bootstrap.dart';
+import 'package:hoops_connect/models/official_stats/candidate_review_workflow.dart';
 import 'package:hoops_connect/models/official_stats/command_contract.dart';
 import 'package:hoops_connect/models/official_stats/domain_contracts.dart';
 import 'package:hoops_connect/models/official_stats/domain_enums.dart';
@@ -19,6 +20,8 @@ const _hashA =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _hashB =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _hashC =
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
 AssignedGameBootstrap _bootstrap({
   int assignmentVersion = 3,
@@ -54,26 +57,52 @@ AssignedGameBootstrap _bootstrap({
   'evaluatedAt': '2026-09-11T14:00:00.000Z',
 })!;
 
-CourtsidePreparationMaterial _material({AssignedGameBootstrap? bootstrap}) =>
-    CourtsidePreparationMaterial(
-      bootstrap: bootstrap ?? _bootstrap(),
-      packageId: 'package_1',
-      workspaceId: 'workspace_1',
-      deviceSessionId: 'device_1',
-      assignmentId: 'assignment_1',
-      journalReducerVersion: 'reducer_v1',
-      calculatorVersion: 'calculator_v1',
-      rulesProfileId: 'rules_v1',
-      competitionPolicyVersion: 'policy_v1',
-      rosterSnapshotId: 'roster_snapshot_1',
-      rosterSnapshotHash: _hashA,
-      acceptedServerSequence: const Fact.notApplicable(
-        reasonCode: 'no_server_operations',
-      ),
-      acceptedJournalHead: 'head_0',
-      acceptedJournalHash: _hashB,
-      preparedAt: DateTime.utc(2026, 9, 11, 14),
-    );
+CandidateRevisionReference _revision({
+  int number = 1,
+  String revisionId = 'revision_1',
+  String revisionHash = _hashC,
+  String? gameId,
+}) => CandidateRevisionReference(
+  scope: GameScope(
+    associationId: 'jba',
+    competitionId: 'nbl',
+    seasonId: 'season_2026',
+    divisionId: 'division_1',
+    phaseId: 'regular',
+    gameId: gameId ?? 'game_1',
+  ),
+  revisionId: revisionId,
+  revisionNumber: number,
+  revisionHash: revisionHash,
+  supersedesRevisionId: number == 1
+      ? const Fact.notApplicable(reasonCode: 'no_predecessor')
+      : const Fact.known('revision_1'),
+);
+
+CourtsidePreparationMaterial _material({
+  AssignedGameBootstrap? bootstrap,
+  CandidateRevisionReference? candidateRevision,
+  String workspaceId = 'workspace_1',
+}) => CourtsidePreparationMaterial(
+  bootstrap: bootstrap ?? _bootstrap(),
+  packageId: 'package_1',
+  workspaceId: workspaceId,
+  deviceSessionId: 'device_1',
+  assignmentId: 'assignment_1',
+  journalReducerVersion: 'reducer_v1',
+  calculatorVersion: 'calculator_v1',
+  rulesProfileId: 'rules_v1',
+  competitionPolicyVersion: 'policy_v1',
+  rosterSnapshotId: 'roster_snapshot_1',
+  rosterSnapshotHash: _hashA,
+  candidateRevision: candidateRevision ?? _revision(),
+  acceptedServerSequence: const Fact.notApplicable(
+    reasonCode: 'no_server_operations',
+  ),
+  acceptedJournalHead: 'head_0',
+  acceptedJournalHash: _hashB,
+  preparedAt: DateTime.utc(2026, 9, 11, 14),
+);
 
 LocalGameJournalRepository _repository(LocalGameJournalStore store) =>
     LocalGameJournalRepository(
@@ -101,27 +130,31 @@ CourtsideCaptureCommand _command(int value) => CourtsideCaptureCommand(
   observedAt: DateTime.utc(2026, 9, 11, 14, 0, value),
 );
 
-OperationReceiptContract _receipt(CourtsideDeliveryRequest request) =>
-    OperationReceiptContract(
-      receiptId: 'receipt_${request.operation.localSequence}',
-      scope: request.operation.partition.scope,
-      workspaceId: request.operation.partition.workspaceId,
-      operationId: request.operation.operationId,
-      commandId: request.operation.commandId,
-      actorAccountId: request.operation.partition.actorAccountId,
-      commandKind: request.operation.operationType,
-      requestHash: request.operation.requestHash,
-      serverSequence: request.operation.localSequence,
-      acceptedJournalHead: 'head_${request.operation.localSequence + 1}',
-      acceptedJournalHash: request.operation.requestHash,
-      writerEpoch: request.operation.writerEpoch,
-      acceptedAt: DateTime.utc(
-        2026,
-        9,
-        11,
-        14,
-        30,
-        request.operation.localSequence,
+CourtsideRevisionReceipt _receipt(CourtsideDeliveryRequest request) =>
+    CourtsideRevisionReceipt(
+      candidateRevision: request.candidateRevision,
+      preparationPackageChecksum: request.preparationPackageChecksum,
+      operationReceipt: OperationReceiptContract(
+        receiptId: 'receipt_${request.operation.localSequence}',
+        scope: request.operation.partition.scope,
+        workspaceId: request.operation.partition.workspaceId,
+        operationId: request.operation.operationId,
+        commandId: request.operation.commandId,
+        actorAccountId: request.operation.partition.actorAccountId,
+        commandKind: request.operation.operationType,
+        requestHash: request.operation.requestHash,
+        serverSequence: request.operation.localSequence,
+        acceptedJournalHead: 'head_${request.operation.localSequence + 1}',
+        acceptedJournalHash: request.operation.requestHash,
+        writerEpoch: request.operation.writerEpoch,
+        acceptedAt: DateTime.utc(
+          2026,
+          9,
+          11,
+          14,
+          30,
+          request.operation.localSequence,
+        ),
       ),
     );
 
@@ -137,6 +170,25 @@ final class _ServerAdapter implements CourtsideOperationServerAdapter {
   @override
   Future<CourtsideDeliveryResult> deliver(
     CourtsideDeliveryRequest request,
+  ) async {
+    requests.add(request);
+    return respond(request);
+  }
+}
+
+final class _ReauthenticationVerifier
+    implements CourtsideReauthenticationVerifier {
+  _ReauthenticationVerifier(this.respond);
+
+  final FutureOr<CourtsideVerifiedReauthentication?> Function(
+    CourtsideReauthenticationRequest request,
+  )
+  respond;
+  final List<CourtsideReauthenticationRequest> requests = [];
+
+  @override
+  Future<CourtsideVerifiedReauthentication?> verify(
+    CourtsideReauthenticationRequest request,
   ) async {
     requests.add(request);
     return respond(request);
@@ -487,6 +539,8 @@ void main() {
               rosterSnapshotId: orchestrator.preparedPackage.rosterSnapshotId,
               rosterSnapshotHash:
                   orchestrator.preparedPackage.rosterSnapshotHash,
+              candidateRevision:
+                  orchestrator.preparedPackage.candidateRevision!,
             ),
           )
           .toList();
@@ -544,7 +598,7 @@ void main() {
   );
 
   test(
-    'assignment revocation pauses delivery but preserves retryable evidence',
+    'assignment revocation preserves work and refuses direct retry',
     () async {
       var revoked = true;
       final adapter = _ServerAdapter((request) {
@@ -576,11 +630,24 @@ void main() {
       );
 
       revoked = false;
-      await orchestrator.retryNeedsAttention(
-        'operation_0',
-        now: DateTime.utc(2026, 9, 11, 14, 2),
+      await expectLater(
+        orchestrator.retryNeedsAttention(
+          'operation_0',
+          now: DateTime.utc(2026, 9, 11, 14, 2),
+        ),
+        throwsA(
+          isA<CourtsideRecoveryException>().having(
+            (error) => error.code,
+            'code',
+            'operatorResolutionRequired',
+          ),
+        ),
       );
-      expect(orchestrator.snapshot.allAccepted, isTrue);
+      expect(adapter.requests, hasLength(1));
+      expect(
+        orchestrator.snapshot.operations.single.state,
+        JournalDeliveryState.needsAttention,
+      );
     },
   );
 
@@ -746,6 +813,261 @@ void main() {
     },
   );
 
+  test(
+    'revision identity is bound through package request receipt and snapshot',
+    () async {
+      late CourtsideDeliveryRequest delivered;
+      final adapter = _ServerAdapter((request) {
+        delivered = request;
+        return CourtsideDeliveryAccepted(_receipt(request));
+      });
+      final revision = _revision();
+      final repository = _repository(FaultInjectingMemoryStore());
+      final orchestrator = CourtsideRecoveryOrchestrator(
+        repository: repository,
+        material: _material(candidateRevision: revision),
+        serverAdapter: adapter,
+      );
+      final initial = await orchestrator.initialize();
+      expect(initial.boundRevision.revisionId, revision.revisionId);
+      expect(
+        orchestrator.preparedPackage.candidateRevision!.revisionHash,
+        revision.revisionHash,
+      );
+      await orchestrator.capture(_command(0));
+      final submitted = await orchestrator.queueRevisionSubmission(
+        observedAt: DateTime.utc(2026, 9, 11, 14, 2),
+      );
+
+      expect(delivered.candidateRevision.revisionNumber, 1);
+      expect(
+        submitted.submissionEvidence!.revision.revisionHash,
+        revision.revisionHash,
+      );
+      expect(
+        submitted.submissionEvidence!.preparationPackageChecksum,
+        orchestrator.preparedPackage.packageChecksum,
+      );
+      expect(submitted.revisionDeliveryAccepted, isTrue);
+      final checkpoint = await repository.getCheckpoint(_material().partition);
+      expect(
+        checkpoint.candidateRevisionSubmissionEvidence!.evidenceChecksum,
+        submitted.submissionEvidence!.evidenceChecksum,
+      );
+    },
+  );
+
+  test(
+    'mismatched revision receipt is never accepted or directly retried',
+    () async {
+      final adapter = _ServerAdapter((request) {
+        final exact = _receipt(request);
+        return CourtsideDeliveryAccepted(
+          CourtsideRevisionReceipt(
+            operationReceipt: exact.operationReceipt,
+            candidateRevision: LocalCandidateRevisionIdentity(
+              scope: request.candidateRevision.scope,
+              revisionId: 'revision_2',
+              revisionNumber: 2,
+              revisionHash: _hashA,
+            ),
+            preparationPackageChecksum: request.preparationPackageChecksum,
+          ),
+        );
+      });
+      final repository = _repository(FaultInjectingMemoryStore());
+      final orchestrator = CourtsideRecoveryOrchestrator(
+        repository: repository,
+        material: _material(),
+        serverAdapter: adapter,
+      );
+      await orchestrator.initialize();
+      await orchestrator.capture(_command(0));
+      await orchestrator.recoverForeground(
+        now: DateTime.utc(2026, 9, 11, 14, 2),
+      );
+      final entry = (await repository.listOperations(
+        _material().partition,
+      )).entries.single;
+      expect(entry.delivery.state, JournalDeliveryState.needsAttention);
+      expect(
+        entry.delivery.lastErrorCode.valueOrNull,
+        CommandErrorCode.payloadKeyConflict.name,
+      );
+      expect(entry.delivery.serverReceipt.valueOrNull, isNull);
+      await expectLater(
+        orchestrator.retryNeedsAttention('operation_0'),
+        throwsA(
+          isA<CourtsideRecoveryException>().having(
+            (error) => error.code,
+            'code',
+            'retryProhibited',
+          ),
+        ),
+      );
+      expect(adapter.requests, hasLength(1));
+    },
+  );
+
+  test(
+    'fully pruned submitted workspace restores accepted revision evidence',
+    () async {
+      final store = FaultInjectingMemoryStore();
+      final material = _material();
+      final firstRepository = _repository(store);
+      final first = CourtsideRecoveryOrchestrator(
+        repository: firstRepository,
+        material: material,
+        serverAdapter: _ServerAdapter(
+          (request) => CourtsideDeliveryAccepted(_receipt(request)),
+        ),
+      );
+      await first.initialize();
+      await first.capture(_command(0));
+      await first.queueRevisionSubmission(
+        observedAt: DateTime.utc(2026, 9, 11, 14, 2),
+      );
+      final archive = await firstRepository.exportRecoveryArchive(
+        material.partition,
+        archiveId: 'courtside_archive',
+        manifestId: 'courtside_manifest',
+        exportedAt: DateTime.utc(2026, 9, 11, 14, 3),
+      );
+      await firstRepository.confirmRecoveryArchivePersisted(
+        material.partition,
+        archiveId: archive.archiveId,
+        checksum: archive.checksum,
+        confirmation: 'recoveryArchivePersisted',
+      );
+      await firstRepository.pruneAcknowledged(
+        material.partition,
+        throughSequence: 0,
+        recoveryArchiveId: archive.archiveId,
+        recoveryArchiveChecksum: archive.checksum,
+        prunedAt: DateTime.utc(2026, 9, 11, 14, 4),
+      );
+      await first.closeForSignOut();
+
+      final restored = CourtsideRecoveryOrchestrator(
+        repository: _repository(store),
+        material: material,
+        serverAdapter: _ServerAdapter(
+          (request) => CourtsideDeliveryAccepted(_receipt(request)),
+        ),
+      );
+      final snapshot = await restored.initialize();
+      expect(snapshot.operations, isEmpty);
+      expect(
+        snapshot.workspaceSubmissionState,
+        WorkspaceSubmissionState.submitted,
+      );
+      expect(snapshot.submissionEvidence, isNotNull);
+      expect(snapshot.revisionDeliveryAccepted, isTrue);
+      expect(snapshot.canCapture, isFalse);
+
+      await restored.closeForSignOut();
+      expect(restored.snapshot.phase, CourtsideRecoveryPhase.signedOut);
+      expect(restored.snapshot.revisionDeliveryAccepted, isTrue);
+      expect(restored.snapshot.canCapture, isFalse);
+    },
+  );
+
+  test(
+    'manual retry requires exact reauthentication and rejects stale-state replay',
+    () async {
+      var calls = 0;
+      var verifyExactly = false;
+      final verifier = _ReauthenticationVerifier((request) {
+        if (!verifyExactly) return null;
+        return CourtsideVerifiedReauthentication(
+          actorAccountId: request.actorAccountId,
+          operationId: request.operationId,
+          commandId: request.commandId,
+          verifiedAt: DateTime.utc(2026, 9, 11, 14, 3),
+        );
+      });
+      final adapter = _ServerAdapter((request) {
+        calls++;
+        if (calls == 1) {
+          return const CourtsideDeliveryRejected(
+            CommandErrorCode.unauthenticated,
+          );
+        }
+        return CourtsideDeliveryAccepted(_receipt(request));
+      });
+      final orchestrator = CourtsideRecoveryOrchestrator(
+        repository: _repository(FaultInjectingMemoryStore()),
+        material: _material(),
+        serverAdapter: adapter,
+        reauthenticationVerifier: verifier,
+      );
+      await orchestrator.initialize();
+      await orchestrator.capture(_command(0));
+      await orchestrator.recoverForeground(
+        now: DateTime.utc(2026, 9, 11, 14, 1),
+      );
+
+      await expectLater(
+        orchestrator.retryNeedsAttention('operation_0'),
+        throwsA(
+          isA<CourtsideRecoveryException>().having(
+            (error) => error.code,
+            'code',
+            'reauthenticationNotVerified',
+          ),
+        ),
+      );
+      expect(calls, 1);
+      verifyExactly = true;
+      await orchestrator.retryNeedsAttention(
+        'operation_0',
+        now: DateTime.utc(2026, 9, 11, 14, 4),
+      );
+      expect(calls, 2);
+      expect(orchestrator.snapshot.allAccepted, isTrue);
+      expect(verifier.requests, hasLength(2));
+
+      var staleCalls = 0;
+      final stale = CourtsideRecoveryOrchestrator(
+        repository: _repository(FaultInjectingMemoryStore()),
+        material: _material(workspaceId: 'workspace_stale'),
+        serverAdapter: _ServerAdapter((request) {
+          staleCalls++;
+          return const CourtsideDeliveryRejected(
+            CommandErrorCode.staleRevision,
+          );
+        }),
+      );
+      await stale.initialize();
+      await stale.capture(_command(0));
+      await stale.recoverForeground(now: DateTime.utc(2026, 9, 11, 14, 5));
+      await expectLater(
+        stale.retryNeedsAttention('operation_0'),
+        throwsA(
+          isA<CourtsideRecoveryException>().having(
+            (error) => error.code,
+            'code',
+            'refreshStateRequiresNewCommand',
+          ),
+        ),
+      );
+      expect(staleCalls, 1);
+    },
+  );
+
+  test('preparation refuses a candidate revision for another game', () {
+    expect(
+      () => _material(candidateRevision: _revision(gameId: 'game_2')),
+      throwsA(
+        isA<CourtsideRecoveryException>().having(
+          (error) => error.code,
+          'code',
+          'candidateRevisionScopeMismatch',
+        ),
+      ),
+    );
+  });
+
   test('preparation refuses an unaccepted calculator', () {
     expect(
       () => CourtsidePreparationMaterial(
@@ -760,6 +1082,7 @@ void main() {
         competitionPolicyVersion: 'policy_v1',
         rosterSnapshotId: 'roster_snapshot_1',
         rosterSnapshotHash: _hashA,
+        candidateRevision: _revision(),
         acceptedServerSequence: const Fact.notApplicable(
           reasonCode: 'no_server_operations',
         ),

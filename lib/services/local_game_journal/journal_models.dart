@@ -640,7 +640,371 @@ final class LocalJournalDelivery {
   }
 }
 
+/// Exact candidate revision identity bound to a durable local workspace.
+///
+/// The scope is intentionally repeated even though the containing partition
+/// also has one. The equality check prevents a revision identity from being
+/// copied to a different game while retaining a plausible ID and hash.
+final class LocalCandidateRevisionIdentity {
+  LocalCandidateRevisionIdentity({
+    required this.scope,
+    required this.revisionId,
+    required this.revisionNumber,
+    required this.revisionHash,
+  }) {
+    LocalJournalValidation.requireId('revisionId', revisionId);
+    LocalJournalValidation.requireSafeInteger(
+      'revisionNumber',
+      revisionNumber,
+      minimum: 1,
+    );
+    LocalJournalValidation.requireHash('revisionHash', revisionHash);
+  }
+
+  final GameScope scope;
+  final String revisionId;
+  final int revisionNumber;
+  final String revisionHash;
+
+  bool hasSameIdentity(LocalCandidateRevisionIdentity other) =>
+      OfficialStatCanonicalEncoding.encode(toContractMap()) ==
+      OfficialStatCanonicalEncoding.encode(other.toContractMap());
+
+  Map<String, Object?> toContractMap() => {
+    'revisionHash': revisionHash,
+    'revisionId': revisionId,
+    'revisionNumber': revisionNumber,
+    'scope': scope.toContractMap(),
+  };
+
+  factory LocalCandidateRevisionIdentity.fromContractMap(
+    Map<String, Object?> map,
+  ) {
+    LocalJournalValidation.exactKeys(map, const {
+      'revisionHash',
+      'revisionId',
+      'revisionNumber',
+      'scope',
+    });
+    final rawScope = map['scope'];
+    if (rawScope is! Map) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidArgument,
+        'Candidate revision scope must be an object',
+      );
+    }
+    return LocalCandidateRevisionIdentity(
+      scope: LocalJournalValidation.decodeScope(
+        Map<String, Object?>.from(rawScope),
+      ),
+      revisionId: LocalJournalValidation.requireId(
+        'revisionId',
+        map['revisionId'],
+      ),
+      revisionNumber: LocalJournalValidation.requireSafeInteger(
+        'revisionNumber',
+        map['revisionNumber'],
+        minimum: 1,
+      ),
+      revisionHash: LocalJournalValidation.requireHash(
+        'revisionHash',
+        map['revisionHash'],
+      ),
+    );
+  }
+}
+
+bool _sameGameScope(GameScope left, GameScope right) =>
+    OfficialStatCanonicalEncoding.encode(left.toContractMap()) ==
+    OfficialStatCanonicalEncoding.encode(right.toContractMap());
+
 enum WorkspaceSubmissionState { captureOpen, submissionQueued, submitted }
+
+/// Durable evidence for the exact revision sealed by a submission request.
+///
+/// This remains in the checkpoint after acknowledged operations are pruned,
+/// so an empty retained journal cannot erase proof of accepted submission.
+final class LocalCandidateRevisionSubmissionEvidence {
+  LocalCandidateRevisionSubmissionEvidence._({
+    required this.revision,
+    required this.preparationPackageChecksum,
+    required this.submittedThroughSequence,
+    required this.submittedThroughHash,
+    required this.state,
+    required this.acceptedThroughSequence,
+    required this.acceptedJournalHead,
+    required this.acceptedJournalHash,
+    required this.observedAt,
+    required this.evidenceChecksum,
+  });
+
+  factory LocalCandidateRevisionSubmissionEvidence.queued({
+    required LocalCandidateRevisionIdentity revision,
+    required String preparationPackageChecksum,
+    required int submittedThroughSequence,
+    required String submittedThroughHash,
+    required DateTime observedAt,
+  }) => LocalCandidateRevisionSubmissionEvidence._create(
+    revision: revision,
+    preparationPackageChecksum: preparationPackageChecksum,
+    submittedThroughSequence: submittedThroughSequence,
+    submittedThroughHash: submittedThroughHash,
+    state: WorkspaceSubmissionState.submissionQueued,
+    acceptedThroughSequence: const Fact.notApplicable(
+      reasonCode: 'submission_not_accepted',
+    ),
+    acceptedJournalHead: const Fact.notApplicable(
+      reasonCode: 'submission_not_accepted',
+    ),
+    acceptedJournalHash: const Fact.notApplicable(
+      reasonCode: 'submission_not_accepted',
+    ),
+    observedAt: observedAt,
+  );
+
+  LocalCandidateRevisionSubmissionEvidence accepted({
+    required int acceptedThroughSequence,
+    required String acceptedJournalHead,
+    required String acceptedJournalHash,
+    required DateTime observedAt,
+  }) => LocalCandidateRevisionSubmissionEvidence._create(
+    revision: revision,
+    preparationPackageChecksum: preparationPackageChecksum,
+    submittedThroughSequence: submittedThroughSequence,
+    submittedThroughHash: submittedThroughHash,
+    state: WorkspaceSubmissionState.submitted,
+    acceptedThroughSequence: Fact.known(acceptedThroughSequence),
+    acceptedJournalHead: Fact.known(acceptedJournalHead),
+    acceptedJournalHash: Fact.known(acceptedJournalHash),
+    observedAt: observedAt,
+  );
+
+  factory LocalCandidateRevisionSubmissionEvidence._create({
+    required LocalCandidateRevisionIdentity revision,
+    required String preparationPackageChecksum,
+    required int submittedThroughSequence,
+    required String submittedThroughHash,
+    required WorkspaceSubmissionState state,
+    required Fact<int> acceptedThroughSequence,
+    required Fact<String> acceptedJournalHead,
+    required Fact<String> acceptedJournalHash,
+    required DateTime observedAt,
+  }) {
+    final normalized = LocalJournalValidation.normalizeTimestamp(observedAt);
+    final payload = _candidateSubmissionEvidenceMap(
+      revision: revision,
+      preparationPackageChecksum: preparationPackageChecksum,
+      submittedThroughSequence: submittedThroughSequence,
+      submittedThroughHash: submittedThroughHash,
+      state: state,
+      acceptedThroughSequence: acceptedThroughSequence,
+      acceptedJournalHead: acceptedJournalHead,
+      acceptedJournalHash: acceptedJournalHash,
+      observedAt: normalized,
+    );
+    final evidence = LocalCandidateRevisionSubmissionEvidence._(
+      revision: revision,
+      preparationPackageChecksum: preparationPackageChecksum,
+      submittedThroughSequence: submittedThroughSequence,
+      submittedThroughHash: submittedThroughHash,
+      state: state,
+      acceptedThroughSequence: acceptedThroughSequence,
+      acceptedJournalHead: acceptedJournalHead,
+      acceptedJournalHash: acceptedJournalHash,
+      observedAt: normalized,
+      evidenceChecksum: OfficialStatCanonicalEncoding.sha256Hex(payload),
+    );
+    evidence._validate();
+    return evidence;
+  }
+
+  final LocalCandidateRevisionIdentity revision;
+  final String preparationPackageChecksum;
+  final int submittedThroughSequence;
+  final String submittedThroughHash;
+  final WorkspaceSubmissionState state;
+  final Fact<int> acceptedThroughSequence;
+  final Fact<String> acceptedJournalHead;
+  final Fact<String> acceptedJournalHash;
+  final DateTime observedAt;
+  final String evidenceChecksum;
+
+  void _validate() {
+    LocalJournalValidation.requireHash(
+      'preparationPackageChecksum',
+      preparationPackageChecksum,
+    );
+    LocalJournalValidation.requireSafeInteger(
+      'submittedThroughSequence',
+      submittedThroughSequence,
+      maximum: LocalGameJournalLimits.maxOperationsPerWorkspace - 1,
+    );
+    LocalJournalValidation.requireHash(
+      'submittedThroughHash',
+      submittedThroughHash,
+    );
+    final acceptedSequence = acceptedThroughSequence.valueOrNull;
+    final acceptedHead = acceptedJournalHead.valueOrNull;
+    final acceptedHash = acceptedJournalHash.valueOrNull;
+    final queuedFactsAreExact =
+        acceptedThroughSequence is NotApplicableFact<int> &&
+        acceptedThroughSequence.reasonCode == 'submission_not_accepted' &&
+        acceptedJournalHead is NotApplicableFact<String> &&
+        acceptedJournalHead.reasonCode == 'submission_not_accepted' &&
+        acceptedJournalHash is NotApplicableFact<String> &&
+        acceptedJournalHash.reasonCode == 'submission_not_accepted';
+    final submittedFactsAreExact =
+        acceptedThroughSequence is KnownFact<int> &&
+        acceptedJournalHead is KnownFact<String> &&
+        acceptedJournalHash is KnownFact<String>;
+    if (state == WorkspaceSubmissionState.captureOpen ||
+        (state == WorkspaceSubmissionState.submitted &&
+            (!submittedFactsAreExact ||
+                acceptedSequence != submittedThroughSequence ||
+                acceptedHead == null ||
+                acceptedHash == null)) ||
+        (state == WorkspaceSubmissionState.submissionQueued &&
+            !queuedFactsAreExact)) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidStateTransition,
+        'Candidate revision submission evidence is internally inconsistent',
+      );
+    }
+    if (acceptedHead != null) {
+      LocalJournalValidation.requireId('acceptedJournalHead', acceptedHead);
+    }
+    if (acceptedHash != null) {
+      LocalJournalValidation.requireHash('acceptedJournalHash', acceptedHash);
+    }
+    final expected = OfficialStatCanonicalEncoding.sha256Hex(
+      _candidateSubmissionEvidenceMap(
+        revision: revision,
+        preparationPackageChecksum: preparationPackageChecksum,
+        submittedThroughSequence: submittedThroughSequence,
+        submittedThroughHash: submittedThroughHash,
+        state: state,
+        acceptedThroughSequence: acceptedThroughSequence,
+        acceptedJournalHead: acceptedJournalHead,
+        acceptedJournalHash: acceptedJournalHash,
+        observedAt: observedAt,
+      ),
+    );
+    if (expected != evidenceChecksum) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.hashMismatch,
+        'Candidate revision submission evidence checksum does not match',
+      );
+    }
+  }
+
+  Map<String, Object?> toContractMap() => {
+    ..._candidateSubmissionEvidenceMap(
+      revision: revision,
+      preparationPackageChecksum: preparationPackageChecksum,
+      submittedThroughSequence: submittedThroughSequence,
+      submittedThroughHash: submittedThroughHash,
+      state: state,
+      acceptedThroughSequence: acceptedThroughSequence,
+      acceptedJournalHead: acceptedJournalHead,
+      acceptedJournalHash: acceptedJournalHash,
+      observedAt: observedAt,
+    ),
+    'evidenceChecksum': evidenceChecksum,
+  };
+
+  factory LocalCandidateRevisionSubmissionEvidence.fromContractMap(
+    Map<String, Object?> map,
+  ) {
+    LocalJournalValidation.exactKeys(map, const {
+      'acceptedJournalHash',
+      'acceptedJournalHead',
+      'acceptedThroughSequence',
+      'evidenceChecksum',
+      'observedAt',
+      'preparationPackageChecksum',
+      'revision',
+      'state',
+      'submittedThroughHash',
+      'submittedThroughSequence',
+    });
+    final rawRevision = map['revision'];
+    final state = WorkspaceSubmissionState.values
+        .where((value) => value.name == map['state'])
+        .firstOrNull;
+    if (rawRevision is! Map || state == null) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidArgument,
+        'Candidate submission revision or state is invalid',
+      );
+    }
+    final evidence = LocalCandidateRevisionSubmissionEvidence._(
+      revision: LocalCandidateRevisionIdentity.fromContractMap(
+        Map<String, Object?>.from(rawRevision),
+      ),
+      preparationPackageChecksum: LocalJournalValidation.requireHash(
+        'preparationPackageChecksum',
+        map['preparationPackageChecksum'],
+      ),
+      submittedThroughSequence: LocalJournalValidation.requireSafeInteger(
+        'submittedThroughSequence',
+        map['submittedThroughSequence'],
+      ),
+      submittedThroughHash: LocalJournalValidation.requireHash(
+        'submittedThroughHash',
+        map['submittedThroughHash'],
+      ),
+      state: state,
+      acceptedThroughSequence: LocalJournalValidation.decodeIntFact(
+        'acceptedThroughSequence',
+        map['acceptedThroughSequence'],
+      ),
+      acceptedJournalHead: LocalJournalValidation.decodeStringFact(
+        'acceptedJournalHead',
+        map['acceptedJournalHead'],
+        requireIdentifier: true,
+      ),
+      acceptedJournalHash: LocalJournalValidation.decodeStringFact(
+        'acceptedJournalHash',
+        map['acceptedJournalHash'],
+        requireHash: true,
+      ),
+      observedAt: LocalJournalValidation.requireTimestamp(
+        'observedAt',
+        map['observedAt'],
+      ),
+      evidenceChecksum: LocalJournalValidation.requireHash(
+        'evidenceChecksum',
+        map['evidenceChecksum'],
+      ),
+    );
+    evidence._validate();
+    return evidence;
+  }
+}
+
+Map<String, Object?> _candidateSubmissionEvidenceMap({
+  required LocalCandidateRevisionIdentity revision,
+  required String preparationPackageChecksum,
+  required int submittedThroughSequence,
+  required String submittedThroughHash,
+  required WorkspaceSubmissionState state,
+  required Fact<int> acceptedThroughSequence,
+  required Fact<String> acceptedJournalHead,
+  required Fact<String> acceptedJournalHash,
+  required DateTime observedAt,
+}) => {
+  'acceptedJournalHash': acceptedJournalHash.toContractMap((value) => value),
+  'acceptedJournalHead': acceptedJournalHead.toContractMap((value) => value),
+  'acceptedThroughSequence': acceptedThroughSequence.toContractMap(
+    (value) => value,
+  ),
+  'observedAt': observedAt,
+  'preparationPackageChecksum': preparationPackageChecksum,
+  'revision': revision.toContractMap(),
+  'state': state.name,
+  'submittedThroughHash': submittedThroughHash,
+  'submittedThroughSequence': submittedThroughSequence,
+};
 
 /// Persisted local recovery posture. This is deliberately separate from the
 /// server-owned workspace lifecycle in Packet 01.
@@ -663,6 +1027,8 @@ final class LocalWorkspaceCheckpoint {
   final WorkspaceSubmissionState submissionState;
   final LocalWorkspaceRecoveryState recoveryState;
   final Fact<String> preparationPackageChecksum;
+  final LocalCandidateRevisionSubmissionEvidence?
+  candidateRevisionSubmissionEvidence;
   final DateTime updatedAt;
 
   LocalWorkspaceCheckpoint({
@@ -682,6 +1048,7 @@ final class LocalWorkspaceCheckpoint {
     required this.submissionState,
     this.recoveryState = LocalWorkspaceRecoveryState.active,
     required this.preparationPackageChecksum,
+    this.candidateRevisionSubmissionEvidence,
     required DateTime updatedAt,
   }) : updatedAt = LocalJournalValidation.normalizeTimestamp(updatedAt) {
     if (localSchemaVersion != LocalGameJournalLimits.localSchemaVersion) {
@@ -763,6 +1130,29 @@ final class LocalWorkspaceCheckpoint {
         );
       }
     }
+    final candidateEvidence = candidateRevisionSubmissionEvidence;
+    if (candidateEvidence != null) {
+      if (candidateEvidence.preparationPackageChecksum !=
+              preparationPackageChecksum.valueOrNull ||
+          !_sameGameScope(candidateEvidence.revision.scope, partition.scope) ||
+          candidateEvidence.state != submissionState ||
+          candidateEvidence.submittedThroughSequence !=
+              lastLocalSequence.valueOrNull ||
+          candidateEvidence.submittedThroughHash !=
+              lastOperationHash.valueOrNull ||
+          (submissionState == WorkspaceSubmissionState.submitted &&
+              (candidateEvidence.acceptedThroughSequence.valueOrNull !=
+                      acceptedThroughSequence.valueOrNull ||
+                  candidateEvidence.acceptedJournalHead.valueOrNull !=
+                      acceptedJournalHead.valueOrNull ||
+                  candidateEvidence.acceptedJournalHash.valueOrNull !=
+                      acceptedJournalHash.valueOrNull))) {
+        throw LocalJournalException(
+          LocalJournalErrorCode.mutatedRecord,
+          'Candidate revision evidence does not match its checkpoint',
+        );
+      }
+    }
   }
 
   factory LocalWorkspaceCheckpoint.empty({
@@ -815,10 +1205,12 @@ final class LocalWorkspaceCheckpoint {
     'submissionState': submissionState.name,
     'updatedAt': updatedAt,
     'writerEpoch': writerEpoch,
+    if (candidateRevisionSubmissionEvidence case final evidence?)
+      'candidateRevisionSubmissionEvidence': evidence.toContractMap(),
   };
 
   factory LocalWorkspaceCheckpoint.fromContractMap(Map<String, Object?> map) {
-    LocalJournalValidation.exactKeys(map, const {
+    const requiredKeys = {
       'localSchemaVersion',
       'partition',
       'writerEpoch',
@@ -836,7 +1228,17 @@ final class LocalWorkspaceCheckpoint {
       'submissionState',
       'preparationPackageChecksum',
       'updatedAt',
-    });
+    };
+    final actualKeys = map.keys.toSet();
+    if (!actualKeys.containsAll(requiredKeys) ||
+        actualKeys.difference(requiredKeys).difference(const {
+          'candidateRevisionSubmissionEvidence',
+        }).isNotEmpty) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidArgument,
+        'Checkpoint contains missing or unsupported fields',
+      );
+    }
     final rawPartition = map['partition'];
     final submissionState = WorkspaceSubmissionState.values
         .where((value) => value.name == map['submissionState'])
@@ -850,6 +1252,13 @@ final class LocalWorkspaceCheckpoint {
       throw LocalJournalException(
         LocalJournalErrorCode.invalidArgument,
         'Checkpoint partition or submission state is invalid',
+      );
+    }
+    final rawCandidateEvidence = map['candidateRevisionSubmissionEvidence'];
+    if (rawCandidateEvidence != null && rawCandidateEvidence is! Map) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidArgument,
+        'Candidate revision submission evidence must be an object',
       );
     }
     return LocalWorkspaceCheckpoint(
@@ -918,6 +1327,11 @@ final class LocalWorkspaceCheckpoint {
         map['preparationPackageChecksum'],
         requireHash: true,
       ),
+      candidateRevisionSubmissionEvidence: rawCandidateEvidence == null
+          ? null
+          : LocalCandidateRevisionSubmissionEvidence.fromContractMap(
+              Map<String, Object?>.from(rawCandidateEvidence as Map),
+            ),
       updatedAt: LocalJournalValidation.requireTimestamp(
         'updatedAt',
         map['updatedAt'],
@@ -945,6 +1359,7 @@ final class PreparedGameRecoveryPackage {
   final Fact<int> acceptedServerSequence;
   final String acceptedJournalHead;
   final String acceptedJournalHash;
+  final LocalCandidateRevisionIdentity? candidateRevision;
   final DateTime preparedAt;
   final String packageChecksum;
 
@@ -967,6 +1382,7 @@ final class PreparedGameRecoveryPackage {
     required this.acceptedServerSequence,
     required this.acceptedJournalHead,
     required this.acceptedJournalHash,
+    required this.candidateRevision,
     required this.preparedAt,
     required this.packageChecksum,
   });
@@ -988,6 +1404,7 @@ final class PreparedGameRecoveryPackage {
     required Fact<int> acceptedServerSequence,
     required String acceptedJournalHead,
     required String acceptedJournalHash,
+    LocalCandidateRevisionIdentity? candidateRevision,
     required DateTime preparedAt,
   }) {
     final normalized = LocalJournalValidation.normalizeTimestamp(preparedAt);
@@ -1010,6 +1427,7 @@ final class PreparedGameRecoveryPackage {
       acceptedServerSequence: acceptedServerSequence,
       acceptedJournalHead: acceptedJournalHead,
       acceptedJournalHash: acceptedJournalHash,
+      candidateRevision: candidateRevision,
       preparedAt: normalized,
     );
     final package = PreparedGameRecoveryPackage._(
@@ -1031,6 +1449,7 @@ final class PreparedGameRecoveryPackage {
       acceptedServerSequence: acceptedServerSequence,
       acceptedJournalHead: acceptedJournalHead,
       acceptedJournalHash: acceptedJournalHash,
+      candidateRevision: candidateRevision,
       preparedAt: normalized,
       packageChecksum: OfficialStatCanonicalEncoding.sha256Hex(withoutChecksum),
     );
@@ -1088,6 +1507,14 @@ final class PreparedGameRecoveryPackage {
       'acceptedJournalHash',
       acceptedJournalHash,
     );
+    if (candidateRevision case final revision?) {
+      if (!_sameGameScope(revision.scope, partition.scope)) {
+        throw LocalJournalException(
+          LocalJournalErrorCode.scopeMismatch,
+          'Candidate revision scope does not match the prepared workspace',
+        );
+      }
+    }
     LocalJournalValidation.requireHash('packageChecksum', packageChecksum);
     final expected = OfficialStatCanonicalEncoding.sha256Hex(
       _packageMap(
@@ -1109,6 +1536,7 @@ final class PreparedGameRecoveryPackage {
         acceptedServerSequence: acceptedServerSequence,
         acceptedJournalHead: acceptedJournalHead,
         acceptedJournalHash: acceptedJournalHash,
+        candidateRevision: candidateRevision,
         preparedAt: preparedAt,
       ),
     );
@@ -1149,6 +1577,7 @@ final class PreparedGameRecoveryPackage {
       acceptedServerSequence: acceptedServerSequence,
       acceptedJournalHead: acceptedJournalHead,
       acceptedJournalHash: acceptedJournalHash,
+      candidateRevision: candidateRevision,
       preparedAt: preparedAt,
     ),
     'packageChecksum': packageChecksum,
@@ -1157,7 +1586,7 @@ final class PreparedGameRecoveryPackage {
   factory PreparedGameRecoveryPackage.fromContractMap(
     Map<String, Object?> map,
   ) {
-    LocalJournalValidation.exactKeys(map, const {
+    const requiredKeys = {
       'packageVersion',
       'localSchemaVersion',
       'packageId',
@@ -1178,12 +1607,24 @@ final class PreparedGameRecoveryPackage {
       'acceptedJournalHash',
       'preparedAt',
       'packageChecksum',
-    });
-    final rawPartition = map['partition'];
-    if (rawPartition is! Map) {
+    };
+    final actualKeys = map.keys.toSet();
+    if (!actualKeys.containsAll(requiredKeys) ||
+        actualKeys.difference(requiredKeys).difference(const {
+          'candidateRevision',
+        }).isNotEmpty) {
       throw LocalJournalException(
         LocalJournalErrorCode.invalidArgument,
-        'Prepared package partition must be an object',
+        'Prepared package contains missing or unsupported fields',
+      );
+    }
+    final rawPartition = map['partition'];
+    final rawCandidateRevision = map['candidateRevision'];
+    if (rawPartition is! Map ||
+        (rawCandidateRevision != null && rawCandidateRevision is! Map)) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidArgument,
+        'Prepared package partition and candidate revision must be objects',
       );
     }
     final package = PreparedGameRecoveryPackage._(
@@ -1262,6 +1703,11 @@ final class PreparedGameRecoveryPackage {
         'acceptedJournalHash',
         map['acceptedJournalHash'],
       ),
+      candidateRevision: rawCandidateRevision == null
+          ? null
+          : LocalCandidateRevisionIdentity.fromContractMap(
+              Map<String, Object?>.from(rawCandidateRevision as Map),
+            ),
       preparedAt: LocalJournalValidation.requireTimestamp(
         'preparedAt',
         map['preparedAt'],
@@ -1295,6 +1741,7 @@ Map<String, Object?> _packageMap({
   required Fact<int> acceptedServerSequence,
   required String acceptedJournalHead,
   required String acceptedJournalHash,
+  LocalCandidateRevisionIdentity? candidateRevision,
   required DateTime preparedAt,
 }) => {
   'acceptedJournalHash': acceptedJournalHash,
@@ -1302,6 +1749,8 @@ Map<String, Object?> _packageMap({
   'acceptedServerSequence': acceptedServerSequence.toContractMap(
     (value) => value,
   ),
+  if (candidateRevision != null)
+    'candidateRevision': candidateRevision.toContractMap(),
   'assignmentId': assignmentId,
   'assignmentVersion': assignmentVersion,
   'calculatorVersion': calculatorVersion,

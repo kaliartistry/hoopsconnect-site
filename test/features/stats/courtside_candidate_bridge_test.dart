@@ -28,24 +28,53 @@ CandidateRevisionReference _revision(int number, {String? predecessor}) =>
           : Fact.known(predecessor!),
     );
 
-CourtsideRecoverySnapshot _acceptedSnapshot() => CourtsideRecoverySnapshot(
-  phase: CourtsideRecoveryPhase.ready,
-  operations: const [
-    CourtsideOperationStatus(
-      operationId: 'operation_1',
-      commandId: 'command_1',
-      localSequence: 0,
-      state: JournalDeliveryState.accepted,
-      responseUnknown: false,
-      lastErrorCode: null,
-      pauseReason: null,
-    ),
-  ],
-  captureAvailability: LocalCaptureAvailability.ready,
-  workspaceRecoveryState: LocalWorkspaceRecoveryState.active,
-  workspaceSubmissionState: WorkspaceSubmissionState.submitted,
-  lastFailureCode: null,
+LocalCandidateRevisionIdentity _localRevision(
+  CandidateRevisionReference revision,
+) => LocalCandidateRevisionIdentity(
+  scope: revision.scope,
+  revisionId: revision.revisionId,
+  revisionNumber: revision.revisionNumber,
+  revisionHash: revision.revisionHash,
 );
+
+CourtsideRecoverySnapshot _acceptedSnapshot(
+  CandidateRevisionReference revision,
+) {
+  final localRevision = _localRevision(revision);
+  final evidence =
+      LocalCandidateRevisionSubmissionEvidence.queued(
+        revision: localRevision,
+        preparationPackageChecksum: List.filled(64, 'c').join(),
+        submittedThroughSequence: 0,
+        submittedThroughHash: List.filled(64, 'd').join(),
+        observedAt: DateTime.utc(2026, 9, 11, 14),
+      ).accepted(
+        acceptedThroughSequence: 0,
+        acceptedJournalHead: 'head_1',
+        acceptedJournalHash: List.filled(64, 'd').join(),
+        observedAt: DateTime.utc(2026, 9, 11, 14, 1),
+      );
+  return CourtsideRecoverySnapshot(
+    phase: CourtsideRecoveryPhase.ready,
+    operations: const [
+      CourtsideOperationStatus(
+        operationId: 'operation_1',
+        commandId: 'command_1',
+        localSequence: 0,
+        state: JournalDeliveryState.accepted,
+        responseUnknown: false,
+        lastErrorCode: null,
+        pauseReason: null,
+      ),
+    ],
+    captureAvailability: LocalCaptureAvailability.ready,
+    workspaceRecoveryState: LocalWorkspaceRecoveryState.active,
+    workspaceSubmissionState: WorkspaceSubmissionState.submitted,
+    boundRevision: localRevision,
+    submissionEvidence: evidence,
+    lastFailureCode: null,
+  );
+}
 
 void main() {
   test('exact N and N+1 bridges preserve revision review identity', () {
@@ -58,7 +87,7 @@ void main() {
 
     workflow = CourtsideCandidateBridge(
       revision: n,
-    ).synchronize(workflow, _acceptedSnapshot());
+    ).synchronize(workflow, _acceptedSnapshot(n));
     expect(workflow.deliveryState, JournalDeliveryState.accepted);
     expect(workflow.acceptedDeliveryRevision!.revisionId, n.revisionId);
     workflow = workflow.apply(
@@ -84,9 +113,21 @@ void main() {
     workflow = workflow.openSuccessorDraft(nPlusOne);
     expect(workflow.deliveryState, JournalDeliveryState.savedOnDevice);
 
+    expect(
+      () => CourtsideCandidateBridge(
+        revision: nPlusOne,
+      ).synchronize(workflow, _acceptedSnapshot(n)),
+      throwsA(
+        isA<CandidateWorkflowException>().having(
+          (error) => error.code,
+          'code',
+          'courtsideRevisionMismatch',
+        ),
+      ),
+    );
     workflow = CourtsideCandidateBridge(
       revision: nPlusOne,
-    ).synchronize(workflow, _acceptedSnapshot());
+    ).synchronize(workflow, _acceptedSnapshot(nPlusOne));
     expect(workflow.acceptedDeliveryRevision!.revisionId, nPlusOne.revisionId);
     workflow = workflow.apply(
       CandidateReviewCommand(
@@ -160,7 +201,7 @@ void main() {
     expect(
       () => CourtsideCandidateBridge(
         revision: other,
-      ).synchronize(workflow, _acceptedSnapshot()),
+      ).synchronize(workflow, _acceptedSnapshot(n)),
       throwsA(
         isA<CandidateWorkflowException>().having(
           (error) => error.code,
@@ -168,6 +209,25 @@ void main() {
           'courtsideRevisionMismatch',
         ),
       ),
+    );
+  });
+
+  test('fully pruned accepted evidence still accepts the exact revision', () {
+    final revision = _revision(1);
+    final workflow = CandidateStatsWorkflow.preparing(
+      scope: _scope(),
+      playState: PlayState.completed,
+    ).openDraft(revision: revision, captureMode: CaptureMode.officialSheet);
+    final pruned = _acceptedSnapshot(revision).copyWith(operations: const []);
+
+    final synchronized = CourtsideCandidateBridge(
+      revision: revision,
+    ).synchronize(workflow, pruned);
+
+    expect(synchronized.deliveryState, JournalDeliveryState.accepted);
+    expect(
+      synchronized.acceptedDeliveryRevision!.revisionId,
+      revision.revisionId,
     );
   });
 }

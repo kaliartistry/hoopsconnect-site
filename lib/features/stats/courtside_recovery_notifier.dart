@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../../models/official_stats/domain_contracts.dart';
 import '../../services/local_game_journal/courtside_recovery.dart';
 import '../../services/local_game_journal/deletion_recovery_models.dart';
 import '../../services/local_game_journal/journal_repository.dart';
@@ -35,7 +34,7 @@ final class CourtsideRecoveryNotifier extends ChangeNotifier {
   }) => orchestrator.retryNeedsAttention(operationId, now: now);
 
   Future<CourtsideRecoverySnapshot> acceptRecoveredReceipt(
-    OperationReceiptContract receipt,
+    CourtsideRevisionReceipt receipt,
   ) => orchestrator.acceptRecoveredReceipt(receipt);
 
   Future<CourtsideDeletionReconciliationPlan> reconcileDeletion(
