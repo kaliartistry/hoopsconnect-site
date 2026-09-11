@@ -9,8 +9,6 @@ const _hashA =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _hashB =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-const _hashC =
-    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
 void main() {
   testWidgets('media comparison reads only the current public snapshot', (
@@ -92,8 +90,7 @@ PublicLeagueSnapshot _publishedSnapshot() => PublicLeagueSnapshot(
       homeScore: 82,
       awayScore: 79,
       status: PublicGameStatus.finalResult,
-      resultVersion: _hashC,
-    ),
+    ).withComputedResultVersion(),
   ],
   standings: const [
     PublicStanding(

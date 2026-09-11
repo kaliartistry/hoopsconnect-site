@@ -3,17 +3,19 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/sharing/artifact_downloader.dart';
 import 'package:hoops_connect/features/public/public_game_detail_screen.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
+import 'package:hoops_connect/services/public_artifact_release_validator.dart';
 
 const _snapshotHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const _resultHash =
-    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _changedSnapshotHash =
+    'cccccccccccccccccccccccccccccccc'
+    'cccccccccccccccccccccccccccccccc';
 
 void main() {
   testWidgets('media game CSV confirms one version-bound download', (
@@ -34,7 +36,7 @@ void main() {
     expect(downloader.mimeType, 'text/csv;charset=utf-8');
     final csv = utf8.decode(downloader.bytes!);
     expect(csv, contains(_snapshotHash));
-    expect(csv, contains(_resultHash));
+    expect(csv, contains(_snapshot().schedule.single.resultVersion!));
     expect(csv, contains('Public Player'));
     expect(find.textContaining('CSV download started for'), findsOneWidget);
   });
@@ -89,31 +91,114 @@ void main() {
     expect(downloader.calls, 1);
     expect(find.textContaining('CSV download started for'), findsOneWidget);
   });
+
+  testWidgets('retraction before an action cancels and disables artifacts', (
+    tester,
+  ) async {
+    final downloader = _RecordingDownloader();
+    await _pumpDetail(
+      tester,
+      downloader: downloader,
+      currentReleases: [_snapshot(state: PublicReleaseState.retracted)],
+    );
+
+    await tester.tap(find.text('Download game CSV'));
+    await tester.pumpAndSettle();
+
+    expect(downloader.calls, 0);
+    expect(find.textContaining('withdrawn'), findsOneWidget);
+    expect(find.text('Download game CSV'), findsNothing);
+  });
+
+  testWidgets('version change during download never reports stale success', (
+    tester,
+  ) async {
+    final downloader = _PendingDownloader();
+    await _pumpDetail(
+      tester,
+      downloader: downloader,
+      currentReleases: [
+        _snapshot(),
+        _snapshot(),
+        _snapshot(snapshotVersion: _changedSnapshotHash, homeScore: 83),
+      ],
+    );
+
+    await tester.tap(find.text('Download game CSV'));
+    await tester.pump();
+    expect(downloader.calls, 1);
+    downloader.complete('older.csv');
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('downloaded file may be outdated'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('CSV download started for'), findsNothing);
+  });
+
+  testWidgets('version change during copy warns that clipboard may be stale', (
+    tester,
+  ) async {
+    final writer = _PendingClipboardWriter();
+    await _pumpDetail(
+      tester,
+      downloader: _RecordingDownloader(),
+      clipboardWriter: writer.call,
+      currentReleases: [
+        _snapshot(),
+        _snapshot(snapshotVersion: _changedSnapshotHash, homeScore: 83),
+      ],
+    );
+
+    await tester.tap(find.text('Copy published summary'));
+    await tester.pump();
+    expect(writer.calls, 1);
+    writer.complete();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('clipboard may contain an older result'),
+      findsOneWidget,
+    );
+    expect(find.text('Copied to clipboard'), findsNothing);
+  });
 }
 
 Future<void> _pumpDetail(
   WidgetTester tester, {
   required ArtifactDownloader downloader,
+  List<PublicLeagueSnapshot?>? currentReleases,
+  Future<void> Function(String text)? clipboardWriter,
 }) async {
   tester.view.physicalSize = const Size(900, 1800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final snapshot = _snapshot();
+  final reader = _QueueReleaseReader(currentReleases ?? [snapshot]);
   await tester.pumpWidget(
-    MaterialApp(
-      home: PublicGameDetailScreen(
-        snapshot: snapshot,
-        detail: snapshot.gameDetail('game-1')!,
-        canExportStats: true,
-        downloader: downloader,
+    ProviderScope(
+      child: MaterialApp(
+        home: PublicGameDetailScreen(
+          snapshot: snapshot,
+          detail: snapshot.gameDetail('game-1')!,
+          canExportStats: true,
+          downloader: downloader,
+          releaseValidator: PublicArtifactReleaseValidator(reader),
+          clipboardWriter: clipboardWriter,
+        ),
       ),
     ),
   );
   await tester.pumpAndSettle();
 }
 
-PublicLeagueSnapshot _snapshot() => PublicLeagueSnapshot(
+PublicLeagueSnapshot _snapshot({
+  String snapshotVersion = _snapshotHash,
+  int homeScore = 82,
+  PublicReleaseState state = PublicReleaseState.published,
+}) => PublicLeagueSnapshot(
   leagueName: 'Jamaica Basketball Association',
   leagueShortName: 'JBA',
   seasonId: 'season-1',
@@ -121,49 +206,50 @@ PublicLeagueSnapshot _snapshot() => PublicLeagueSnapshot(
   version: PublicSnapshotVersion(
     schemaVersion: 1,
     contractVersion: 'legacy-public-snapshot-v1.1',
-    snapshotVersion: _snapshotHash,
+    snapshotVersion: snapshotVersion,
     verificationStatus: 'legacyApproved',
-    state: PublicReleaseState.published,
+    state: state,
     privacyEpoch: 8,
     generatedAt: DateTime.utc(2026, 9, 10, 21),
   ),
-  schedule: [
-    PublicGame(
-      gameId: 'game-1',
-      title: 'Public Home vs Public Away',
-      startTime: DateTime.utc(2026, 9, 10, 20),
-      homeTeamId: 'home',
-      homeTeamName: 'Public Home',
-      awayTeamId: 'away',
-      awayTeamName: 'Public Away',
-      homeScore: 82,
-      awayScore: 79,
-      status: PublicGameStatus.finalResult,
-      resultVersion: _resultHash,
-      playerLines: const [
-        PublicPlayerGameLine(
-          playerId: 'player-1',
-          displayName: 'Public Player',
-          teamId: 'home',
-          minutes: 30,
-          points: 20,
-          twoPointMade: 5,
-          twoPointAttempted: 8,
-          threePointMade: 2,
-          threePointAttempted: 5,
-          freeThrowMade: 4,
-          freeThrowAttempted: 5,
-          offensiveRebounds: 1,
-          defensiveRebounds: 4,
-          assists: 3,
-          steals: 2,
-          blocks: 1,
-          turnovers: 2,
-          fouls: 3,
-        ),
-      ],
-    ),
-  ],
+  schedule: state == PublicReleaseState.published
+      ? [
+          PublicGame(
+            gameId: 'game-1',
+            title: 'Public Home vs Public Away',
+            startTime: DateTime.utc(2026, 9, 10, 20),
+            homeTeamId: 'home',
+            homeTeamName: 'Public Home',
+            awayTeamId: 'away',
+            awayTeamName: 'Public Away',
+            homeScore: homeScore,
+            awayScore: 79,
+            status: PublicGameStatus.finalResult,
+            playerLines: const [
+              PublicPlayerGameLine(
+                playerId: 'player-1',
+                displayName: 'Public Player',
+                teamId: 'home',
+                minutes: 30,
+                points: 20,
+                twoPointMade: 5,
+                twoPointAttempted: 8,
+                threePointMade: 2,
+                threePointAttempted: 5,
+                freeThrowMade: 4,
+                freeThrowAttempted: 5,
+                offensiveRebounds: 1,
+                defensiveRebounds: 4,
+                assists: 3,
+                steals: 2,
+                blocks: 1,
+                turnovers: 2,
+                fouls: 3,
+              ),
+            ],
+          ).withComputedResultVersion(),
+        ]
+      : const [],
   standings: const [],
   leaderboards: const [],
 );
@@ -173,6 +259,7 @@ class _RecordingDownloader implements ArtifactDownloader {
   Uint8List? bytes;
   String? fileName;
   String? mimeType;
+  int calls = 0;
 
   _RecordingDownloader({this.shouldFail = false});
 
@@ -185,6 +272,7 @@ class _RecordingDownloader implements ArtifactDownloader {
     required String fileName,
     required String mimeType,
   }) async {
+    calls++;
     if (shouldFail) throw StateError('synthetic download failure');
     this.bytes = bytes;
     this.fileName = fileName;
@@ -225,4 +313,29 @@ class _PendingDownloader implements ArtifactDownloader {
     calls++;
     return _pending.future;
   }
+}
+
+class _QueueReleaseReader implements PublicCurrentReleaseReader {
+  final List<PublicLeagueSnapshot?> releases;
+  int _index = 0;
+
+  _QueueReleaseReader(this.releases);
+
+  @override
+  Future<PublicLeagueSnapshot?> readCurrentRelease() async {
+    final index = _index < releases.length ? _index++ : releases.length - 1;
+    return releases[index];
+  }
+}
+
+class _PendingClipboardWriter {
+  final _pending = Completer<void>();
+  int calls = 0;
+
+  Future<void> call(String text) {
+    calls++;
+    return _pending.future;
+  }
+
+  void complete() => _pending.complete();
 }

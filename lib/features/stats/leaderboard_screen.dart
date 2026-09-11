@@ -10,6 +10,7 @@ import '../../providers/division_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
+import '../../services/public_artifact_release_validator.dart';
 import '../../core/widgets/skeleton_loader.dart';
 import '../../core/widgets/error_display.dart';
 import '../../core/widgets/empty_state.dart';
@@ -148,6 +149,7 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
                     leagueName: snapshot.leagueName,
                     shortName: snapshot.leagueShortName,
                   );
+              final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
               showBrandedShareSheet(
                 context: context,
                 branding: branding,
@@ -156,6 +158,11 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
                   leaderboard: publicBoard,
                   branding: branding,
                 ),
+                validateCurrent: () async {
+                  await ref
+                      .read(publicArtifactReleaseValidatorProvider)
+                      .requireCurrent(releaseBinding);
+                },
               );
             },
     );

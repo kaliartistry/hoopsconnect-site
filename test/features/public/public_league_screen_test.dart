@@ -154,9 +154,7 @@ void main() {
         homeScore: 80,
         awayScore: 70,
         status: PublicGameStatus.finalResult,
-        resultVersion:
-            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      ),
+      ).withComputedResultVersion(),
     );
     await _pump(
       tester,
@@ -238,8 +236,6 @@ PublicLeagueSnapshot _snapshot({
           homeScore: 82,
           awayScore: 79,
           status: PublicGameStatus.finalResult,
-          resultVersion:
-              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
           recap: 'Home Team won a close game.',
           playerLines: const [
             PublicPlayerGameLine(
@@ -250,7 +246,7 @@ PublicLeagueSnapshot _snapshot({
               turnovers: 2,
             ),
           ],
-        ),
+        ).withComputedResultVersion(),
       ],
   standings: const [
     PublicStanding(

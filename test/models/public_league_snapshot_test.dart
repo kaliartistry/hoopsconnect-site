@@ -61,6 +61,10 @@ void main() {
     expect(snapshot.seasonName, '2026 NBL');
     expect(snapshot.divisionName('premier'), 'Premier');
     expect(snapshot.schedule.single.resultVersion, _resultHash);
+    expect(
+      snapshot.schedule.single.resultVersion,
+      'c46005d8eb6b9cd76b4d5a51c7d41d1667e04738eefc0d715aabfe043dc8e7b0',
+    );
     expect(snapshot.schedule.single.playerLines.single.turnovers, 2);
     expect(snapshot.schedule.single.playerLines.single.threePointMade, isNull);
     expect(snapshot.leaderboards.map((board) => board.category), [
@@ -114,6 +118,23 @@ void main() {
     expect(
       () => PublicLeagueSnapshot.fromMap(map),
       throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('corrected result content with the previous version fails closed', () {
+    final map = _versionedSnapshot();
+    final schedule = map['schedule']! as List<Map<String, dynamic>>;
+    schedule.single['homeScore'] = 83;
+
+    expect(
+      () => PublicLeagueSnapshot.fromMap(map),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('does not match'),
+        ),
+      ),
     );
   });
 
@@ -215,9 +236,33 @@ void main() {
 const _snapshotHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const _resultHash =
-    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+final _resultHash = PublicGame(
+  gameId: 'game-1',
+  title: 'Home vs Away',
+  startTime: DateTime.utc(2026, 9, 10, 20),
+  divisionId: 'premier',
+  homeTeamId: 'home',
+  homeTeamName: 'Home',
+  awayTeamId: 'away',
+  awayTeamName: 'Away',
+  homeScore: 82,
+  awayScore: 79,
+  status: PublicGameStatus.finalResult,
+  periodScores: const [
+    PublicPeriodScore(period: 1, homeScore: 20, awayScore: 18),
+  ],
+  playerLines: const [
+    PublicPlayerGameLine(
+      playerId: 'player-1',
+      displayName: 'Player One',
+      teamId: 'home',
+      points: 20,
+      twoPointMade: 6,
+      twoPointAttempted: 10,
+      turnovers: 2,
+    ),
+  ],
+).resultContentDigest;
 
 Map<String, dynamic> _versionedSnapshot() => {
   'schemaVersion': 1,

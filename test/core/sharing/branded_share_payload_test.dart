@@ -78,9 +78,7 @@ void main() {
           homeScore: 82,
           awayScore: 79,
           status: PublicGameStatus.finalResult,
-          resultVersion:
-              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        ),
+        ).withComputedResultVersion(),
       ],
       standings: const [],
       leaderboards: const [],

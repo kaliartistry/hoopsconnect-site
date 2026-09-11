@@ -85,6 +85,13 @@ function fingerprint(value: unknown): string {
     .digest("hex");
 }
 
+export function immutablePublicDocumentMatches(
+  existing: unknown,
+  candidate: unknown,
+): boolean {
+  return existing !== undefined && fingerprint(existing) === fingerprint(candidate);
+}
+
 function publicationState(association: Record<string, unknown>): PublicState {
   const state = text(association.publicLeagueState);
   if (state === "published") return "published";
@@ -185,7 +192,12 @@ export function buildPublicSnapshot(input: {
       }
       const homeTeamId = text(stats?.homeTeamId, teamIds[0] || "");
       const awayTeamId = text(stats?.awayTeamId, teamIds[1] || "");
-      const result = stats ? {
+      const resultContent = stats ? {
+        gameId: entry.id,
+        homeTeamId: homeTeamId || null,
+        homeTeamName: teamNames.get(homeTeamId) || null,
+        awayTeamId: awayTeamId || null,
+        awayTeamName: teamNames.get(awayTeamId) || null,
         homeScore: numberValue(stats.homeScore),
         awayScore: numberValue(stats.awayScore),
         periodScores: publicPeriodScores(stats),
@@ -193,8 +205,12 @@ export function buildPublicSnapshot(input: {
         recap: longText(stats.publicRecap),
       } : null;
       const explicitVersion = text(stats?.publicResultVersion);
-      const resultVersion = stats ?
-        (SHA256.test(explicitVersion) ? explicitVersion : fingerprint({gameId: entry.id, ...result})) : null;
+      const resultVersion = resultContent ? fingerprint(resultContent) : null;
+      if (explicitVersion && (!SHA256.test(explicitVersion) || explicitVersion !== resultVersion)) {
+        throw new Error(
+          `Game ${entry.id} publicResultVersion does not match its public result content.`,
+        );
+      }
       return {
         gameId: entry.id,
         title: `${teamNames.get(homeTeamId) || "Home"} vs ${teamNames.get(awayTeamId) || "Away"}`,
@@ -210,9 +226,9 @@ export function buildPublicSnapshot(input: {
         homeScore: stats ? numberValue(stats.homeScore) : null,
         awayScore: stats ? numberValue(stats.awayScore) : null,
         resultVersion,
-        recap: result?.recap ?? null,
-        periodScores: result?.periodScores ?? [],
-        playerLines: result?.playerLines ?? [],
+        recap: resultContent?.recap ?? null,
+        periodScores: resultContent?.periodScores ?? [],
+        playerLines: resultContent?.playerLines ?? [],
       };
     })
     .filter((entry) => entry.startTime !== null)
@@ -579,7 +595,7 @@ async function createImmutablePageChunk(
     const snapshot = existing[index];
     const page = pages[index];
     if (snapshot.exists) {
-      if (fingerprint(snapshot.data()) !== fingerprint(page.data)) {
+      if (!immutablePublicDocumentMatches(snapshot.data(), page.data)) {
         throw new Error(`Immutable public release page ${page.id} conflicts.`);
       }
       continue;
@@ -596,7 +612,7 @@ async function createImmutablePageChunk(
     // overwrite.
     const after = await db.getAll(...refs);
     if (after.some((doc, index) =>
-      !doc.exists || fingerprint(doc.data()) !== fingerprint(pages[index].data))) {
+      !doc.exists || !immutablePublicDocumentMatches(doc.data(), pages[index].data))) {
       throw error;
     }
   }
@@ -690,7 +706,9 @@ export async function rebuildVersionedPublicRelease(
     await releaseBatch.commit();
   } catch (error) {
     const existing = await manifestRef.get();
-    if (!existing.exists || fingerprint(existing.data()) !== fingerprint(release.manifest)) {
+    if (!existing.exists || !immutablePublicDocumentMatches(
+      existing.data(), release.manifest,
+    )) {
       throw error;
     }
   }

@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/constants/app_constants.dart';
@@ -11,15 +12,18 @@ import '../../core/sharing/branded_share_sheet.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/association_branding_model.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../providers/public_league_provider.dart';
+import '../../services/public_artifact_release_validator.dart';
 import '../../services/public_stat_export_service.dart';
-import '../../services/stat_export_service.dart';
 
-class PublicGameDetailScreen extends StatefulWidget {
+class PublicGameDetailScreen extends ConsumerStatefulWidget {
   final PublicLeagueSnapshot snapshot;
   final PublicGameDetail detail;
   final bool canExportStats;
   final Uri? canonicalUri;
   final ArtifactDownloader? downloader;
+  final PublicArtifactReleaseValidator? releaseValidator;
+  final Future<void> Function(String text)? clipboardWriter;
 
   const PublicGameDetailScreen({
     super.key,
@@ -28,15 +32,21 @@ class PublicGameDetailScreen extends StatefulWidget {
     this.canExportStats = false,
     this.canonicalUri,
     this.downloader,
+    this.releaseValidator,
+    this.clipboardWriter,
   });
 
   @override
-  State<PublicGameDetailScreen> createState() => _PublicGameDetailScreenState();
+  ConsumerState<PublicGameDetailScreen> createState() =>
+      _PublicGameDetailScreenState();
 }
 
-class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
+class _PublicGameDetailScreenState
+    extends ConsumerState<PublicGameDetailScreen> {
   late final ArtifactDownloader _downloader;
   bool _downloadingCsv = false;
+  bool _artifactActionPending = false;
+  bool _artifactInvalidated = false;
 
   @override
   void initState() {
@@ -45,6 +55,13 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
   }
 
   PublicGame get game => widget.detail.game;
+
+  PublicArtifactReleaseValidator get _releaseValidator =>
+      widget.releaseValidator ??
+      ref.read(publicArtifactReleaseValidatorProvider);
+
+  PublicArtifactBinding get _artifactBinding =>
+      PublicArtifactBinding.game(widget.snapshot, game);
 
   AssociationBrandingModel get branding =>
       AssociationBrandingModel.jba(
@@ -62,7 +79,7 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
         actions: [
           if (_canShare)
             IconButton(
-              onPressed: _share,
+              onPressed: _artifactActionPending ? null : _share,
               tooltip: 'Share published result',
               icon: const Icon(Icons.ios_share_outlined),
             ),
@@ -121,6 +138,7 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
             canExport: widget.canExportStats && _canShare,
             downloadSupported: _downloader.isSupported,
             downloadingCsv: _downloadingCsv,
+            actionPending: _artifactActionPending,
             onShare: _share,
             onCopy: _copy,
             onDownloadCsv: _downloadCsv,
@@ -141,9 +159,14 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
   }
 
   bool get _canShare =>
-      widget.snapshot.canCreatePublishedArtifacts && game.hasVersionedResult;
+      !_artifactInvalidated &&
+      widget.snapshot.canCreatePublishedArtifacts &&
+      game.hasVersionedResult;
 
   String get _artifactUnavailableMessage {
+    if (_artifactInvalidated) {
+      return 'The public release changed or could not be reverified. Refresh this view before sharing or exporting.';
+    }
     if (!widget.snapshot.version.isVersioned) {
       return 'You can read this legacy result, but its exact public version cannot be verified.';
     }
@@ -153,35 +176,72 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
     return 'This game does not have a versioned published final result yet.';
   }
 
-  void _share() {
-    if (!_canShare) return;
-    showBrandedShareSheet(
-      context: context,
-      branding: branding,
-      payload: BrandedSharePayload.publicGame(
-        snapshot: widget.snapshot,
-        game: game,
+  Future<void> _share() async {
+    if (!_beginArtifactAction()) return;
+    try {
+      final current = await _releaseValidator.requireCurrent(_artifactBinding);
+      if (!mounted) return;
+      final currentGame = current.game!;
+      await showBrandedShareSheet(
+        context: context,
         branding: branding,
-        canonicalUri: widget.canonicalUri,
-      ),
-    );
+        payload: BrandedSharePayload.publicGame(
+          snapshot: current.snapshot,
+          game: currentGame,
+          branding: branding,
+          canonicalUri: widget.canonicalUri,
+        ),
+        validateCurrent: _validateShareSheetRelease,
+      );
+    } on PublicArtifactReleaseException catch (error) {
+      _invalidateArtifact(error.message);
+    } finally {
+      _endArtifactAction();
+    }
   }
 
   Future<void> _copy() async {
-    if (!_canShare) return;
-    final text = PublicStatExportService.gameSummaryText(
-      snapshot: widget.snapshot,
-      gameId: game.gameId,
-    );
-    await StatExportService.copyToClipboard(text, context);
+    if (!_beginArtifactAction()) return;
+    var copied = false;
+    try {
+      final current = await _releaseValidator.requireCurrent(_artifactBinding);
+      final text = PublicStatExportService.gameSummaryText(
+        snapshot: current.snapshot,
+        gameId: game.gameId,
+      );
+      await (widget.clipboardWriter ?? _writeClipboard)(text);
+      copied = true;
+      await _releaseValidator.requireCurrent(_artifactBinding);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+    } on PublicArtifactReleaseException catch (error) {
+      _invalidateArtifact(
+        copied
+            ? 'The publication changed while copying. The clipboard may contain an older result; do not distribute it.'
+            : error.message,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not copy. Clipboard access was denied.'),
+        ),
+      );
+    } finally {
+      _endArtifactAction();
+    }
   }
 
   Future<void> _downloadCsv() async {
-    if (!widget.canExportStats || !_canShare || _downloadingCsv) return;
+    if (!widget.canExportStats || !_beginArtifactAction()) return;
     setState(() => _downloadingCsv = true);
+    var platformAccepted = false;
     try {
+      final current = await _releaseValidator.requireCurrent(_artifactBinding);
       final csv = PublicStatExportService.gameCsv(
-        snapshot: widget.snapshot,
+        snapshot: current.snapshot,
         gameId: game.gameId,
         grant: PublicExportGrant.media,
       );
@@ -189,15 +249,24 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
         throw UnsupportedError('Downloads are unavailable.');
       }
       final fileName =
-          '${_fileSlug(widget.snapshot.leagueShortName)}-${_fileSlug(game.gameId)}-${widget.snapshot.version.shortLabel}.csv';
+          '${_fileSlug(current.snapshot.leagueShortName)}-${_fileSlug(game.gameId)}-${current.snapshot.version.shortLabel}.csv';
+      await _releaseValidator.requireCurrent(_artifactBinding);
       final destination = await _downloader.download(
         bytes: Uint8List.fromList(utf8.encode(csv)),
         fileName: fileName,
         mimeType: 'text/csv;charset=utf-8',
       );
+      platformAccepted = true;
+      await _releaseValidator.requireCurrent(_artifactBinding);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('CSV download started for $destination')),
+      );
+    } on PublicArtifactReleaseException catch (error) {
+      _invalidateArtifact(
+        platformAccepted
+            ? 'The publication changed while the CSV was saving. The downloaded file may be outdated; do not distribute it.'
+            : error.message,
       );
     } catch (_) {
       if (!mounted) return;
@@ -208,6 +277,39 @@ class _PublicGameDetailScreenState extends State<PublicGameDetailScreen> {
       );
     } finally {
       if (mounted) setState(() => _downloadingCsv = false);
+      _endArtifactAction();
+    }
+  }
+
+  bool _beginArtifactAction() {
+    if (!_canShare || _artifactActionPending) return false;
+    setState(() => _artifactActionPending = true);
+    return true;
+  }
+
+  void _endArtifactAction() {
+    if (mounted && _artifactActionPending) {
+      setState(() => _artifactActionPending = false);
+    }
+  }
+
+  void _invalidateArtifact(String message) {
+    if (!mounted) return;
+    setState(() => _artifactInvalidated = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$message Refresh this view before continuing.')),
+    );
+  }
+
+  Future<void> _writeClipboard(String text) =>
+      Clipboard.setData(ClipboardData(text: text));
+
+  Future<void> _validateShareSheetRelease() async {
+    try {
+      await _releaseValidator.requireCurrent(_artifactBinding);
+    } on PublicArtifactReleaseException {
+      if (mounted) setState(() => _artifactInvalidated = true);
+      rethrow;
     }
   }
 }
@@ -453,6 +555,7 @@ class _ArtifactActions extends StatelessWidget {
   final bool canExport;
   final bool downloadSupported;
   final bool downloadingCsv;
+  final bool actionPending;
   final VoidCallback onShare;
   final Future<void> Function() onCopy;
   final Future<void> Function() onDownloadCsv;
@@ -462,6 +565,7 @@ class _ArtifactActions extends StatelessWidget {
     required this.canExport,
     required this.downloadSupported,
     required this.downloadingCsv,
+    required this.actionPending,
     required this.onShare,
     required this.onCopy,
     required this.onDownloadCsv,
@@ -472,20 +576,20 @@ class _ArtifactActions extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       FilledButton.icon(
-        onPressed: canShare ? onShare : null,
+        onPressed: canShare && !actionPending ? onShare : null,
         icon: const Icon(Icons.ios_share_outlined),
         label: const Text('Share published result'),
       ),
       const SizedBox(height: 8),
       OutlinedButton.icon(
-        onPressed: canShare ? onCopy : null,
+        onPressed: canShare && !actionPending ? onCopy : null,
         icon: const Icon(Icons.copy_outlined),
         label: const Text('Copy published summary'),
       ),
       if (canExport) ...[
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: downloadingCsv || !downloadSupported
+          onPressed: actionPending || downloadingCsv || !downloadSupported
               ? null
               : onDownloadCsv,
           icon: downloadingCsv

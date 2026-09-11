@@ -10,6 +10,7 @@ import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../providers/stats_providers.dart';
 import '../../services/milestone_detector.dart';
+import '../../services/public_artifact_release_validator.dart';
 import '../../services/stat_export_service.dart';
 
 class BoxScoreScreen extends ConsumerStatefulWidget {
@@ -1047,6 +1048,10 @@ class _ShareBoxScoreButton extends ConsumerWidget {
               leagueName: publicSnapshot.leagueName,
               shortName: publicSnapshot.leagueShortName,
             );
+        final releaseBinding = PublicArtifactBinding.game(
+          publicSnapshot,
+          publishedGame,
+        );
         return IconButton(
           icon: const Icon(Icons.share_outlined),
           tooltip: 'Share final result',
@@ -1058,6 +1063,11 @@ class _ShareBoxScoreButton extends ConsumerWidget {
               game: publishedGame,
               branding: branding,
             ),
+            validateCurrent: () async {
+              await ref
+                  .read(publicArtifactReleaseValidatorProvider)
+                  .requireCurrent(releaseBinding);
+            },
           ),
         );
       },

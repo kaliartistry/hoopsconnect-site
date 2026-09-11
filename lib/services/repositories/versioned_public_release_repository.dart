@@ -4,6 +4,33 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 
 import '../../models/public_league_snapshot.dart';
+import '../public_artifact_release_validator.dart';
+
+abstract interface class PublicReleaseDocumentReader {
+  Future<Map<String, dynamic>?> readDocument(String path);
+
+  Stream<Map<String, dynamic>?> watchDocument(String path);
+}
+
+class FirestorePublicReleaseDocumentReader
+    implements PublicReleaseDocumentReader {
+  final FirebaseFirestore _db;
+
+  FirestorePublicReleaseDocumentReader({FirebaseFirestore? firestore})
+    : _db = firestore ?? FirebaseFirestore.instance;
+
+  @override
+  Future<Map<String, dynamic>?> readDocument(String path) async {
+    final snapshot = await _db.doc(path).get();
+    return snapshot.exists ? snapshot.data() : null;
+  }
+
+  @override
+  Stream<Map<String, dynamic>?> watchDocument(String path) => _db
+      .doc(path)
+      .snapshots()
+      .map((snapshot) => snapshot.exists ? snapshot.data() : null);
+}
 
 class PublicReleaseIntegrityException implements Exception {
   final String message;
@@ -208,6 +235,7 @@ abstract final class VersionedPublicReleaseAssembler {
     _require(expectedManifestDigest == releaseDigest, 'manifest digest');
 
     final map = <String, dynamic>{...metadata};
+    map['releaseId'] = releaseId;
     for (final type in _contentOrder) {
       map[type] = assembled[type];
     }
@@ -293,19 +321,27 @@ abstract final class VersionedPublicReleaseAssembler {
 
 /// Dormant v2 client. Do not connect this to the active provider until its
 /// rules, source-token writer, projector, and path cut over atomically.
-class DormantVersionedPublicReleaseRepository {
+class DormantVersionedPublicReleaseRepository
+    implements PublicCurrentReleaseReader {
   static const currentPointerPath = 'publicData/jba/releasePointers/current';
   static const releaseRootPath = 'publicData/jba/releases';
 
-  final FirebaseFirestore _db;
+  final PublicReleaseDocumentReader _documents;
 
   DormantVersionedPublicReleaseRepository({FirebaseFirestore? firestore})
-    : _db = firestore ?? FirebaseFirestore.instance;
+    : _documents = FirestorePublicReleaseDocumentReader(firestore: firestore);
 
-  Stream<PublicLeagueSnapshot?> watchCurrentRelease() => _db
-      .doc(currentPointerPath)
-      .snapshots()
-      .asyncMap((pointer) => pointer.exists ? _load(pointer.data()!) : null);
+  DormantVersionedPublicReleaseRepository.withDocumentReader(this._documents);
+
+  Stream<PublicLeagueSnapshot?> watchCurrentRelease() => _documents
+      .watchDocument(currentPointerPath)
+      .asyncMap((pointer) => pointer == null ? null : _load(pointer));
+
+  @override
+  Future<PublicLeagueSnapshot?> readCurrentRelease() async {
+    final pointer = await _documents.readDocument(currentPointerPath);
+    return pointer == null ? null : _load(pointer);
+  }
 
   Future<PublicLeagueSnapshot> _load(Map<String, dynamic> pointer) async {
     final releaseId = pointer['releaseId'];
@@ -321,14 +357,12 @@ class DormantVersionedPublicReleaseRepository {
         'Pointer manifest path is invalid.',
       );
     }
-    final manifestRef = _db.doc(expectedManifestPath);
-    final manifestSnapshot = await manifestRef.get();
-    if (!manifestSnapshot.exists) {
+    final manifest = await _documents.readDocument(expectedManifestPath);
+    if (manifest == null) {
       throw const PublicReleaseIntegrityException(
         'Public manifest is missing.',
       );
     }
-    final manifest = manifestSnapshot.data()!;
     final pageRefs = VersionedPublicReleaseAssembler._mapList(
       manifest['pages'],
       'manifest pages',
@@ -344,11 +378,13 @@ class DormantVersionedPublicReleaseRepository {
           reference['id'],
           'page id',
         );
-        final snapshot = await manifestRef.collection('pages').doc(id).get();
-        if (!snapshot.exists) {
+        final page = await _documents.readDocument(
+          '$expectedManifestPath/pages/$id',
+        );
+        if (page == null) {
           throw PublicReleaseIntegrityException('Public page $id is missing.');
         }
-        return <String, dynamic>{'id': id, ...snapshot.data()!};
+        return <String, dynamic>{'id': id, ...page};
       }),
     );
     final result = VersionedPublicReleaseAssembler.assemble(
@@ -356,8 +392,8 @@ class DormantVersionedPublicReleaseRepository {
       manifest: manifest,
       pages: pages,
     );
-    final current = await _db.doc(currentPointerPath).get();
-    if (!current.exists || !_samePointer(pointer, current.data()!)) {
+    final current = await _documents.readDocument(currentPointerPath);
+    if (current == null || !_samePointer(pointer, current)) {
       throw const PublicReleaseIntegrityException(
         'Public release changed while pages were loading.',
       );

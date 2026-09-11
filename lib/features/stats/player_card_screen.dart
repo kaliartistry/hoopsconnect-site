@@ -10,6 +10,7 @@ import '../../models/player_season_stats_model.dart';
 import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
+import '../../services/public_artifact_release_validator.dart';
 
 class PlayerCardScreen extends ConsumerWidget {
   final String playerId;
@@ -319,6 +320,7 @@ class _PlayerStatsShareButton extends ConsumerWidget {
                     leagueName: snapshot.leagueName,
                     shortName: snapshot.leagueShortName,
                   );
+              final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
               showBrandedShareSheet(
                 context: context,
                 branding: branding,
@@ -327,6 +329,11 @@ class _PlayerStatsShareButton extends ConsumerWidget {
                   player: publicPlayer,
                   branding: branding,
                 ),
+                validateCurrent: () async {
+                  await ref
+                      .read(publicArtifactReleaseValidatorProvider)
+                      .requireCurrent(releaseBinding);
+                },
               );
             },
     );

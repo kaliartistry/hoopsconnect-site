@@ -1,8 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/public_league_snapshot.dart';
+import '../public_artifact_release_validator.dart';
 
-class PublicLeagueRepository {
+class PublicLeagueRepository implements PublicCurrentReleaseReader {
   static const currentSnapshotPath = 'publicData/jba/snapshots/current';
 
   final FirebaseFirestore _db;
@@ -23,4 +24,10 @@ class PublicLeagueRepository {
   Stream<PublicLeagueSnapshot?> watchCurrentSnapshot() => _currentSnapshot
       .snapshots()
       .map((snapshot) => snapshot.exists ? snapshot.data() : null);
+
+  @override
+  Future<PublicLeagueSnapshot?> readCurrentRelease() async {
+    final snapshot = await _currentSnapshot.get();
+    return snapshot.exists ? snapshot.data() : null;
+  }
 }

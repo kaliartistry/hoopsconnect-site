@@ -10,6 +10,7 @@ const {
   buildPublicSnapshot,
   canAdvancePublicReleasePointer,
   currentPointerAllowsCandidate,
+  immutablePublicDocumentMatches,
 } = require('../lib/index');
 
 function fixture(overrides = {}) {
@@ -174,6 +175,30 @@ test('snapshot fingerprint is stable across rebuild time and changes with publis
   const corrected = buildPublicSnapshot(changed);
   assert.notEqual(first.snapshotVersion, corrected.snapshotVersion);
   assert.notEqual(first.schedule[0].resultVersion, corrected.schedule[0].resultVersion);
+});
+
+test('a supplied publicResultVersion must bind every displayed result field', () => {
+  const baseline = fixture();
+  const version = buildPublicSnapshot(baseline).schedule[0].resultVersion;
+  baseline.gameStats[0].data.publicResultVersion = version;
+  assert.equal(buildPublicSnapshot(baseline).schedule[0].resultVersion, version);
+
+  const corrections = [
+    (input) => { input.gameStats[0].data.homeScore = 83; },
+    (input) => { input.gameStats[0].data.homeQuarterScores['1'] = 21; },
+    (input) => { input.gameStats[0].data.publicPlayerLines[0].points = 21; },
+    (input) => { input.gameStats[0].data.publicRecap = 'Corrected recap.'; },
+    (input) => { input.teams[0].data.name = 'Corrected Home Team'; },
+  ];
+  for (const correct of corrections) {
+    const stale = fixture();
+    stale.gameStats[0].data.publicResultVersion = version;
+    correct(stale);
+    assert.throws(
+      () => buildPublicSnapshot(stale),
+      /publicResultVersion does not match its public result content/,
+    );
+  }
 });
 
 test('division and season scope exclude other-season public candidates', () => {
@@ -358,6 +383,36 @@ test('an oversized item or release fails explicitly instead of truncating', () =
       tiny, 'd'.repeat(64), 42, '2026-09-10T21:00:00.000Z',
     ),
     /maximum is/,
+  );
+});
+
+test('immutable retry accepts only an exact release document replay', () => {
+  const release = buildPublicReleasePackage(
+    buildPublicSnapshot(fixture()),
+    '9'.repeat(64),
+    42,
+    '2026-09-10T21:00:00.000Z',
+  );
+  const replay = buildPublicReleasePackage(
+    buildPublicSnapshot(fixture()),
+    '9'.repeat(64),
+    42,
+    '2026-09-10T21:00:00.000Z',
+  );
+  assert.equal(
+    immutablePublicDocumentMatches(release.manifest, replay.manifest),
+    true,
+  );
+  assert.equal(
+    immutablePublicDocumentMatches(release.pages[0].data, replay.pages[0].data),
+    true,
+  );
+  assert.equal(
+    immutablePublicDocumentMatches(
+      release.pages[0].data,
+      {...replay.pages[0].data, itemCount: replay.pages[0].data.itemCount + 1},
+    ),
+    false,
   );
 });
 

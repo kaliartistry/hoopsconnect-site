@@ -20,6 +20,7 @@ void main() {
     );
 
     expect(snapshot.version.state, PublicReleaseState.published);
+    expect(snapshot.version.releaseId, fixture.pointer['releaseId']);
     expect(snapshot.teams.single.name, 'Home Team');
     expect(snapshot.schedule.single.gameId, 'game-1');
   });
@@ -103,6 +104,68 @@ void main() {
     expect(snapshot.version.state, PublicReleaseState.retracted);
     expect(snapshot.schedule, isEmpty);
     expect(snapshot.teams, isEmpty);
+  });
+
+  test(
+    'repository loads the manifest and every page through its adapter',
+    () async {
+      final fixture = _releaseFixture();
+      final reader = _FakeDocumentReader.fromFixture(fixture);
+      final repository =
+          DormantVersionedPublicReleaseRepository.withDocumentReader(reader);
+
+      final snapshot = await repository.readCurrentRelease();
+
+      expect(snapshot?.teams.single.name, 'Home Team');
+      expect(snapshot?.schedule.single.gameId, 'game-1');
+      expect(reader.pointerReads, 2);
+      expect(
+        reader.readPaths.where((path) => path.contains('/pages/')).length,
+        fixture.pages.length,
+      );
+    },
+  );
+
+  test(
+    'repository rejects a pointer changed while pages are loading',
+    () async {
+      final fixture = _releaseFixture();
+      final changedPointer = {
+        ...fixture.pointer,
+        'sourceSequence': (fixture.pointer['sourceSequence'] as int) + 1,
+      };
+      final reader = _FakeDocumentReader.fromFixture(
+        fixture,
+        pointerReads: [fixture.pointer, changedPointer],
+      );
+      final repository =
+          DormantVersionedPublicReleaseRepository.withDocumentReader(reader);
+
+      await expectLater(
+        repository.readCurrentRelease(),
+        throwsA(
+          isA<PublicReleaseIntegrityException>().having(
+            (error) => error.message,
+            'message',
+            contains('changed while pages were loading'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test('repository fails closed when a referenced page is absent', () async {
+    final fixture = _releaseFixture();
+    final reader = _FakeDocumentReader.fromFixture(fixture);
+    final pageId = fixture.pages.first['id'];
+    reader.documents.remove('${fixture.pointer['manifestPath']}/pages/$pageId');
+    final repository =
+        DormantVersionedPublicReleaseRepository.withDocumentReader(reader);
+
+    await expectLater(
+      repository.readCurrentRelease(),
+      throwsA(isA<PublicReleaseIntegrityException>()),
+    );
   });
 }
 
@@ -228,4 +291,50 @@ _releaseFixture({bool retracted = false}) {
     'privacyEpoch': 7,
   };
   return (pointer: pointer, manifest: manifest, pages: pages);
+}
+
+class _FakeDocumentReader implements PublicReleaseDocumentReader {
+  final Map<String, Map<String, dynamic>> documents;
+  final List<Map<String, dynamic>> _pointerResponses;
+  final List<String> readPaths = [];
+  int pointerReads = 0;
+
+  _FakeDocumentReader(this.documents, this._pointerResponses);
+
+  factory _FakeDocumentReader.fromFixture(
+    ({
+      Map<String, dynamic> pointer,
+      Map<String, dynamic> manifest,
+      List<Map<String, dynamic>> pages,
+    })
+    fixture, {
+    List<Map<String, dynamic>>? pointerReads,
+  }) {
+    final manifestPath = fixture.pointer['manifestPath'] as String;
+    return _FakeDocumentReader({
+      manifestPath: fixture.manifest,
+      for (final page in fixture.pages)
+        '$manifestPath/pages/${page['id']}': Map<String, dynamic>.from(page)
+          ..remove('id'),
+    }, pointerReads ?? [fixture.pointer]);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> readDocument(String path) async {
+    readPaths.add(path);
+    if (path == DormantVersionedPublicReleaseRepository.currentPointerPath) {
+      final index = pointerReads < _pointerResponses.length
+          ? pointerReads
+          : _pointerResponses.length - 1;
+      pointerReads++;
+      return Map<String, dynamic>.from(_pointerResponses[index]);
+    }
+    final value = documents[path];
+    return value == null ? null : Map<String, dynamic>.from(value);
+  }
+
+  @override
+  Stream<Map<String, dynamic>?> watchDocument(String path) async* {
+    yield await readDocument(path);
+  }
 }

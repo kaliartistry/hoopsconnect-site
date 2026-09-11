@@ -12,6 +12,7 @@ import '../../core/widgets/skeleton_loader.dart';
 import '../../models/public_league_snapshot.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
+import '../../services/public_artifact_release_validator.dart';
 import '../../services/public_stat_export_service.dart';
 import '../public/public_player_detail_screen.dart';
 
@@ -770,6 +771,7 @@ class _SeasonExportSection extends ConsumerStatefulWidget {
 class _SeasonExportSectionState extends ConsumerState<_SeasonExportSection> {
   late final ArtifactDownloader _downloader;
   bool _downloading = false;
+  bool _releaseInvalidated = false;
 
   @override
   void initState() {
@@ -785,12 +787,15 @@ class _SeasonExportSectionState extends ConsumerState<_SeasonExportSection> {
     final snapshot = snapshotAsync.valueOrNull;
     final available =
         canExport &&
+        !_releaseInvalidated &&
         _downloader.isSupported &&
         snapshot != null &&
         snapshot.canCreatePublishedArtifacts;
 
     final message = !canExport
         ? 'Your current role does not include the stats.export capability.'
+        : _releaseInvalidated
+        ? 'The public release changed or could not be reverified. Refresh before exporting.'
         : snapshotAsync.isLoading
         ? 'Checking the current public publication version.'
         : snapshotAsync.hasError
@@ -852,24 +857,43 @@ class _SeasonExportSectionState extends ConsumerState<_SeasonExportSection> {
   Future<void> _download(PublicLeagueSnapshot snapshot) async {
     if (_downloading) return;
     setState(() => _downloading = true);
+    var platformAccepted = false;
     try {
+      final binding = PublicArtifactBinding.snapshot(snapshot);
+      final validator = ref.read(publicArtifactReleaseValidatorProvider);
+      final current = await validator.requireCurrent(binding);
       final csv = PublicStatExportService.seasonCsv(
-        snapshot: snapshot,
+        snapshot: current.snapshot,
         grant: PublicExportGrant.media,
       );
       if (!_downloader.isSupported) {
         throw UnsupportedError('Downloads are unavailable.');
       }
       final fileName =
-          '${_fileSlug(snapshot.leagueShortName)}-${_fileSlug(snapshot.seasonId)}-${snapshot.version.shortLabel}.csv';
+          '${_fileSlug(current.snapshot.leagueShortName)}-${_fileSlug(current.snapshot.seasonId)}-${current.snapshot.version.shortLabel}.csv';
+      await validator.requireCurrent(binding);
       final destination = await _downloader.download(
         bytes: Uint8List.fromList(utf8.encode(csv)),
         fileName: fileName,
         mimeType: 'text/csv;charset=utf-8',
       );
+      platformAccepted = true;
+      await validator.requireCurrent(binding);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Season CSV download started for $destination')),
+      );
+    } on PublicArtifactReleaseException catch (error) {
+      if (!mounted) return;
+      setState(() => _releaseInvalidated = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            platformAccepted
+                ? 'The publication changed while the season CSV was saving. The downloaded file may be outdated; do not distribute it.'
+                : '${error.message} No file was downloaded.',
+          ),
+        ),
       );
     } catch (_) {
       if (!mounted) return;

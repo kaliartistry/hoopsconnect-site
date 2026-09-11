@@ -5,9 +5,6 @@ import 'package:hoops_connect/services/public_stat_export_service.dart';
 const _snapshotHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const _resultHash =
-    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const _retractedHash =
     'cccccccccccccccccccccccccccccccc'
     'cccccccccccccccccccccccccccccccc';
@@ -56,6 +53,7 @@ void main() {
 
   test('game CSV binds every row to one snapshot and result version', () {
     final snapshot = _snapshot();
+    final resultVersion = snapshot.schedule.single.resultVersion!;
 
     final csv = PublicStatExportService.gameCsv(
       snapshot: snapshot,
@@ -69,13 +67,13 @@ void main() {
     expect(csv, contains("\"' +Away\""));
     expect(csv, contains("\"'@Player\""));
     expect(RegExp('a{64}').allMatches(csv).length, 4);
-    expect(RegExp('b{64}').allMatches(csv).length, 4);
+    expect(resultVersion.length, 64);
     expect(csv, contains('Unknown'));
     expect(csv, isNot(contains('private@example.com')));
     expect(csv, isNot(contains('guardian')));
     for (final row in csv.trim().split('\r\n').skip(1)) {
       expect(row, contains(_snapshotHash));
-      expect(row, contains(_resultHash));
+      expect(row, contains(resultVersion));
     }
   });
 
@@ -252,7 +250,6 @@ PublicLeagueSnapshot _snapshot({PublicSnapshotVersion? version}) {
         homeScore: 82,
         awayScore: 79,
         status: PublicGameStatus.finalResult,
-        resultVersion: _resultHash,
         periodScores: const [
           PublicPeriodScore(period: 1, homeScore: 20, awayScore: 18),
           PublicPeriodScore(period: 2, homeScore: 22, awayScore: 21),
@@ -268,7 +265,7 @@ PublicLeagueSnapshot _snapshot({PublicSnapshotVersion? version}) {
             turnovers: 2,
           ),
         ],
-      ),
+      ).withComputedResultVersion(),
     ],
     standings: const [
       PublicStanding(

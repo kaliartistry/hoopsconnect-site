@@ -15,13 +15,18 @@ Future<void> showBrandedShareSheet({
   required BuildContext context,
   required AssociationBrandingModel branding,
   required BrandedSharePayload payload,
+  Future<void> Function()? validateCurrent,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => BrandedShareSheet(branding: branding, payload: payload),
+    builder: (_) => BrandedShareSheet(
+      branding: branding,
+      payload: payload,
+      validateCurrent: validateCurrent,
+    ),
   );
 }
 
@@ -30,6 +35,7 @@ class BrandedShareSheet extends StatefulWidget {
   final BrandedSharePayload payload;
   final BrandedShareActions? actions;
   final Future<Uint8List> Function()? captureImage;
+  final Future<void> Function()? validateCurrent;
 
   const BrandedShareSheet({
     super.key,
@@ -37,6 +43,7 @@ class BrandedShareSheet extends StatefulWidget {
     required this.payload,
     this.actions,
     this.captureImage,
+    this.validateCurrent,
   });
 
   @override
@@ -52,6 +59,7 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
   String? _messageTitle;
   String? _message;
   AppStateTone _messageTone = AppStateTone.neutral;
+  bool _validationFailed = false;
 
   @override
   void initState() {
@@ -122,7 +130,9 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
                 ],
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: _busy == null ? _share : null,
+                  onPressed: _busy == null && !_validationFailed
+                      ? _share
+                      : null,
                   icon: _busy == _ShareBusy.share
                       ? const SizedBox.square(
                           dimension: 18,
@@ -135,7 +145,7 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
-                  onPressed: _busy == null ? _copy : null,
+                  onPressed: _busy == null && !_validationFailed ? _copy : null,
                   icon: _busy == _ShareBusy.copy
                       ? const SizedBox.square(
                           dimension: 18,
@@ -149,7 +159,9 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
                 if (_actions.canDownload) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
-                    onPressed: _busy == null ? _download : null,
+                    onPressed: _busy == null && !_validationFailed
+                        ? _download
+                        : null,
                     icon: _busy == _ShareBusy.download
                         ? const SizedBox.square(
                             dimension: 18,
@@ -178,6 +190,7 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
     });
     Object? imageFailure;
     try {
+      if (!await _validateCurrent()) return;
       final origin = _shareOrigin;
       Uint8List? imageBytes;
       try {
@@ -187,6 +200,7 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
       }
 
       if (imageBytes != null) {
+        if (!await _validateCurrent()) return;
         try {
           final result = await _actions.shareImage(
             title: widget.payload.title,
@@ -195,6 +209,7 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
             imageBytes: imageBytes,
             sharePositionOrigin: origin,
           );
+          if (!await _validateCurrent(actionMayHaveCompleted: true)) return;
           _reportShareResult(result, textFallback: false);
           return;
         } catch (error) {
@@ -203,11 +218,13 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
       }
 
       try {
+        if (!await _validateCurrent()) return;
         final result = await _actions.shareText(
           title: widget.payload.title,
           text: widget.payload.shareText,
           sharePositionOrigin: origin,
         );
+        if (!await _validateCurrent(actionMayHaveCompleted: true)) return;
         _reportShareResult(result, textFallback: imageFailure != null);
         return;
       } catch (_) {
@@ -234,7 +251,9 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
       _message = null;
     });
     try {
+      if (!await _validateCurrent()) return;
       await _actions.copyText(widget.payload.shareText);
+      if (!await _validateCurrent(actionMayHaveCompleted: true)) return;
       _setMessage(
         title: 'Text copied',
         message: 'The published result text is on your clipboard.',
@@ -257,12 +276,15 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
       _message = null;
     });
     try {
+      if (!await _validateCurrent()) return;
       final bytes = await _capturePng();
+      if (!await _validateCurrent()) return;
       final destination = await _actions.download(
         bytes: bytes,
         fileName: widget.payload.fileName,
         mimeType: 'image/png',
       );
+      if (!await _validateCurrent(actionMayHaveCompleted: true)) return;
       _setMessage(
         title: 'Image download started',
         message: 'The platform accepted $destination.',
@@ -292,6 +314,28 @@ class _BrandedShareSheetState extends State<BrandedShareSheet> {
       throw StateError('Share card image could not be encoded.');
     }
     return bytes.buffer.asUint8List();
+  }
+
+  Future<bool> _validateCurrent({bool actionMayHaveCompleted = false}) async {
+    final validator = widget.validateCurrent;
+    if (validator == null) return true;
+    try {
+      await validator();
+      return true;
+    } catch (_) {
+      if (!mounted) return false;
+      setState(() => _validationFailed = true);
+      _setMessage(
+        title: actionMayHaveCompleted
+            ? 'Publication changed during action'
+            : 'Publication changed',
+        message: actionMayHaveCompleted
+            ? 'The platform may already contain the older artifact. Do not distribute it. Refresh this view for the current public release.'
+            : 'This action was canceled because the current public release could not be verified or changed. Refresh this view before sharing.',
+        tone: AppStateTone.error,
+      );
+      return false;
+    }
   }
 
   void _reportShareResult(ShareResult result, {required bool textFallback}) {

@@ -15,8 +15,12 @@ Baseline: Stage 0 integration commit `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
 - Public-only result detail screens. They receive a `PublicLeagueSnapshot` and
   cannot import private game, user, post, acknowledgment, or roster readers.
 - Result artifacts require one versioned published snapshot and one matching
-  result version. The compatibility fingerprint is not an official-stat v2
-  certificate or release ID.
+  result version. `resultVersion` is now the canonical SHA-256 digest of the
+  displayed game/team identity, score, period rows, allowlisted player rows,
+  and recap. A supplied `publicResultVersion` that does not exactly match that
+  content aborts projection; the Dart DTO recomputes the same digest before an
+  artifact becomes eligible. The compatibility fingerprint is not an
+  official-stat v2 certificate or release ID.
 - The media dashboard uses that same public snapshot for result discovery,
   today's schedule, leaders, recap/detail, and capability-gated game/season CSV.
   It has no private result, schedule, or leader fallback.
@@ -53,6 +57,17 @@ Baseline: Stage 0 integration commit `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
   verifies page/release/source digests, ordering, counts, size bounds, state,
   season, and privacy epoch; then rereads the pointer before returning. Missing,
   duplicate, changed, oversized, or stale data fails closed.
+- Public artifact actions use an injected current-release validator. The
+  active legacy adapter performs an uncached Firestore document read; the
+  dormant v2 repository implements the same reader contract. Game share, copy,
+  and CSV actions validate immediately before the action and after any
+  asynchronous platform handoff. The share sheet also validates before image
+  capture, immediately before its platform call, and before reporting success.
+  If a handoff may already have completed, the UI says the artifact may be
+  outdated instead of claiming that nothing was written.
+  Validation binds the v2 release ID when present and otherwise binds the
+  legacy publication timestamp in addition to snapshot/result versions, so an
+  exact-content republish is still treated as a different release.
 - The active `publicLeagueSnapshotProvider` still reads the legacy monolithic
   snapshot. It is intentionally not pointed at v2 while v2 has no deployed
   projector/rules. The dormant projector and dormant v2 client must be enabled
@@ -138,6 +153,12 @@ rule to any private source collection.
 - Run public Functions tests, Flutter model/widget/export/share tests, the frozen
   security/account-deletion suite, optimized web build, and unauthenticated
   browser URL refresh/Back checks.
+- At cutover, add a Firebase Emulator Suite integration test that runs two
+  contending rebuilds while the trusted source transaction changes publication
+  state/version, and an identical immutable batch-create retry. This branch
+  unit-tests the exact source/pointer guards and immutable-document replay
+  predicate, but cannot honestly exercise rules or transaction contention
+  while the trigger, trusted writer, and v2 rules are intentionally absent.
 - Do not add a trigger around `rebuildVersionedPublicRelease`, rebuild a live
   snapshot, migrate data, or activate v2 as part of merging this branch. Those
   remain separate provider-readback and release gates.

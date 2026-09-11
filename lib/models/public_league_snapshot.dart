@@ -1,8 +1,43 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 enum PublicReleaseState { published, unavailable, retracted }
 
 enum PublicGameStatus { scheduled, finalResult, postponed, canceled }
 
 enum PublicRankStatus { ranked, tied, unresolved }
+
+/// Canonical SHA-256 binding for every result field rendered or exported by
+/// public/media flows. List ordering is significant because it is displayed.
+abstract final class PublicResultIntegrity {
+  static String digest(PublicGame game) => sha256
+      .convert(utf8.encode(jsonEncode(_canonical(game.resultContent))))
+      .toString();
+
+  static Object? _canonical(Object? value) {
+    if (value == null || value is bool || value is String || value is int) {
+      return value;
+    }
+    if (value is List) return value.map(_canonical).toList(growable: false);
+    if (value is Map) {
+      final entries = <String, Object?>{};
+      for (final entry in value.entries) {
+        if (entry.key is! String) {
+          throw const FormatException(
+            'Public result map keys must be strings.',
+          );
+        }
+        entries[entry.key as String] = entry.value;
+      }
+      final keys = entries.keys.toList()..sort();
+      return {for (final key in keys) key: _canonical(entries[key])};
+    }
+    throw FormatException(
+      'Unsupported public result value ${value.runtimeType}.',
+    );
+  }
+}
 
 /// Version metadata for the compatibility public snapshot.
 ///
@@ -15,6 +50,7 @@ class PublicSnapshotVersion {
   final int schemaVersion;
   final String contractVersion;
   final String? snapshotVersion;
+  final String? releaseId;
   final String verificationStatus;
   final PublicReleaseState state;
   final int? privacyEpoch;
@@ -24,6 +60,7 @@ class PublicSnapshotVersion {
     required this.schemaVersion,
     required this.contractVersion,
     required this.snapshotVersion,
+    this.releaseId,
     required this.verificationStatus,
     required this.state,
     required this.privacyEpoch,
@@ -86,6 +123,14 @@ class PublicSnapshotVersion {
         'Public snapshotVersion must be a lowercase SHA-256 value.',
       );
     }
+    final releaseId = _optionalText(
+      publication['releaseId'] ?? map['releaseId'],
+    );
+    if (releaseId != null && !_sha256.hasMatch(releaseId)) {
+      throw const FormatException(
+        'Public releaseId must be a lowercase SHA-256 value.',
+      );
+    }
     final privacyEpoch = _integer(
       publication['privacyEpoch'] ?? map['privacyEpoch'],
     );
@@ -109,6 +154,7 @@ class PublicSnapshotVersion {
       schemaVersion: schemaVersion,
       contractVersion: contractVersion,
       snapshotVersion: snapshotVersion,
+      releaseId: releaseId,
       verificationStatus:
           _optionalText(
             publication['verificationStatus'] ?? map['certificationStatus'],
@@ -288,7 +334,81 @@ class PublicGame {
   bool get isFinal => status == PublicGameStatus.finalResult;
 
   bool get hasVersionedResult =>
-      isFinal && resultVersion != null && _sha256.hasMatch(resultVersion!);
+      isFinal &&
+      resultVersion != null &&
+      _sha256.hasMatch(resultVersion!) &&
+      resultVersion == resultContentDigest;
+
+  String get resultContentDigest => PublicResultIntegrity.digest(this);
+
+  Map<String, Object?> get resultContent => {
+    'gameId': gameId,
+    'homeTeamId': homeTeamId,
+    'homeTeamName': homeTeamName,
+    'awayTeamId': awayTeamId,
+    'awayTeamName': awayTeamName,
+    'homeScore': homeScore,
+    'awayScore': awayScore,
+    'periodScores': [
+      for (final score in periodScores)
+        {
+          'period': score.period,
+          'homeScore': score.homeScore,
+          'awayScore': score.awayScore,
+        },
+    ],
+    'playerLines': [
+      for (final line in playerLines)
+        {
+          'playerId': line.playerId,
+          'displayName': line.displayName,
+          'teamId': line.teamId,
+          'minutes': line.minutes,
+          'points': line.points,
+          'twoPointMade': line.twoPointMade,
+          'twoPointAttempted': line.twoPointAttempted,
+          'threePointMade': line.threePointMade,
+          'threePointAttempted': line.threePointAttempted,
+          'freeThrowMade': line.freeThrowMade,
+          'freeThrowAttempted': line.freeThrowAttempted,
+          'offensiveRebounds': line.offensiveRebounds,
+          'defensiveRebounds': line.defensiveRebounds,
+          'assists': line.assists,
+          'steals': line.steals,
+          'blocks': line.blocks,
+          'turnovers': line.turnovers,
+          'fouls': line.fouls,
+        },
+    ],
+    'recap': recap,
+  };
+
+  /// Convenience for trusted fixtures and adapters that need the canonical
+  /// computed version. Public Firestore parsing never calls this to repair a
+  /// stale supplied version; it rejects the mismatch instead.
+  PublicGame withComputedResultVersion() {
+    if (!isFinal) {
+      throw StateError('Only a final public game can bind result content.');
+    }
+    return PublicGame(
+      gameId: gameId,
+      title: title,
+      startTime: startTime,
+      venue: venue,
+      divisionId: divisionId,
+      homeTeamId: homeTeamId,
+      homeTeamName: homeTeamName,
+      awayTeamId: awayTeamId,
+      awayTeamName: awayTeamName,
+      homeScore: homeScore,
+      awayScore: awayScore,
+      status: status,
+      resultVersion: resultContentDigest,
+      recap: recap,
+      periodScores: periodScores,
+      playerLines: playerLines,
+    );
+  }
 
   factory PublicGame.fromMap(
     Map<String, dynamic> map, {
@@ -338,7 +458,7 @@ class PublicGame {
       );
     }
 
-    return PublicGame(
+    final game = PublicGame(
       gameId: _requiredText(map['gameId'], 'gameId'),
       title: _requiredText(map['title'], 'game title'),
       startTime: _dateTime(map['startTime'], 'game startTime'),
@@ -360,6 +480,12 @@ class PublicGame {
           ? List.unmodifiable(rawPlayerLines.map(PublicPlayerGameLine.fromMap))
           : const [],
     );
+    if (resultVersion != null && resultVersion != game.resultContentDigest) {
+      throw const FormatException(
+        'Public resultVersion does not match the displayed result content.',
+      );
+    }
+    return game;
   }
 }
 

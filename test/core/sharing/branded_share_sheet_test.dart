@@ -172,12 +172,61 @@ void main() {
     await tester.pumpAndSettle();
     expect(actions.imageCalls, 1);
   });
+
+  testWidgets('retraction before an action cancels and disables the sheet', (
+    tester,
+  ) async {
+    final actions = _FakeShareActions();
+    await _pumpSheet(
+      tester,
+      actions,
+      validateCurrent: () async => throw StateError('retracted'),
+    );
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Copy text'));
+    await tester.pumpAndSettle();
+
+    expect(actions.copyCalls, 0);
+    expect(find.text('Publication changed'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Copy text'),
+          )
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('version change during share suppresses a stale success claim', (
+    tester,
+  ) async {
+    var validations = 0;
+    final actions = _FakeShareActions();
+    await _pumpSheet(
+      tester,
+      actions,
+      validateCurrent: () async {
+        validations++;
+        if (validations == 3) throw StateError('changed');
+      },
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Share'));
+    await tester.pumpAndSettle();
+
+    expect(actions.imageCalls, 1);
+    expect(find.text('Publication changed during action'), findsOneWidget);
+    expect(find.text('Share completed'), findsNothing);
+    expect(find.textContaining('may already contain the older artifact'), findsOneWidget);
+  });
 }
 
 Future<void> _pumpSheet(
   WidgetTester tester,
-  BrandedShareActions actions,
-) async {
+  BrandedShareActions actions, {
+  Future<void> Function()? validateCurrent,
+}) async {
   tester.view.physicalSize = const Size(800, 1200);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -198,6 +247,7 @@ Future<void> _pumpSheet(
           branding: AssociationBrandingModel.jba(),
           payload: payload,
           actions: actions,
+          validateCurrent: validateCurrent,
           captureImage: () async => Uint8List.fromList([1, 2, 3]),
         ),
       ),
@@ -216,6 +266,8 @@ class _FakeShareActions implements BrandedShareActions {
 
   int imageCalls = 0;
   int textCalls = 0;
+  int copyCalls = 0;
+  int downloadCalls = 0;
 
   _FakeShareActions({
     this.imageResult = const ShareResult(
@@ -260,6 +312,7 @@ class _FakeShareActions implements BrandedShareActions {
 
   @override
   Future<void> copyText(String text) async {
+    copyCalls++;
     if (copyError != null) throw copyError!;
   }
 
@@ -269,6 +322,7 @@ class _FakeShareActions implements BrandedShareActions {
     required String fileName,
     required String mimeType,
   }) async {
+    downloadCalls++;
     if (downloadError != null) throw downloadError!;
     return fileName;
   }
