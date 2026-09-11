@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/invite_code_model.dart';
 
@@ -59,6 +60,171 @@ String newInviteOperationId() {
   final random = Random.secure();
   final bytes = List<int>.generate(24, (_) => random.nextInt(256));
   return base64Url.encode(bytes).replaceAll('=', '');
+}
+
+/// One logical invite-creation request.
+///
+/// Keep this object after an ambiguous transport failure and submit it again.
+/// The fixed operation ID lets the server return the original result instead
+/// of issuing a second invite. Create a new attempt only after a terminal
+/// rejection, before any request was accepted, or for intentionally different
+/// request parameters.
+class InviteCreationAttempt {
+  final String role;
+  final String? teamId;
+  final int daysValid;
+  final String operationId;
+
+  const InviteCreationAttempt({
+    required this.role,
+    required this.teamId,
+    required this.daysValid,
+    required this.operationId,
+  });
+
+  Future<IssuedInviteCode> submit(InviteCodeRepository repository) {
+    return repository.createCode(
+      role: role,
+      teamId: teamId,
+      daysValid: daysValid,
+      operationId: operationId,
+    );
+  }
+
+  Map<String, Object?> toJson({
+    required String actorId,
+    required String associationId,
+  }) => {
+    'schemaVersion': 1,
+    'actorId': actorId,
+    'associationId': associationId,
+    'role': role,
+    'teamId': teamId,
+    'daysValid': daysValid,
+    'operationId': operationId,
+  };
+
+  static InviteCreationAttempt? fromJson(
+    Object? value, {
+    required String actorId,
+    required String associationId,
+  }) {
+    if (value is! Map<Object?, Object?> ||
+        value['schemaVersion'] != 1 ||
+        value['actorId'] != actorId ||
+        value['associationId'] != associationId) {
+      return null;
+    }
+    final role = value['role'];
+    final teamId = value['teamId'];
+    final daysValid = value['daysValid'];
+    final operationId = value['operationId'];
+    final hasValidRepTeam =
+        role != 'rep' || (teamId is String && teamId.isNotEmpty);
+    final hasValidTeamId =
+        teamId == null ||
+        (teamId is String &&
+            RegExp(r'^[A-Za-z0-9_-]{1,160}$').hasMatch(teamId));
+    final hasValidOperationId =
+        operationId is String &&
+        RegExp(r'^[A-Za-z0-9_-]{16,128}$').hasMatch(operationId);
+    if (role is! String ||
+        !const {'rep', 'media', 'statistician'}.contains(role) ||
+        (teamId != null && teamId is! String) ||
+        daysValid is! int ||
+        daysValid < 1 ||
+        daysValid > 30 ||
+        !hasValidTeamId ||
+        !hasValidOperationId ||
+        !hasValidRepTeam) {
+      return null;
+    }
+    return InviteCreationAttempt(
+      role: role,
+      teamId: teamId as String?,
+      daysValid: daysValid,
+      operationId: operationId,
+    );
+  }
+}
+
+/// Stores only the logical request and idempotency ID, never the invite bearer.
+abstract class InviteCreationAttemptStore {
+  Future<InviteCreationAttempt?> load({
+    required String actorId,
+    required String associationId,
+  });
+
+  Future<void> save({
+    required String actorId,
+    required String associationId,
+    required InviteCreationAttempt attempt,
+  });
+
+  Future<void> clear({required String actorId, required String associationId});
+}
+
+class SharedPreferencesInviteCreationAttemptStore
+    implements InviteCreationAttemptStore {
+  static const _keyPrefix = 'invite_creation_attempt_v1';
+
+  String _key(String actorId, String associationId) {
+    final scope = base64Url.encode(utf8.encode('$actorId\u0000$associationId'));
+    return '$_keyPrefix:$scope';
+  }
+
+  @override
+  Future<InviteCreationAttempt?> load({
+    required String actorId,
+    required String associationId,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    final key = _key(actorId, associationId);
+    final encoded = preferences.getString(key);
+    if (encoded == null) return null;
+    try {
+      final attempt = InviteCreationAttempt.fromJson(
+        jsonDecode(encoded),
+        actorId: actorId,
+        associationId: associationId,
+      );
+      if (attempt != null) return attempt;
+    } on FormatException {
+      // Invalid local recovery data is discarded and never sent to the server.
+    }
+    await preferences.remove(key);
+    return null;
+  }
+
+  @override
+  Future<void> save({
+    required String actorId,
+    required String associationId,
+    required InviteCreationAttempt attempt,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    final saved = await preferences.setString(
+      _key(actorId, associationId),
+      jsonEncode(
+        attempt.toJson(actorId: actorId, associationId: associationId),
+      ),
+    );
+    if (!saved) {
+      throw StateError('The invite recovery request could not be saved.');
+    }
+  }
+
+  @override
+  Future<void> clear({
+    required String actorId,
+    required String associationId,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    final cleared = await preferences.remove(_key(actorId, associationId));
+    if (!cleared && preferences.containsKey(_key(actorId, associationId))) {
+      throw StateError('The invite recovery request could not be cleared.');
+    }
+  }
 }
 
 class InviteCodeRepository {
