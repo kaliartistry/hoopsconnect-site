@@ -62,7 +62,7 @@ const pinnedBaseBlobs = Object.freeze({
   'docs/account-deletion-release-gates.md':
     '1549e48922d1e43dc7281496c810a8c603be5a46',
   'docs/account-deletion-ad02-v2-boundary-matrix.md':
-    'f7c8f65b34908bb238397ae7a1f24459a94d60a4',
+    '2b63223ba9d453e28ef1a99ca55422bcd11f224a',
   'docs/account-deletion-ad03-v2-custody-control.md':
     'b4bdbd05372ad8f0e850069b3f2e434b1df238a1',
   'docs/account-deletion-ad04-v1-lifecycle-cleanup.md':

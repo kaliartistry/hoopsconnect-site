@@ -169,6 +169,7 @@ void main() {
   testWidgets('receipt-unknown work disables local discard', (tester) async {
     final controller = _controller(
       localWork: AccountDeletionLocalWorkSummary(
+        binding: _deviceBinding,
         state: AccountDeletionLocalWorkState.requiresReconciliation,
         workspaceCount: 2,
         unacceptedOperationCount: 3,
@@ -193,10 +194,12 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('last-owner custody blocker cannot expose a submit action', (
+  testWidgets('last-owner custody conflict allows personal deletion', (
     tester,
   ) async {
     final gateway = _Gateway(
+      statusPhase: DeletionStatusPhase.attentionRequired,
+      messageCode: 'CUSTODY_CONFLICT',
       impact: CandidateAccountDeletionImpact(
         intentId: 'intent_1',
         policyVersion: 'policy_1',
@@ -226,14 +229,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('custody-blocker')), findsOneWidget);
+    expect(
+      find.textContaining('Your personal deletion may continue'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('deletion-consequence-checkbox')),
+    );
+    await tester.tap(find.byKey(const Key('deletion-consequence-checkbox')));
+    await tester.enterText(
+      find.byKey(const Key('deletion-confirmation-field')),
+      'DELETE',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('submit-account-deletion')),
+    );
+    await tester.pump();
     final submit = tester.widget<ElevatedButton>(
       find.descendant(
         of: find.byKey(const Key('submit-account-deletion')),
         matching: find.byType(ElevatedButton),
       ),
     );
-    expect(submit.onPressed, isNull);
-    expect(gateway.requestCalls, 0);
+    expect(submit.onPressed, isNotNull);
+    await tester.tap(find.byKey(const Key('submit-account-deletion')));
+    await tester.pumpAndSettle();
+    expect(gateway.requestCalls, 1);
+    expect(find.text('Cleanup needs staff attention'), findsOneWidget);
   });
 
   for (final statusCase
@@ -314,11 +336,55 @@ void main() {
     expect(gateway.requestCalls, 0);
     expect(gateway.statusCalls, 1);
   });
+
+  testWidgets('receipt-store failure reports deletion status as unknown', (
+    tester,
+  ) async {
+    final controller = _controller(receiptReadFails: true);
+    addTearDown(controller.dispose);
+
+    await pumpScreen(tester, controller);
+
+    expect(find.text('Account deletion is unavailable'), findsOneWidget);
+    expect(find.textContaining('deletion status is unknown'), findsOneWidget);
+    expect(find.textContaining('No account was deleted'), findsNothing);
+  });
+
+  testWidgets('receipt write failure never claims deletion was not accepted', (
+    tester,
+  ) async {
+    final controller = _controller(receiptWriteFails: true);
+    addTearDown(controller.dispose);
+    await pumpScreen(tester, controller, size: const Size(768, 1024));
+
+    await tester.enterText(
+      find.byKey(const Key('deletion-password-field')),
+      'correct horse',
+    );
+    await tester.tap(find.byKey(const Key('prepare-deletion-impact')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('deletion-consequence-checkbox')));
+    await tester.enterText(
+      find.byKey(const Key('deletion-confirmation-field')),
+      'DELETE',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('submit-account-deletion')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Deletion status is unknown'), findsOneWidget);
+    expect(find.textContaining('no deletion request was sent'), findsNothing);
+  });
 }
 
 final _statusSecret = base64Url
     .encode(Uint8List.fromList(List<int>.filled(32, 7)))
     .replaceAll('=', '');
+final _deviceBinding = AccountDeletionDeviceBinding(
+  accountId: 'account_1',
+  accountGeneration: 'generation_1',
+  deviceSessionId: 'device_session_1',
+);
 
 AccountDeletionCandidateController _controller({
   _Gateway? gateway,
@@ -326,6 +392,8 @@ AccountDeletionCandidateController _controller({
   AccountDeletionReauthenticationResult? reauthentication,
   AccountDeletionLocalWorkSummary? localWork,
   CandidateAccountDeletionReceipt? savedReceipt,
+  bool receiptReadFails = false,
+  bool receiptWriteFails = false,
 }) {
   final effectiveGateway = gateway ?? _Gateway();
   return AccountDeletionCandidateController(
@@ -335,6 +403,7 @@ AccountDeletionCandidateController _controller({
           methods: const [AccountDeletionReauthenticationMethod.password],
           appleRelationship: AppleAccountRelationship.notLinked,
         ),
+    deviceBinding: _deviceBinding,
     gateway: effectiveGateway,
     reauthenticator: _Reauthenticator(
       reauthentication ??
@@ -346,9 +415,13 @@ AccountDeletionCandidateController _controller({
           ),
     ),
     deviceCleanup: _Cleanup(
-      localWork ?? AccountDeletionLocalWorkSummary.clear(),
+      localWork ?? AccountDeletionLocalWorkSummary.clear(_deviceBinding),
     ),
-    receiptStore: _Store(savedReceipt),
+    receiptStore: _Store(
+      savedReceipt,
+      failRead: receiptReadFails,
+      failWrite: receiptWriteFails,
+    ),
     clock: const _Clock(),
     operationFactory: const _Operations(),
   );
@@ -360,6 +433,7 @@ final class _Gateway implements CandidateAccountDeletionGateway {
     this.statusPhase = DeletionStatusPhase.processing,
     this.providerOutcome = ProviderCheckpointState.pending,
     this.statusFails = false,
+    this.messageCode,
   }) : impact =
            impact ??
            CandidateAccountDeletionImpact(
@@ -380,6 +454,7 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   final DeletionStatusPhase statusPhase;
   final ProviderCheckpointState providerOutcome;
   final bool statusFails;
+  final String? messageCode;
   int prepareCalls = 0;
   int requestCalls = 0;
   int statusCalls = 0;
@@ -427,9 +502,11 @@ final class _Gateway implements CandidateAccountDeletionGateway {
           ? null
           : const Duration(seconds: 15),
       providerOutcome: providerOutcome,
-      messageCode: statusPhase == DeletionStatusPhase.complete
-          ? 'AD_ACCOUNT_DELETION_COMPLETE'
-          : 'AD_DELETION_REQUESTED',
+      messageCode:
+          messageCode ??
+          (statusPhase == DeletionStatusPhase.complete
+              ? 'AD_ACCOUNT_DELETION_COMPLETE'
+              : 'AD_DELETION_REQUESTED'),
       retainedCategoryCodes: const [],
     );
   }
@@ -460,17 +537,19 @@ final class _Cleanup implements CandidateAccountDeletionDeviceCleanup {
   bool get isSyntheticCandidate => true;
 
   @override
-  Future<AccountDeletionLocalWorkSummary> inspectLocalOfficialWork() async =>
-      localWork;
+  Future<AccountDeletionLocalWorkSummary> inspectLocalOfficialWork(
+    AccountDeletionDeviceBinding binding,
+  ) async => localWork;
 
   @override
   Future<AccountDeletionLocalWorkSummary> resolveLocalOfficialWork(
     AccountDeletionLocalWorkAction action,
+    AccountDeletionDeviceBinding binding,
   ) async => localWork;
 
   @override
   Future<AccountDeletionLocalCleanupResult> clearAfterServerFence(
-    AccountDeletionLocalWorkSummary localWork,
+    AccountDeletionLocalCleanupRequest request,
   ) async => AccountDeletionLocalCleanupResult(
     listenersStopped: true,
     notificationRegistrationDetached: true,
@@ -481,15 +560,21 @@ final class _Cleanup implements CandidateAccountDeletionDeviceCleanup {
 }
 
 final class _Store implements CandidateAccountDeletionReceiptStore {
-  _Store([this.receipt]);
+  _Store(this.receipt, {this.failRead = false, this.failWrite = false});
 
   CandidateAccountDeletionReceipt? receipt;
+  final bool failRead;
+  final bool failWrite;
 
   @override
-  Future<CandidateAccountDeletionReceipt?> read() async => receipt;
+  Future<CandidateAccountDeletionReceipt?> read() async {
+    if (failRead) throw StateError('synthetic receipt read failure');
+    return receipt;
+  }
 
   @override
   Future<void> write(CandidateAccountDeletionReceipt receipt) async {
+    if (failWrite) throw StateError('synthetic receipt write failure');
     this.receipt = receipt;
   }
 
@@ -512,10 +597,12 @@ CandidateAccountDeletionReceipt _savedReceipt() {
     custodyChoice: CustodyChoice.ordinary,
   );
   return CandidateAccountDeletionReceipt(
+    binding: _deviceBinding,
     request: request,
     statusSecret: _statusSecret,
     state: AccountDeletionReceiptState.acceptanceUnknown,
     recordedAt: DateTime.utc(2026, 9, 11, 16),
+    requiresInitialCustodyConflict: false,
   );
 }
 

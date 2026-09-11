@@ -45,8 +45,94 @@ void main() {
       candidateRouteForAccountLifecycleV2(
         state: AuthIncarnationSessionStateV2.deleted,
         requestedLocation: '/board',
+        hasBoundStatusReceipt: true,
       ),
-      '/delete-account',
+      AccountLifecycleCandidateRoutePathsV2.deletionStatus,
     );
+  });
+
+  test('AD02 split lifecycle route matrix avoids Auth-loss loops', () {
+    for (final state in [
+      AuthIncarnationSessionStateV2.ready,
+      AuthIncarnationSessionStateV2.blocked,
+      AuthIncarnationSessionStateV2.deleting,
+    ]) {
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: state,
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+        ),
+        AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+        reason: state.name,
+      );
+    }
+    for (final state in [
+      AuthIncarnationSessionStateV2.establishing,
+      AuthIncarnationSessionStateV2.refreshRequired,
+    ]) {
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: state,
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+        ),
+        '/loading',
+        reason: state.name,
+      );
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: state,
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork,
+        ),
+        '/loading',
+        reason: 'authenticated transition for ${state.name}',
+      );
+    }
+    expect(
+      candidateRouteForAccountLifecycleV2(
+        state: AuthIncarnationSessionStateV2.ready,
+        requestedLocation:
+            AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+        requiresDeviceReconciliation: true,
+      ),
+      AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork,
+    );
+    for (final state in AuthIncarnationSessionStateV2.values) {
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: state,
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.deletionStatus,
+        ),
+        AccountLifecycleCandidateRoutePathsV2.deletionStatus,
+        reason: state.name,
+      );
+    }
+    for (final state in [
+      AuthIncarnationSessionStateV2.signedOut,
+      AuthIncarnationSessionStateV2.deleted,
+    ]) {
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: state,
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+        ),
+        '/login',
+        reason: state.name,
+      );
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: state,
+          requestedLocation: '/board',
+          intent: AccountLifecycleRouteIntentV2.accountDeletion,
+          hasBoundStatusReceipt: true,
+        ),
+        AccountLifecycleCandidateRoutePathsV2.deletionStatus,
+        reason: 'bound receipt after ${state.name}',
+      );
+    }
   });
 }

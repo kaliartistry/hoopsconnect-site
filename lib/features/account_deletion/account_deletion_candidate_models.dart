@@ -1,4 +1,5 @@
 import '../../models/account_deletion/account_deletion_contract.dart';
+import '../../models/account_deletion/account_lifecycle_ad02_v2.dart';
 
 /// The lifecycle surface is deliberately unreachable from production roots.
 ///
@@ -52,6 +53,8 @@ enum AccountDeletionJourneyPhase {
   accountRemovedCleanupPending,
   attentionRequired,
   complete,
+  retrySameOperation,
+  requestRejected,
   unavailable,
 }
 
@@ -60,6 +63,7 @@ enum AccountDeletionReceiptState {
   acceptanceUnknown,
   accepted,
   complete,
+  definitiveNotAccepted,
 }
 
 final class AccountDeletionProviderProfile {
@@ -88,6 +92,35 @@ final class AccountDeletionProviderProfile {
           methods.contains(AccountDeletionReauthenticationMethod.apple)
       ? AccountDeletionReauthenticationMethod.apple
       : methods.first;
+}
+
+/// Exact local identity boundary for account-deletion recovery and teardown.
+///
+/// This is device-local binding material, not a client-selected deletion
+/// target. Production adapters must derive it from the current authenticated
+/// account generation and the device session that owns the local journal.
+final class AccountDeletionDeviceBinding {
+  AccountDeletionDeviceBinding({
+    required this.accountId,
+    required this.accountGeneration,
+    required this.deviceSessionId,
+  }) {
+    AccountDeletionContract.requireFirebaseUid(accountId);
+    AccountDeletionContract.requireOpaqueId(
+      'accountGeneration',
+      accountGeneration,
+    );
+    AccountDeletionContract.requireOpaqueId('deviceSessionId', deviceSessionId);
+  }
+
+  final String accountId;
+  final String accountGeneration;
+  final String deviceSessionId;
+
+  bool matches(AccountDeletionDeviceBinding other) =>
+      accountId == other.accountId &&
+      accountGeneration == other.accountGeneration &&
+      deviceSessionId == other.deviceSessionId;
 }
 
 final class AccountDeletionReauthenticationResult {
@@ -133,6 +166,7 @@ final class AccountDeletionReauthenticationResult {
 
 final class AccountDeletionLocalWorkSummary {
   AccountDeletionLocalWorkSummary({
+    required this.binding,
     required this.state,
     required this.workspaceCount,
     required this.unacceptedOperationCount,
@@ -197,15 +231,18 @@ final class AccountDeletionLocalWorkSummary {
     }
   }
 
-  factory AccountDeletionLocalWorkSummary.clear() =>
-      AccountDeletionLocalWorkSummary(
-        state: AccountDeletionLocalWorkState.clear,
-        workspaceCount: 0,
-        unacceptedOperationCount: 0,
-        receiptUnknownOperationCount: 0,
-        acceptedOperationCount: 0,
-      );
+  factory AccountDeletionLocalWorkSummary.clear(
+    AccountDeletionDeviceBinding binding,
+  ) => AccountDeletionLocalWorkSummary(
+    binding: binding,
+    state: AccountDeletionLocalWorkState.clear,
+    workspaceCount: 0,
+    unacceptedOperationCount: 0,
+    receiptUnknownOperationCount: 0,
+    acceptedOperationCount: 0,
+  );
 
+  final AccountDeletionDeviceBinding binding;
   final AccountDeletionLocalWorkState state;
   final int workspaceCount;
   final int unacceptedOperationCount;
@@ -425,11 +462,16 @@ final class AccountDeletionLocalCleanupResult {
 
 final class CandidateAccountDeletionReceipt {
   CandidateAccountDeletionReceipt({
+    required this.binding,
     required this.request,
     required this.statusSecret,
     required this.state,
     required this.recordedAt,
+    required this.requiresInitialCustodyConflict,
+    this.custodyConflictObserved = false,
+    this.terminalErrorCode,
   }) {
+    AccountDeletionContract.requireFirebaseUid(binding.accountId);
     AccountDeletionContract.decodeStatusSecret(statusSecret);
     if (AccountDeletionContract.statusSecretHash(statusSecret) !=
         request.statusSecretHash) {
@@ -440,22 +482,86 @@ final class CandidateAccountDeletionReceipt {
     if (!recordedAt.isUtc) {
       throw const FormatException('Deletion receipt time must be UTC.');
     }
+    if (custodyConflictObserved && !requiresInitialCustodyConflict) {
+      throw const FormatException(
+        'Custody conflict evidence requires an unresolved-custody receipt.',
+      );
+    }
+    final terminalPolicy = terminalErrorCode == null
+        ? null
+        : AccountDeletionContract.errorPolicies[terminalErrorCode];
+    if (state == AccountDeletionReceiptState.definitiveNotAccepted) {
+      if (terminalPolicy == null ||
+          (terminalPolicy.retry != 'never' &&
+              terminalPolicy.retry != 'operatorResolutionRequired')) {
+        throw const FormatException(
+          'A definitive rejection requires a frozen never or operator-resolution policy.',
+        );
+      }
+    } else if (terminalErrorCode != null) {
+      throw const FormatException(
+        'Only a definitive rejection may retain a terminal error code.',
+      );
+    }
   }
 
+  final AccountDeletionDeviceBinding binding;
   final RequestDeletionContract request;
   final String statusSecret;
   final AccountDeletionReceiptState state;
   final DateTime recordedAt;
+  final bool requiresInitialCustodyConflict;
+  final bool custodyConflictObserved;
+  final String? terminalErrorCode;
 
   CandidateAccountDeletionReceipt copyWith({
     AccountDeletionReceiptState? state,
     DateTime? recordedAt,
+    bool? custodyConflictObserved,
+    String? terminalErrorCode,
+    bool clearTerminalErrorCode = false,
   }) => CandidateAccountDeletionReceipt(
+    binding: binding,
     request: request,
     statusSecret: statusSecret,
     state: state ?? this.state,
     recordedAt: recordedAt ?? this.recordedAt,
+    requiresInitialCustodyConflict: requiresInitialCustodyConflict,
+    custodyConflictObserved:
+        custodyConflictObserved ?? this.custodyConflictObserved,
+    terminalErrorCode: clearTerminalErrorCode
+        ? null
+        : terminalErrorCode ?? this.terminalErrorCode,
   );
+}
+
+/// One exact cleanup authorization envelope for the current device.
+///
+/// The server receipt proves the fence. The three matching device bindings
+/// prove that the receipt and journal belong to the account data being cleared.
+final class AccountDeletionLocalCleanupRequest {
+  AccountDeletionLocalCleanupRequest({
+    required this.currentBinding,
+    required this.receipt,
+    required this.localWork,
+  }) {
+    if (!receipt.binding.matches(currentBinding) ||
+        !localWork.binding.matches(currentBinding)) {
+      throw const FormatException(
+        'Cleanup receipt, local work, and current device binding must match.',
+      );
+    }
+    if (receipt.state != AccountDeletionReceiptState.accepted &&
+        receipt.state != AccountDeletionReceiptState.complete) {
+      throw const FormatException(
+        'Only a server-accepted receipt can authorize local cleanup.',
+      );
+    }
+  }
+
+  final AccountDeletionDeviceBinding currentBinding;
+  final CandidateAccountDeletionReceipt receipt;
+  final AccountDeletionLocalWorkSummary localWork;
 }
 
 final class AccountDeletionCandidateFailure implements Exception {
@@ -486,11 +592,13 @@ final class AccountDeletionCandidateState {
 
   factory AccountDeletionCandidateState.initial(
     AccountDeletionProviderProfile providerProfile,
+    AccountDeletionDeviceBinding binding,
   ) => AccountDeletionCandidateState(
     phase: AccountDeletionJourneyPhase.bootstrapping,
     providerProfile: providerProfile,
     selectedMethod: providerProfile.recommendedMethod,
     localWork: AccountDeletionLocalWorkSummary(
+      binding: binding,
       state: AccountDeletionLocalWorkState.checking,
       workspaceCount: 0,
       unacceptedOperationCount: 0,
@@ -527,9 +635,32 @@ final class AccountDeletionCandidateState {
   bool get canSubmit =>
       phase == AccountDeletionJourneyPhase.impactReview &&
       impact != null &&
-      !impact!.needsOperationalCustodyResolution &&
       confirmedConsequences &&
       confirmationText == 'DELETE';
+
+  bool get canRetrySameOperation =>
+      phase == AccountDeletionJourneyPhase.retrySameOperation &&
+      receipt?.state == AccountDeletionReceiptState.acceptanceUnknown;
+
+  /// Explicit handoff target for the production router owner.
+  ///
+  /// The candidate does not navigate or import GoRouter. It only reports the
+  /// agreed stable destination after each lifecycle transition.
+  String get routeHandoffPath {
+    if (receipt?.state == AccountDeletionReceiptState.definitiveNotAccepted) {
+      return AccountLifecycleCandidateRoutePathsV2.requestDeletion;
+    }
+    if (receipt != null &&
+        receipt!.state != AccountDeletionReceiptState.readyToSubmit) {
+      return AccountLifecycleCandidateRoutePathsV2.deletionStatus;
+    }
+    if (phase == AccountDeletionJourneyPhase.overview &&
+        localWork.state ==
+            AccountDeletionLocalWorkState.requiresReconciliation) {
+      return AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork;
+    }
+    return AccountLifecycleCandidateRoutePathsV2.requestDeletion;
+  }
 
   AccountDeletionCandidateState copyWith({
     AccountDeletionJourneyPhase? phase,

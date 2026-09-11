@@ -13,12 +13,14 @@ or configuration change, deployment, store submission, gate update or
 activation. The Workstream F screen and orchestration remain unreachable and
 synthetic-only until the owners below accept and implement the contract.
 
-## Proposed route contract for A/F agreement
+## Agreed split route contract from Workstream A
 
-- Canonical path: `/delete-account`
-- Proposed route name: `accountDeletion`
-- The route guard must evaluate deletion recovery before the ordinary
-  signed-in/signed-out redirect.
+- Authenticated request path: `/account/delete`
+- Public read-only recovery path: `/account/deletion/status`
+- Authenticated local-work path: `/account/deletion/reconcile-device`
+- The route guard must evaluate a device-bound deletion receipt before the
+  ordinary signed-in/signed-out redirect. A successful request explicitly
+  hands off to the public status path before Auth can disappear.
 - A saved request receipt is local recovery authority only for the read-only
   status endpoint. It is never authorization for another deletion request.
 - Status recovery never starts provider reauthentication and never creates a
@@ -28,19 +30,21 @@ synthetic-only until the owners below accept and implement the contract.
 
 | Account/session condition | Required route result |
 | --- | --- |
-| Active current-generation account, explicit navigation | Open deletion overview and allow the injected local-work check |
-| Blocked or suspended current-generation account | Keep `/delete-account` reachable; fail closed on any operation not explicitly allowed by lifecycle authority |
+| Active current-generation account, explicit navigation | Open `/account/delete` and allow the injected local-work check |
+| Current device has unresolved official work | Hand off to `/account/deletion/reconcile-device`; return to `/account/delete` only with an exact-bound resolved manifest |
+| Blocked or suspended current-generation account | Keep `/account/delete` reachable; fail closed on any operation not explicitly allowed by lifecycle authority |
 | Provider reauthentication cancelled | Stay on deletion overview, report cancellation and send no prepare or request call |
-| Deleting account with a saved receipt | Open status recovery directly, without reauthentication or a new request |
-| Auth user absent, server cleanup pending, saved receipt present | Keep the deletion status screen reachable and label Auth removal separately from cleanup completion |
-| Cleanup needs operational attention, saved receipt present | Keep the status screen reachable; do not offer a second deletion request |
+| Accepted request or deleting account with an exact device-bound receipt | Hand off to `/account/deletion/status`, without reauthentication or a new request |
+| Auth user absent, server cleanup pending, saved receipt present | Keep `/account/deletion/status` reachable and label Auth removal separately from cleanup completion |
+| Cleanup needs operational attention, saved receipt present | Keep `/account/deletion/status` reachable; do not offer a second deletion request |
 | Verified complete receipt | Show the completed result once, then permit an explicit exit |
 | Signed out with no saved receipt | Use the ordinary sign-in route; do not infer that deletion exists |
 | Stale generation or mismatched receipt | Deny account authority and use a safe recovery/support path; never bind it to the current account |
 
-The existing dormant `candidateRouteForAccountLifecycleV2` already maps
-deleted lifecycle state to `/delete-account`. A must decide the full guard
-precedence and receipt-aware signed-out projection before any shared-root edit.
+The dormant `candidateRouteForAccountLifecycleV2` mirrors these three paths and
+tests the receipt-aware signed-out projection. Workstream A owns the production
+route guard and mounted handoff screens; Workstream F does not import or change
+those roots in this candidate.
 
 ## Interfaces requested from the integration owners
 
@@ -67,7 +71,10 @@ Implement the candidate device-cleanup interface against the agreed offline
 journal contract. The adapter must enumerate the exact device manifest,
 distinguish unaccepted from accepted and receipt-unknown operations, prohibit
 discard of receipt-unknown work, and bind any consent to that device and
-manifest checksum. Another device's consent must not be reused.
+manifest checksum. Every inspection, decision and cleanup call must bind the
+exact `accountId`, random `accountGeneration` and `deviceSessionId`; the saved
+receipt and local-work summary must match all three. Another account,
+recreated generation or device's receipt/consent must not be reused.
 
 ### C: notification and cache teardown seam
 
@@ -127,8 +134,13 @@ packet.
   relationship/material results.
 - Prove a response lost after acceptance reuses one request ID and checks
   status before any retry.
-- Prove last-owner deletion cannot submit without a transaction-bound AD03
-  transfer or prepared custody receipt.
+- Prove retryable rate-limit/unavailable outcomes reuse the exact operation,
+  request and status capability, while `never` and operator-resolution classes
+  retain a durable terminal rejection fence and cannot create replacement IDs,
+  including after restart.
+- Prove an unresolved last-owner request is accepted and fenced, opens
+  `CUSTODY_CONFLICT`, enters `needsAttention`, and lets personal deletion
+  continue while shared operations remain suspended.
 - Prove Auth deletion is scheduled only after the durable fence/minimum
   references, can continue while cleanup is blocked, and never makes cleanup
   appear complete merely because Auth is absent.

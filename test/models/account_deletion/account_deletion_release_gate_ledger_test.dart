@@ -61,7 +61,10 @@ void main() {
       row
         ..['status'] = 'passed'
         ..['owner'] = 'review_owner'
-        ..['evidenceRefs'] = <Object?>['immutable_evidence_ref']
+        ..['evidenceRefs'] = <Object?>[
+          for (final requirement in row['requiredEvidence']! as List<Object?>)
+            'evidence_for_$requirement',
+        ]
         ..['passed'] = true;
     }
 
@@ -85,6 +88,83 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('passed status requires complete ordered evidence coverage', () {
+    final changed = fixture();
+    final rows = (changed['gates']! as List)
+        .map((value) => Map<String, Object?>.from(value as Map))
+        .toList();
+    rows[0] = {
+      ...rows[0],
+      'status': 'passed',
+      'owner': 'review_owner',
+      'evidenceRefs': ['only_one_reference'],
+      'passed': true,
+    };
+    changed['gates'] = rows;
+
+    expect(
+      () => AccountDeletionReleaseGateLedger.fromMap(changed),
+      throwsFormatException,
+    );
+  });
+
+  test('closed status cannot carry evidence beyond its requirements', () {
+    final changed = fixture();
+    final rows = (changed['gates']! as List)
+        .map((value) => Map<String, Object?>.from(value as Map))
+        .toList();
+    rows[0] = {
+      ...rows[0],
+      'evidenceRefs': [
+        'controller_reference',
+        'decision_maker_reference',
+        'retention_reference',
+        'disclosures_reference',
+        'unexpected_extra_reference',
+      ],
+    };
+    changed['gates'] = rows;
+
+    expect(
+      () => AccountDeletionReleaseGateLedger.fromMap(changed),
+      throwsFormatException,
+    );
+  });
+
+  test(
+    'exact gate names, closed statuses and evidence requirements are pinned',
+    () {
+      for (final mutation
+          in <Map<String, Object?> Function(Map<String, Object?>)>[
+            (row) => {...row, 'name': 'renamed_gate'},
+            (row) => {...row, 'status': 'closedPendingOperationalProof'},
+            (row) => {
+              ...row,
+              'requiredEvidence': [
+                ...(row['requiredEvidence']! as List<Object?>).skip(1),
+              ],
+            },
+            (row) => {
+              ...row,
+              'requiredEvidence': [
+                ...(row['requiredEvidence']! as List<Object?>).reversed,
+              ],
+            },
+          ]) {
+        final changed = fixture();
+        final rows = (changed['gates']! as List)
+            .map((value) => Map<String, Object?>.from(value as Map))
+            .toList();
+        rows[0] = mutation(rows[0]);
+        changed['gates'] = rows;
+        expect(
+          () => AccountDeletionReleaseGateLedger.fromMap(changed),
+          throwsFormatException,
+        );
+      }
+    },
+  );
 
   test('missing, reordered, duplicate and expanded rows fail closed', () {
     for (final mutate in <void Function(List<Map<String, Object?>>)>[

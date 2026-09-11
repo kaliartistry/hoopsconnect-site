@@ -36,18 +36,21 @@ abstract interface class CandidateAccountDeletionReauthenticator {
 abstract interface class CandidateAccountDeletionDeviceCleanup {
   bool get isSyntheticCandidate;
 
-  Future<AccountDeletionLocalWorkSummary> inspectLocalOfficialWork();
+  Future<AccountDeletionLocalWorkSummary> inspectLocalOfficialWork(
+    AccountDeletionDeviceBinding binding,
+  );
 
   /// The concrete adapter must bind any choice to an exact per-device
   /// manifest. Consent from another device is never accepted here.
   Future<AccountDeletionLocalWorkSummary> resolveLocalOfficialWork(
     AccountDeletionLocalWorkAction action,
+    AccountDeletionDeviceBinding binding,
   );
 
   /// Runs only after server acceptance. Failure is reported separately and
   /// never changes an accepted server request into a rejected one.
   Future<AccountDeletionLocalCleanupResult> clearAfterServerFence(
-    AccountDeletionLocalWorkSummary localWork,
+    AccountDeletionLocalCleanupRequest request,
   );
 }
 
@@ -120,6 +123,7 @@ final class SecureCandidateDeletionOperationFactory
 final class AccountDeletionCandidateController extends ChangeNotifier {
   AccountDeletionCandidateController({
     required AccountDeletionProviderProfile providerProfile,
+    required AccountDeletionDeviceBinding deviceBinding,
     required CandidateAccountDeletionGateway gateway,
     required CandidateAccountDeletionReauthenticator reauthenticator,
     required CandidateAccountDeletionDeviceCleanup deviceCleanup,
@@ -131,10 +135,14 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
        _reauthenticator = reauthenticator,
        _deviceCleanup = deviceCleanup,
        _receiptStore = receiptStore,
+       _deviceBinding = deviceBinding,
        _clock = clock,
        _operationFactory =
            operationFactory ?? SecureCandidateDeletionOperationFactory(),
-       _state = AccountDeletionCandidateState.initial(providerProfile) {
+       _state = AccountDeletionCandidateState.initial(
+         providerProfile,
+         deviceBinding,
+       ) {
     if (accountDeletionCandidateActivationAllowed ||
         !_gateway.isSyntheticCandidate ||
         !_reauthenticator.isSyntheticCandidate ||
@@ -149,6 +157,7 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
   final CandidateAccountDeletionReauthenticator _reauthenticator;
   final CandidateAccountDeletionDeviceCleanup _deviceCleanup;
   final CandidateAccountDeletionReceiptStore _receiptStore;
+  final AccountDeletionDeviceBinding _deviceBinding;
   final AccountDeletionCandidateClock _clock;
   final CandidateDeletionOperationFactory _operationFactory;
 
@@ -171,6 +180,30 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
     try {
       final receipt = await _receiptStore.read();
       if (!_isCurrent(epoch)) return;
+      if (receipt != null && !receipt.binding.matches(_deviceBinding)) {
+        _emit(
+          _state.copyWith(
+            phase: AccountDeletionJourneyPhase.unavailable,
+            errorCode: 'AD_RECEIPT_DEVICE_BINDING_MISMATCH',
+          ),
+        );
+        return;
+      }
+      if (receipt?.state == AccountDeletionReceiptState.definitiveNotAccepted) {
+        final localWork = await _inspectLocalWorkSafely();
+        if (!_isCurrent(epoch)) return;
+        _emit(
+          _state.copyWith(
+            receipt: receipt,
+            localWork: localWork,
+            phase: AccountDeletionJourneyPhase.requestRejected,
+            errorCode: receipt!.terminalErrorCode,
+            clearStatus: true,
+            clearLocalCleanup: true,
+          ),
+        );
+        return;
+      }
       if (receipt != null &&
           receipt.state != AccountDeletionReceiptState.readyToSubmit) {
         final localWork = await _inspectLocalWorkSafely();
@@ -248,6 +281,7 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
     _emit(
       _state.copyWith(
         localWork: AccountDeletionLocalWorkSummary(
+          binding: _deviceBinding,
           state: AccountDeletionLocalWorkState.checking,
           workspaceCount: _state.localWork.workspaceCount,
           unacceptedOperationCount: _state.localWork.unacceptedOperationCount,
@@ -260,8 +294,16 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       ),
     );
     try {
-      final resolved = await _deviceCleanup.resolveLocalOfficialWork(action);
+      final resolved = await _deviceCleanup.resolveLocalOfficialWork(
+        action,
+        _deviceBinding,
+      );
       if (!_isCurrent(epoch)) return;
+      if (!resolved.binding.matches(_deviceBinding)) {
+        throw const AccountDeletionCandidateFailure(
+          'AD_LOCAL_WORK_BINDING_MISMATCH',
+        );
+      }
       if (!resolved.readyForRequest) {
         throw const AccountDeletionCandidateFailure(
           'AD_LOCAL_WORK_NOT_RESOLVED',
@@ -278,6 +320,7 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       _emit(
         _state.copyWith(
           localWork: AccountDeletionLocalWorkSummary(
+            binding: _deviceBinding,
             state: AccountDeletionLocalWorkState.unavailable,
             workspaceCount: _state.localWork.workspaceCount,
             unacceptedOperationCount: _state.localWork.unacceptedOperationCount,
@@ -342,14 +385,18 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       _emit(
         _state.copyWith(
           phase: AccountDeletionJourneyPhase.preparingImpact,
-          noticeCode:
-              reauthentication.appleRevocationMaterialState ==
-                  AppleRevocationMaterialState.unavailable
-              ? 'AD_APPLE_REVOCATION_MATERIAL_UNAVAILABLE'
-              : null,
+          noticeCode: switch (reauthentication.appleRevocationMaterialState) {
+            AppleRevocationMaterialState.unavailable =>
+              'AD_APPLE_REVOCATION_MATERIAL_UNAVAILABLE',
+            AppleRevocationMaterialState.unknown =>
+              'AD_APPLE_REVOCATION_MATERIAL_UNKNOWN',
+            _ => null,
+          },
           clearNotice:
               reauthentication.appleRevocationMaterialState !=
-              AppleRevocationMaterialState.unavailable,
+                  AppleRevocationMaterialState.unavailable &&
+              reauthentication.appleRevocationMaterialState !=
+                  AppleRevocationMaterialState.unknown,
         ),
       );
       final impact = await _gateway.prepareDeletion();
@@ -363,10 +410,10 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
           impact: impact,
           confirmedConsequences: false,
           confirmationText: '',
-          errorCode: impact.needsOperationalCustodyResolution
+          noticeCode: impact.needsOperationalCustodyResolution
               ? 'AD_CUSTODY_OPERATIONAL_RESOLUTION_REQUIRED'
-              : null,
-          clearError: !impact.needsOperationalCustodyResolution,
+              : _state.noticeCode,
+          clearError: true,
         ),
       );
     } catch (error) {
@@ -406,14 +453,6 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
             _state.confirmationText == 'DELETE')) {
       return;
     }
-    if (impact.needsOperationalCustodyResolution) {
-      _emit(
-        _state.copyWith(
-          errorCode: 'AD_CUSTODY_OPERATIONAL_RESOLUTION_REQUIRED',
-        ),
-      );
-      return;
-    }
     if (impact.isExpiredAt(_clock.nowUtc())) {
       _providerRevocationRef = null;
       _emit(
@@ -442,10 +481,12 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       providerRevocationRef: _providerRevocationRef,
     );
     var receipt = CandidateAccountDeletionReceipt(
+      binding: _deviceBinding,
       request: request,
       statusSecret: material.statusSecret,
       state: AccountDeletionReceiptState.readyToSubmit,
       recordedAt: _clock.nowUtc(),
+      requiresInitialCustodyConflict: impact.needsOperationalCustodyResolution,
     );
     final epoch = _beginOperation();
     _emit(
@@ -491,40 +532,80 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
     }
     try {
       final accepted = await _gateway.requestDeletion(request);
-      if (!_isCurrent(epoch)) return;
-      if (accepted.requestId != request.requestId) {
-        throw const AccountDeletionCandidateFailure(
-          'AD_ACCEPTANCE_BINDING_MISMATCH',
-        );
-      }
-      receipt = receipt.copyWith(
-        state: AccountDeletionReceiptState.accepted,
-        recordedAt: accepted.acceptedAt,
-      );
-      await _receiptStore.write(receipt);
-      if (!_isCurrent(epoch)) return;
-      _emit(
-        _state.copyWith(
-          phase: AccountDeletionJourneyPhase.processing,
-          receipt: receipt,
-          noticeCode: accepted.sameGenerationConvergence
-              ? 'AD_ALREADY_ACCEPTED'
-              : 'AD_DELETION_REQUESTED',
-          clearError: true,
-        ),
-      );
-      await _clearThisDeviceAfterFence(epoch);
-      await _refreshStatusForEpoch(epoch, preserveAcceptedOnFailure: true);
+      await _recordAcceptance(epoch, receipt, accepted);
     } catch (error) {
       if (!_isCurrent(epoch)) return;
       await _resolveSubmittedFailure(epoch, error);
     }
   }
 
+  /// Retries only the already persisted operation envelope. It never prepares
+  /// a new impact, reauthenticates, or creates new operation/request IDs.
+  Future<void> retrySameOperation() async {
+    final receipt = _state.receipt;
+    if (!_state.canRetrySameOperation || receipt == null) return;
+    if (!receipt.binding.matches(_deviceBinding)) {
+      _emit(
+        _state.copyWith(
+          phase: AccountDeletionJourneyPhase.unavailable,
+          errorCode: 'AD_RECEIPT_DEVICE_BINDING_MISMATCH',
+        ),
+      );
+      return;
+    }
+    final epoch = _beginOperation();
+    _emit(
+      _state.copyWith(
+        phase: AccountDeletionJourneyPhase.submitting,
+        clearError: true,
+        noticeCode: 'AD_RETRYING_SAME_OPERATION',
+      ),
+    );
+    try {
+      final accepted = await _gateway.requestDeletion(receipt.request);
+      await _recordAcceptance(epoch, receipt, accepted);
+    } catch (error) {
+      if (!_isCurrent(epoch)) return;
+      await _resolveSubmittedFailure(epoch, error);
+    }
+  }
+
+  Future<void> _recordAcceptance(
+    int epoch,
+    CandidateAccountDeletionReceipt receipt,
+    AcceptedAccountDeletionRequest accepted,
+  ) async {
+    if (!_isCurrent(epoch)) return;
+    if (accepted.requestId != receipt.request.requestId) {
+      throw const AccountDeletionCandidateFailure(
+        'AD_ACCEPTANCE_BINDING_MISMATCH',
+      );
+    }
+    final acceptedReceipt = receipt.copyWith(
+      state: AccountDeletionReceiptState.accepted,
+      recordedAt: accepted.acceptedAt,
+    );
+    await _receiptStore.write(acceptedReceipt);
+    if (!_isCurrent(epoch)) return;
+    _emit(
+      _state.copyWith(
+        phase: AccountDeletionJourneyPhase.processing,
+        receipt: acceptedReceipt,
+        noticeCode: accepted.sameGenerationConvergence
+            ? 'AD_ALREADY_ACCEPTED'
+            : 'AD_DELETION_REQUESTED',
+        clearError: true,
+      ),
+    );
+    await _clearThisDeviceAfterFence(epoch);
+    await _refreshStatusForEpoch(epoch, preserveAcceptedOnFailure: true);
+  }
+
   Future<void> refreshStatus() async {
     final receipt = _state.receipt;
     if (receipt == null ||
-        receipt.state == AccountDeletionReceiptState.readyToSubmit) {
+        receipt.state == AccountDeletionReceiptState.readyToSubmit ||
+        receipt.state == AccountDeletionReceiptState.definitiveNotAccepted) {
       return;
     }
     final epoch = _beginOperation();
@@ -554,9 +635,18 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
 
   Future<AccountDeletionLocalWorkSummary> _inspectLocalWorkSafely() async {
     try {
-      return await _deviceCleanup.inspectLocalOfficialWork();
+      final localWork = await _deviceCleanup.inspectLocalOfficialWork(
+        _deviceBinding,
+      );
+      if (!localWork.binding.matches(_deviceBinding)) {
+        throw const AccountDeletionCandidateFailure(
+          'AD_LOCAL_WORK_BINDING_MISMATCH',
+        );
+      }
+      return localWork;
     } catch (error) {
       return AccountDeletionLocalWorkSummary(
+        binding: _deviceBinding,
         state: AccountDeletionLocalWorkState.unavailable,
         workspaceCount: 0,
         unacceptedOperationCount: 0,
@@ -598,6 +688,42 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
     if (_provesNotAccepted(code) &&
         (_state.phase == AccountDeletionJourneyPhase.resolvingSubmittedStatus ||
             _state.phase == AccountDeletionJourneyPhase.acceptanceUnknown)) {
+      final retryClass = AccountDeletionContract.errorPolicies[code]!.retry;
+      final refreshImpact = retryClass == 'refreshImpactThenCreateNewOperation';
+      if (!refreshImpact) {
+        final rejectedReceipt = receipt.copyWith(
+          state: AccountDeletionReceiptState.definitiveNotAccepted,
+          recordedAt: _clock.nowUtc(),
+          terminalErrorCode: code,
+        );
+        try {
+          await _receiptStore.write(rejectedReceipt);
+        } catch (_) {
+          if (!_isCurrent(epoch)) return;
+          _emit(
+            _state.copyWith(
+              phase: AccountDeletionJourneyPhase.acceptanceUnknown,
+              receipt: receipt,
+              errorCode: 'AD_RECEIPT_STORAGE_UNAVAILABLE',
+              noticeCode: code,
+            ),
+          );
+          return;
+        }
+        if (!_isCurrent(epoch)) return;
+        _emit(
+          _state.copyWith(
+            phase: AccountDeletionJourneyPhase.requestRejected,
+            receipt: rejectedReceipt,
+            clearImpact: true,
+            confirmedConsequences: false,
+            confirmationText: '',
+            errorCode: code,
+            clearNotice: true,
+          ),
+        );
+        return;
+      }
       try {
         await _receiptStore.clearProvenNotAccepted(receipt);
       } catch (_) {
@@ -614,29 +740,35 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       if (!_isCurrent(epoch)) return;
       _emit(
         _state.copyWith(
-          phase: code == 'AD_INTENT_EXPIRED' || code == 'AD_IMPACT_CHANGED'
-              ? AccountDeletionJourneyPhase.overview
-              : AccountDeletionJourneyPhase.impactReview,
+          phase: AccountDeletionJourneyPhase.overview,
           clearReceipt: true,
-          clearImpact:
-              code == 'AD_INTENT_EXPIRED' || code == 'AD_IMPACT_CHANGED',
+          clearImpact: true,
+          confirmedConsequences: false,
+          confirmationText: '',
           errorCode: code,
           clearNotice: true,
         ),
       );
       return;
     }
-    if (_state.phase != AccountDeletionJourneyPhase.resolvingSubmittedStatus) {
+    if (_state.phase != AccountDeletionJourneyPhase.resolvingSubmittedStatus &&
+        _state.phase != AccountDeletionJourneyPhase.acceptanceUnknown) {
       return;
     }
+    final retryClass = AccountDeletionContract.errorPolicies[code]?.retry;
+    final retrySameOperation =
+        retryClass == 'retrySameOperation' ||
+        retryClass == 'resolveStatusThenRetrySameOperation';
     _emit(
       _state.copyWith(
-        phase: AccountDeletionJourneyPhase.acceptanceUnknown,
+        phase: retrySameOperation
+            ? AccountDeletionJourneyPhase.retrySameOperation
+            : AccountDeletionJourneyPhase.acceptanceUnknown,
         receipt: receipt.copyWith(
           state: AccountDeletionReceiptState.acceptanceUnknown,
           recordedAt: _clock.nowUtc(),
         ),
-        errorCode: 'AD_ACCEPTANCE_UNKNOWN',
+        errorCode: retrySameOperation ? code : 'AD_ACCEPTANCE_UNKNOWN',
         noticeCode: code,
       ),
     );
@@ -659,11 +791,23 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
           'AD_STATUS_BINDING_MISMATCH',
         );
       }
+      if (receipt.requiresInitialCustodyConflict &&
+          !receipt.custodyConflictObserved &&
+          (status.phase != DeletionStatusPhase.attentionRequired ||
+              status.messageCode != 'CUSTODY_CONFLICT')) {
+        throw const AccountDeletionCandidateFailure(
+          'AD_CUSTODY_STATUS_MISMATCH',
+        );
+      }
       final nextReceipt = receipt.copyWith(
         state: status.phase == DeletionStatusPhase.complete
             ? AccountDeletionReceiptState.complete
             : AccountDeletionReceiptState.accepted,
         recordedAt: _clock.nowUtc(),
+        custodyConflictObserved:
+            receipt.custodyConflictObserved ||
+            (status.phase == DeletionStatusPhase.attentionRequired &&
+                status.messageCode == 'CUSTODY_CONFLICT'),
       );
       await _receiptStore.write(nextReceipt);
       if (!_isCurrent(epoch)) return;
@@ -682,11 +826,12 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       }
     } catch (error) {
       if (!_isCurrent(epoch)) return;
+      final safeCode = _safeCode(error, fallback: 'AD_STATUS_UNAVAILABLE');
       if (receipt.state == AccountDeletionReceiptState.acceptanceUnknown) {
         _emit(
           _state.copyWith(
             phase: AccountDeletionJourneyPhase.acceptanceUnknown,
-            errorCode: 'AD_STATUS_UNAVAILABLE',
+            errorCode: safeCode,
           ),
         );
       } else if (preserveAcceptedOnFailure ||
@@ -694,10 +839,12 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
           receipt.state == AccountDeletionReceiptState.complete) {
         _emit(
           _state.copyWith(
-            phase: _state.status == null
+            phase: safeCode == 'AD_CUSTODY_STATUS_MISMATCH'
+                ? AccountDeletionJourneyPhase.attentionRequired
+                : _state.status == null
                 ? AccountDeletionJourneyPhase.processing
                 : _journeyPhase(_state.status!.phase),
-            errorCode: 'AD_STATUS_UNAVAILABLE',
+            errorCode: safeCode,
           ),
         );
       } else {
@@ -707,17 +854,33 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
   }
 
   Future<void> _clearThisDeviceAfterFence(int epoch) async {
+    final receipt = _state.receipt;
+    if (receipt == null || !receipt.binding.matches(_deviceBinding)) {
+      if (_isCurrent(epoch)) {
+        _emit(_state.copyWith(errorCode: 'AD_RECEIPT_DEVICE_BINDING_MISMATCH'));
+      }
+      return;
+    }
     try {
       final result = await _deviceCleanup.clearAfterServerFence(
-        _state.localWork,
+        AccountDeletionLocalCleanupRequest(
+          currentBinding: _deviceBinding,
+          receipt: receipt,
+          localWork: _state.localWork,
+        ),
       );
       if (!_isCurrent(epoch)) return;
+      final clearsCleanupError =
+          result.completeOnThisDevice &&
+          (_state.errorCode == 'AD_DEVICE_CLEANUP_INCOMPLETE' ||
+              _state.errorCode == result.safeMessageCode);
       _emit(
         _state.copyWith(
           localCleanup: result,
           errorCode: result.completeOnThisDevice
               ? _state.errorCode
               : result.safeMessageCode ?? 'AD_DEVICE_CLEANUP_INCOMPLETE',
+          clearError: clearsCleanupError,
         ),
       );
     } catch (error) {
@@ -754,6 +917,7 @@ final class AccountDeletionCandidateController extends ChangeNotifier {
       };
 
   static bool _provesNotAccepted(String code) => const {
+    'AD_IDENTITY_MISMATCH',
     'AD_INVALID_REQUEST',
     'AD_INTENT_EXPIRED',
     'AD_IMPACT_CHANGED',
@@ -809,6 +973,7 @@ final class InMemoryCandidateAccountDeletionReceiptStore
         stored.state == AccountDeletionReceiptState.complete ||
         receipt.state == AccountDeletionReceiptState.accepted ||
         receipt.state == AccountDeletionReceiptState.complete ||
+        !stored.binding.matches(receipt.binding) ||
         stored.request.requestId != receipt.request.requestId ||
         stored.request.operationId != receipt.request.operationId ||
         stored.request.statusSecretHash != receipt.request.statusSecretHash ||

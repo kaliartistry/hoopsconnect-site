@@ -5,13 +5,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/features/account_deletion/account_deletion_candidate_controller.dart';
 import 'package:hoops_connect/features/account_deletion/account_deletion_candidate_models.dart';
 import 'package:hoops_connect/models/account_deletion/account_deletion_contract.dart';
+import 'package:hoops_connect/models/account_deletion/account_lifecycle_ad02_v2.dart';
 
 void main() {
   group('candidate account deletion controller', () {
     test('persists status capability before one bound request', () async {
       final gateway = _Gateway(statuses: [_status()]);
       final reauth = _Reauthenticator(_passwordVerified());
-      final cleanup = _DeviceCleanup(AccountDeletionLocalWorkSummary.clear());
+      final cleanup = _DeviceCleanup(
+        AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+      );
       final receiptStore = _ReceiptStore();
       final controller = _controller(
         gateway: gateway,
@@ -29,6 +32,10 @@ void main() {
       await controller.submitDeletion();
 
       expect(controller.state.phase, AccountDeletionJourneyPhase.processing);
+      expect(
+        controller.state.routeHandoffPath,
+        AccountLifecycleCandidateRoutePathsV2.deletionStatus,
+      );
       expect(gateway.requestCalls, 1);
       expect(gateway.lastRequest, isNotNull);
       expect(gateway.lastRequest!.operationId, 'operation_fixed');
@@ -45,6 +52,14 @@ void main() {
         AccountDeletionReceiptState.accepted,
       ]);
       expect(cleanup.clearCalls, 1);
+      expect(
+        cleanup.lastCleanupRequest!.receipt.binding.matches(_deviceBinding),
+        isTrue,
+      );
+      expect(
+        cleanup.lastCleanupRequest!.localWork.binding.matches(_deviceBinding),
+        isTrue,
+      );
       expect(controller.state.localCleanup!.completeOnThisDevice, isTrue);
     });
 
@@ -62,7 +77,9 @@ void main() {
                   AppleRevocationMaterialState.notApplicable,
             ),
           ),
-          cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
           receiptStore: _ReceiptStore(),
           profile: AccountDeletionProviderProfile(
             methods: const [AccountDeletionReauthenticationMethod.google],
@@ -79,6 +96,121 @@ void main() {
         expect(gateway.requestCalls, 0);
       },
     );
+
+    test(
+      'Google success prepares the impact without provider material',
+      () async {
+        final gateway = _Gateway(statuses: [_status()]);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(
+            AccountDeletionReauthenticationResult(
+              method: AccountDeletionReauthenticationMethod.google,
+              outcome: AccountDeletionReauthenticationOutcome.verified,
+              appleRevocationMaterialState:
+                  AppleRevocationMaterialState.notApplicable,
+            ),
+          ),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: _ReceiptStore(),
+          profile: AccountDeletionProviderProfile(
+            methods: const [AccountDeletionReauthenticationMethod.google],
+            appleRelationship: AppleAccountRelationship.notLinked,
+          ),
+        );
+
+        await controller.initialize();
+        await controller.continueToImpact();
+
+        expect(
+          controller.state.phase,
+          AccountDeletionJourneyPhase.impactReview,
+        );
+        expect(gateway.prepareCalls, 1);
+        expect(gateway.requestCalls, 0);
+      },
+    );
+
+    test('Apple cancellation stays reachable and sends no request', () async {
+      final gateway = _Gateway(statuses: [_status()]);
+      final controller = _controller(
+        gateway: gateway,
+        reauthenticator: _Reauthenticator(
+          AccountDeletionReauthenticationResult(
+            method: AccountDeletionReauthenticationMethod.apple,
+            outcome: AccountDeletionReauthenticationOutcome.cancelled,
+            appleRevocationMaterialState: AppleRevocationMaterialState.unknown,
+          ),
+        ),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
+        receiptStore: _ReceiptStore(),
+        profile: AccountDeletionProviderProfile(
+          methods: const [AccountDeletionReauthenticationMethod.apple],
+          appleRelationship: AppleAccountRelationship.unknown,
+        ),
+      );
+
+      await controller.initialize();
+      await controller.continueToImpact();
+
+      expect(controller.state.phase, AccountDeletionJourneyPhase.overview);
+      expect(controller.state.noticeCode, 'AD_PROVIDER_REAUTH_CANCELLED');
+      expect(gateway.prepareCalls, 0);
+      expect(gateway.requestCalls, 0);
+    });
+
+    for (final appleCase in [
+      (
+        state: AppleRevocationMaterialState.unavailable,
+        notice: 'AD_APPLE_REVOCATION_MATERIAL_UNAVAILABLE',
+      ),
+      (
+        state: AppleRevocationMaterialState.unknown,
+        notice: 'AD_APPLE_REVOCATION_MATERIAL_UNKNOWN',
+      ),
+    ]) {
+      test(
+        'Apple ${appleCase.state.name} remains explicit and unverified',
+        () async {
+          final gateway = _Gateway(statuses: [_status()]);
+          final controller = _controller(
+            gateway: gateway,
+            reauthenticator: _Reauthenticator(
+              AccountDeletionReauthenticationResult(
+                method: AccountDeletionReauthenticationMethod.apple,
+                outcome: AccountDeletionReauthenticationOutcome.verified,
+                appleRevocationMaterialState: appleCase.state,
+              ),
+            ),
+            cleanup: _DeviceCleanup(
+              AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+            ),
+            receiptStore: _ReceiptStore(),
+            profile: AccountDeletionProviderProfile(
+              methods: const [AccountDeletionReauthenticationMethod.apple],
+              appleRelationship: AppleAccountRelationship.unknown,
+            ),
+          );
+
+          await controller.initialize();
+          await controller.continueToImpact();
+
+          expect(
+            controller.state.phase,
+            AccountDeletionJourneyPhase.impactReview,
+          );
+          expect(controller.state.noticeCode, appleCase.notice);
+          controller.setConsequencesConfirmed(true);
+          controller.setConfirmationText('DELETE');
+          await controller.submitDeletion();
+          expect(gateway.lastRequest!.providerRevocationRef, isNull);
+        },
+      );
+    }
 
     test('Apple seam forwards only the opaque revocation reference', () async {
       final gateway = _Gateway(
@@ -99,7 +231,9 @@ void main() {
             providerRevocationRef: 'apple_ref_1',
           ),
         ),
-        cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
         receiptStore: _ReceiptStore(),
         profile: AccountDeletionProviderProfile(
           methods: const [AccountDeletionReauthenticationMethod.apple],
@@ -124,6 +258,7 @@ void main() {
     test('receipt-unknown local work cannot be discarded', () async {
       final cleanup = _DeviceCleanup(
         AccountDeletionLocalWorkSummary(
+          binding: _deviceBinding,
           state: AccountDeletionLocalWorkState.requiresReconciliation,
           workspaceCount: 1,
           unacceptedOperationCount: 2,
@@ -140,6 +275,10 @@ void main() {
       );
 
       await controller.initialize();
+      expect(
+        controller.state.routeHandoffPath,
+        AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork,
+      );
       await controller.resolveLocalWork(
         AccountDeletionLocalWorkAction.discardUnacceptedDrafts,
       );
@@ -172,7 +311,9 @@ void main() {
             ],
           ),
           reauthenticator: reauth,
-          cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
           receiptStore: store,
         );
 
@@ -181,6 +322,10 @@ void main() {
         expect(
           controller.state.phase,
           AccountDeletionJourneyPhase.accountRemovedCleanupPending,
+        );
+        expect(
+          controller.state.routeHandoffPath,
+          AccountLifecycleCandidateRoutePathsV2.deletionStatus,
         );
         expect(reauth.calls, 0);
         expect(
@@ -202,7 +347,9 @@ void main() {
       final controller = _controller(
         gateway: gateway,
         reauthenticator: _Reauthenticator(_passwordVerified()),
-        cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
         receiptStore: _ReceiptStore(),
       );
 
@@ -214,24 +361,26 @@ void main() {
 
       expect(
         controller.state.phase,
-        AccountDeletionJourneyPhase.acceptanceUnknown,
+        AccountDeletionJourneyPhase.retrySameOperation,
       );
-      expect(controller.state.errorCode, 'AD_STATUS_UNAVAILABLE');
+      expect(controller.state.errorCode, 'AD_TEMPORARILY_UNAVAILABLE');
       expect(gateway.requestCalls, 1);
       expect(gateway.statusCalls, 1);
 
       gateway
         ..requestError = null
         ..statuses.add(_status());
-      await controller.refreshStatus();
+      await controller.retrySameOperation();
 
       expect(controller.state.phase, AccountDeletionJourneyPhase.processing);
       expect(
         gateway.requestCalls,
-        1,
-        reason: 'status recovery must not resubmit',
+        2,
+        reason: 'retry must reuse the exact persisted operation',
       );
       expect(gateway.statusCalls, 2);
+      expect(gateway.lastRequest!.operationId, 'operation_fixed');
+      expect(gateway.lastRequest!.requestId, 'request_fixed');
     });
 
     for (final failingWrite in [1, 2]) {
@@ -243,7 +392,9 @@ void main() {
           final controller = _controller(
             gateway: gateway,
             reauthenticator: _Reauthenticator(_passwordVerified()),
-            cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+            cleanup: _DeviceCleanup(
+              AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+            ),
             receiptStore: store,
           );
 
@@ -279,7 +430,9 @@ void main() {
         final controller = _controller(
           gateway: gateway,
           reauthenticator: _Reauthenticator(_passwordVerified()),
-          cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
           receiptStore: store,
         );
 
@@ -291,11 +444,15 @@ void main() {
 
         expect(gateway.requestCalls, 1);
         expect(gateway.statusCalls, 1);
-        expect(store.clearCalls, 1);
-        expect(store.receipt, isNull);
+        expect(store.clearCalls, 0);
+        expect(
+          store.receipt!.state,
+          AccountDeletionReceiptState.definitiveNotAccepted,
+        );
+        expect(store.receipt!.terminalErrorCode, 'AD_POLICY_NOT_READY');
         expect(
           controller.state.phase,
-          AccountDeletionJourneyPhase.impactReview,
+          AccountDeletionJourneyPhase.requestRejected,
         );
         expect(controller.state.errorCode, 'AD_POLICY_NOT_READY');
       },
@@ -306,7 +463,7 @@ void main() {
       () async {
         final gateway = _Gateway(
           requestError: const AccountDeletionCandidateFailure(
-            'AD_POLICY_NOT_READY',
+            'AD_INTENT_EXPIRED',
           ),
           statuses: [
             const AccountDeletionCandidateFailure('AD_STATUS_UNAVAILABLE'),
@@ -316,7 +473,9 @@ void main() {
         final controller = _controller(
           gateway: gateway,
           reauthenticator: _Reauthenticator(_passwordVerified()),
-          cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
           receiptStore: store,
         );
 
@@ -336,8 +495,51 @@ void main() {
       },
     );
 
+    test(
+      'failed terminal rejection write retains the same unknown receipt',
+      () async {
+        final gateway = _Gateway(
+          requestError: const AccountDeletionCandidateFailure(
+            'AD_POLICY_NOT_READY',
+          ),
+          statuses: [
+            const AccountDeletionCandidateFailure('AD_STATUS_UNAVAILABLE'),
+          ],
+        );
+        final store = _ReceiptStore(failWriteAt: 3);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: store,
+        );
+
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+        await controller.submitDeletion();
+
+        expect(
+          controller.state.phase,
+          AccountDeletionJourneyPhase.acceptanceUnknown,
+        );
+        expect(controller.state.errorCode, 'AD_RECEIPT_STORAGE_UNAVAILABLE');
+        expect(
+          store.receipt!.state,
+          AccountDeletionReceiptState.acceptanceUnknown,
+        );
+        expect(store.receipt!.request.operationId, 'operation_fixed');
+        expect(gateway.requestCalls, 1);
+      },
+    );
+
     test('server completion still clears this device after restart', () async {
-      final cleanup = _DeviceCleanup(AccountDeletionLocalWorkSummary.clear());
+      final cleanup = _DeviceCleanup(
+        AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+      );
       final controller = _controller(
         gateway: _Gateway(
           statuses: [
@@ -359,27 +561,207 @@ void main() {
       expect(controller.state.localCleanup!.completeOnThisDevice, isTrue);
     });
 
-    test('unresolved last-owner custody blocks submission', () async {
-      final gateway = _Gateway(
-        impact: CandidateAccountDeletionImpact(
-          intentId: 'intent_1',
-          policyVersion: 'policy_1',
-          impactVersion: 'impact_1',
-          expiresAt: _now.add(const Duration(minutes: 10)),
-          custodyChoice: CustodyChoice.suspendToCustody,
-          ownershipResolution:
-              AccountDeletionOwnershipResolution.operationalResolutionRequired,
-          isLastRecoverableOwner: true,
-          associationId: 'jba',
-          serverDeletionContinuesIndependently: true,
-          sportingHistoryIsNotAccountData: true,
+    test(
+      'unresolved last-owner custody accepts and enters attention',
+      () async {
+        final gateway = _Gateway(
+          impact: CandidateAccountDeletionImpact(
+            intentId: 'intent_1',
+            policyVersion: 'policy_1',
+            impactVersion: 'impact_1',
+            expiresAt: _now.add(const Duration(minutes: 10)),
+            custodyChoice: CustodyChoice.suspendToCustody,
+            ownershipResolution: AccountDeletionOwnershipResolution
+                .operationalResolutionRequired,
+            isLastRecoverableOwner: true,
+            associationId: 'jba',
+            serverDeletionContinuesIndependently: true,
+            sportingHistoryIsNotAccountData: true,
+          ),
+          statuses: [
+            _status(
+              phase: DeletionStatusPhase.attentionRequired,
+              messageCode: 'CUSTODY_CONFLICT',
+            ),
+          ],
+        );
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: _ReceiptStore(),
+        );
+
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+        await controller.submitDeletion();
+
+        expect(controller.state.canSubmit, isFalse);
+        expect(gateway.requestCalls, 1);
+        expect(
+          controller.state.phase,
+          AccountDeletionJourneyPhase.attentionRequired,
+        );
+        expect(controller.state.status!.messageCode, 'CUSTODY_CONFLICT');
+        expect(
+          gateway.lastRequest!.custodyChoice,
+          CustodyChoice.suspendToCustody,
+        );
+      },
+    );
+
+    test(
+      'unresolved custody rejects a status that omits CUSTODY_CONFLICT',
+      () async {
+        final gateway = _Gateway(
+          impact: CandidateAccountDeletionImpact(
+            intentId: 'intent_1',
+            policyVersion: 'policy_1',
+            impactVersion: 'impact_1',
+            expiresAt: _now.add(const Duration(minutes: 10)),
+            custodyChoice: CustodyChoice.suspendToCustody,
+            ownershipResolution: AccountDeletionOwnershipResolution
+                .operationalResolutionRequired,
+            isLastRecoverableOwner: true,
+            associationId: 'jba',
+            serverDeletionContinuesIndependently: true,
+            sportingHistoryIsNotAccountData: true,
+          ),
+          statuses: [_status()],
+        );
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: _ReceiptStore(),
+        );
+
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+        await controller.submitDeletion();
+
+        expect(
+          controller.state.phase,
+          AccountDeletionJourneyPhase.attentionRequired,
+        );
+        expect(controller.state.errorCode, 'AD_CUSTODY_STATUS_MISMATCH');
+        expect(controller.state.receipt, isNotNull);
+        expect(controller.state.receipt!.custodyConflictObserved, isFalse);
+      },
+    );
+
+    for (final code in [
+      'AD_IDENTITY_MISMATCH',
+      'AD_INVALID_REQUEST',
+      'AD_OPERATION_CONFLICT',
+      'AD_TRANSFER_NOT_READY',
+      'AD_POLICY_NOT_READY',
+    ]) {
+      test('$code cannot create a replacement operation', () async {
+        final gateway = _Gateway(
+          requestError: AccountDeletionCandidateFailure(code),
+          statuses: [
+            const AccountDeletionCandidateFailure('AD_STATUS_UNAVAILABLE'),
+          ],
+        );
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          ),
+          receiptStore: _ReceiptStore(),
+        );
+
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+        await controller.submitDeletion();
+        await controller.submitDeletion();
+        await controller.retrySameOperation();
+
+        expect(
+          controller.state.phase,
+          AccountDeletionJourneyPhase.requestRejected,
+        );
+        expect(
+          controller.state.receipt!.state,
+          AccountDeletionReceiptState.definitiveNotAccepted,
+        );
+        expect(controller.state.receipt!.terminalErrorCode, code);
+        expect(gateway.requestCalls, 1);
+      });
+    }
+
+    test('terminal rejection survives restart without new IDs', () async {
+      final store = _ReceiptStore();
+      final firstGateway = _Gateway(
+        requestError: const AccountDeletionCandidateFailure(
+          'AD_TRANSFER_NOT_READY',
         ),
-        statuses: [_status()],
+        statuses: [
+          const AccountDeletionCandidateFailure('AD_STATUS_UNAVAILABLE'),
+        ],
       );
+      final first = _controller(
+        gateway: firstGateway,
+        reauthenticator: _Reauthenticator(_passwordVerified()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
+        receiptStore: store,
+      );
+      await first.initialize();
+      await first.continueToImpact(password: 'correct horse');
+      first.setConsequencesConfirmed(true);
+      first.setConfirmationText('DELETE');
+      await first.submitDeletion();
+      first.dispose();
+
+      final restartedGateway = _Gateway(statuses: [_status()]);
+      final restarted = _controller(
+        gateway: restartedGateway,
+        reauthenticator: _Reauthenticator(_passwordVerified()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
+        receiptStore: store,
+      );
+      addTearDown(restarted.dispose);
+      await restarted.initialize();
+      await restarted.submitDeletion();
+      await restarted.retrySameOperation();
+
+      expect(
+        restarted.state.phase,
+        AccountDeletionJourneyPhase.requestRejected,
+      );
+      expect(
+        restarted.state.routeHandoffPath,
+        AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+      );
+      expect(restartedGateway.requestCalls, 0);
+      expect(restartedGateway.statusCalls, 0);
+      expect(store.receipt!.request.operationId, 'operation_fixed');
+    });
+
+    test('two concurrent submit actions issue one request', () async {
+      final gateway = _Gateway(statuses: [_status()]);
       final controller = _controller(
         gateway: gateway,
         reauthenticator: _Reauthenticator(_passwordVerified()),
-        cleanup: _DeviceCleanup(AccountDeletionLocalWorkSummary.clear()),
+        cleanup: _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        ),
         receiptStore: _ReceiptStore(),
       );
 
@@ -387,24 +769,138 @@ void main() {
       await controller.continueToImpact(password: 'correct horse');
       controller.setConsequencesConfirmed(true);
       controller.setConfirmationText('DELETE');
-      await controller.submitDeletion();
+      await Future.wait([
+        controller.submitDeletion(),
+        controller.submitDeletion(),
+      ]);
 
-      expect(controller.state.canSubmit, isFalse);
-      expect(gateway.requestCalls, 0);
+      expect(gateway.requestCalls, 1);
+      expect(gateway.lastRequest!.operationId, 'operation_fixed');
+    });
+
+    test(
+      'device cleanup failure stays visible and a status retry recovers',
+      () async {
+        final cleanup = _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          failClearAttempts: 2,
+        );
+        final controller = _controller(
+          gateway: _Gateway(statuses: [_status(), _status()]),
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: cleanup,
+          receiptStore: _ReceiptStore(),
+        );
+
+        await controller.initialize();
+        await controller.continueToImpact(password: 'correct horse');
+        controller.setConsequencesConfirmed(true);
+        controller.setConfirmationText('DELETE');
+        await controller.submitDeletion();
+
+        expect(cleanup.clearCalls, 2);
+        expect(controller.state.localCleanup!.completeOnThisDevice, isFalse);
+        expect(controller.state.errorCode, 'AD_DEVICE_CLEANUP_INCOMPLETE');
+
+        await controller.refreshStatus();
+        expect(cleanup.clearCalls, 3);
+        expect(controller.state.localCleanup!.completeOnThisDevice, isTrue);
+        expect(controller.state.errorCode, isNull);
+      },
+    );
+
+    for (final mismatch in [
+      AccountDeletionDeviceBinding(
+        accountId: 'other_account',
+        accountGeneration: 'generation_1',
+        deviceSessionId: 'device_session_1',
+      ),
+      AccountDeletionDeviceBinding(
+        accountId: 'account_1',
+        accountGeneration: 'other_generation',
+        deviceSessionId: 'device_session_1',
+      ),
+      AccountDeletionDeviceBinding(
+        accountId: 'account_1',
+        accountGeneration: 'generation_1',
+        deviceSessionId: 'other_device',
+      ),
+    ]) {
+      test(
+        'mismatched receipt cannot read status or clear current data',
+        () async {
+          final cleanup = _DeviceCleanup(
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+          );
+          final gateway = _Gateway(statuses: [_status()]);
+          final controller = _controller(
+            gateway: gateway,
+            reauthenticator: _Reauthenticator(_passwordVerified()),
+            cleanup: cleanup,
+            receiptStore: _ReceiptStore(seed: _receipt(binding: mismatch)),
+          );
+
+          await controller.initialize();
+
+          expect(
+            controller.state.phase,
+            AccountDeletionJourneyPhase.unavailable,
+          );
+          expect(
+            controller.state.errorCode,
+            'AD_RECEIPT_DEVICE_BINDING_MISMATCH',
+          );
+          expect(gateway.statusCalls, 0);
+          expect(cleanup.clearCalls, 0);
+        },
+      );
+    }
+
+    test('cleanup envelope rejects a cross-device local manifest', () {
+      final otherDevice = AccountDeletionDeviceBinding(
+        accountId: 'account_1',
+        accountGeneration: 'generation_1',
+        deviceSessionId: 'other_device',
+      );
       expect(
-        controller.state.errorCode,
-        'AD_CUSTODY_OPERATIONAL_RESOLUTION_REQUIRED',
+        () => AccountDeletionLocalCleanupRequest(
+          currentBinding: _deviceBinding,
+          receipt: _receipt(state: AccountDeletionReceiptState.accepted),
+          localWork: AccountDeletionLocalWorkSummary.clear(otherDevice),
+        ),
+        throwsFormatException,
       );
     });
+
+    test(
+      'receipt store cannot clear the same IDs under another binding',
+      () async {
+        final store = InMemoryCandidateAccountDeletionReceiptStore();
+        final receipt = _receipt();
+        await store.write(receipt);
+        final otherBinding = AccountDeletionDeviceBinding(
+          accountId: 'account_1',
+          accountGeneration: 'generation_1',
+          deviceSessionId: 'other_device',
+        );
+
+        await expectLater(
+          store.clearProvenNotAccepted(_receipt(binding: otherBinding)),
+          throwsStateError,
+        );
+        expect(await store.read(), same(receipt));
+      },
+    );
 
     test('non-synthetic dependencies cannot activate the candidate', () {
       expect(
         () => AccountDeletionCandidateController(
           providerProfile: _passwordProfile,
+          deviceBinding: _deviceBinding,
           gateway: _Gateway(statuses: [_status()], synthetic: false),
           reauthenticator: _Reauthenticator(_passwordVerified()),
           deviceCleanup: _DeviceCleanup(
-            AccountDeletionLocalWorkSummary.clear(),
+            AccountDeletionLocalWorkSummary.clear(_deviceBinding),
           ),
           receiptStore: _ReceiptStore(),
         ),
@@ -416,6 +912,11 @@ void main() {
 }
 
 final _now = DateTime.utc(2026, 9, 11, 16);
+final _deviceBinding = AccountDeletionDeviceBinding(
+  accountId: 'account_1',
+  accountGeneration: 'generation_1',
+  deviceSessionId: 'device_session_1',
+);
 final _passwordProfile = AccountDeletionProviderProfile(
   methods: const [AccountDeletionReauthenticationMethod.password],
   appleRelationship: AppleAccountRelationship.notLinked,
@@ -432,6 +933,7 @@ AccountDeletionCandidateController _controller({
   AccountDeletionProviderProfile? profile,
 }) => AccountDeletionCandidateController(
   providerProfile: profile ?? _passwordProfile,
+  deviceBinding: _deviceBinding,
   gateway: gateway,
   reauthenticator: reauthenticator,
   deviceCleanup: cleanup,
@@ -456,6 +958,7 @@ CandidateAccountDeletionImpact _impact() => CandidateAccountDeletionImpact(
 AccountDeletionStatusSnapshot _status({
   DeletionStatusPhase phase = DeletionStatusPhase.processing,
   ProviderCheckpointState providerOutcome = ProviderCheckpointState.pending,
+  String? messageCode,
 }) => AccountDeletionStatusSnapshot(
   requestId: 'request_fixed',
   phase: phase,
@@ -467,9 +970,11 @@ AccountDeletionStatusSnapshot _status({
       ? null
       : const Duration(seconds: 15),
   providerOutcome: providerOutcome,
-  messageCode: phase == DeletionStatusPhase.complete
-      ? 'AD_ACCOUNT_DELETION_COMPLETE'
-      : 'AD_DELETION_REQUESTED',
+  messageCode:
+      messageCode ??
+      (phase == DeletionStatusPhase.complete
+          ? 'AD_ACCOUNT_DELETION_COMPLETE'
+          : 'AD_DELETION_REQUESTED'),
   retainedCategoryCodes: const [],
 );
 
@@ -482,6 +987,7 @@ AccountDeletionReauthenticationResult _passwordVerified() =>
 
 AccountDeletionLocalWorkSummary _resolvedLocalWork() =>
     AccountDeletionLocalWorkSummary(
+      binding: _deviceBinding,
       state: AccountDeletionLocalWorkState.readyWithDeviceConsent,
       workspaceCount: 1,
       unacceptedOperationCount: 2,
@@ -492,7 +998,11 @@ AccountDeletionLocalWorkSummary _resolvedLocalWork() =>
       deviceConsentId: 'consent_1',
     );
 
-CandidateAccountDeletionReceipt _receipt() {
+CandidateAccountDeletionReceipt _receipt({
+  AccountDeletionDeviceBinding? binding,
+  AccountDeletionReceiptState state =
+      AccountDeletionReceiptState.acceptanceUnknown,
+}) {
   final request = RequestDeletionContract(
     intentId: 'intent_1',
     policyVersion: 'policy_1',
@@ -503,10 +1013,12 @@ CandidateAccountDeletionReceipt _receipt() {
     custodyChoice: CustodyChoice.ordinary,
   );
   return CandidateAccountDeletionReceipt(
+    binding: binding ?? _deviceBinding,
     request: request,
     statusSecret: _statusSecret,
-    state: AccountDeletionReceiptState.acceptanceUnknown,
+    state: state,
     recordedAt: _now,
+    requiresInitialCustodyConflict: false,
   );
 }
 
@@ -588,24 +1100,31 @@ final class _Reauthenticator
 }
 
 final class _DeviceCleanup implements CandidateAccountDeletionDeviceCleanup {
-  _DeviceCleanup(this.initial, {AccountDeletionLocalWorkSummary? resolved})
-    : resolved = resolved ?? initial;
+  _DeviceCleanup(
+    this.initial, {
+    AccountDeletionLocalWorkSummary? resolved,
+    this.failClearAttempts = 0,
+  }) : resolved = resolved ?? initial;
 
   final AccountDeletionLocalWorkSummary initial;
   final AccountDeletionLocalWorkSummary resolved;
+  final int failClearAttempts;
   int resolveCalls = 0;
   int clearCalls = 0;
+  AccountDeletionLocalCleanupRequest? lastCleanupRequest;
 
   @override
   bool get isSyntheticCandidate => true;
 
   @override
-  Future<AccountDeletionLocalWorkSummary> inspectLocalOfficialWork() async =>
-      initial;
+  Future<AccountDeletionLocalWorkSummary> inspectLocalOfficialWork(
+    AccountDeletionDeviceBinding binding,
+  ) async => initial;
 
   @override
   Future<AccountDeletionLocalWorkSummary> resolveLocalOfficialWork(
     AccountDeletionLocalWorkAction action,
+    AccountDeletionDeviceBinding binding,
   ) async {
     resolveCalls++;
     return resolved;
@@ -613,9 +1132,15 @@ final class _DeviceCleanup implements CandidateAccountDeletionDeviceCleanup {
 
   @override
   Future<AccountDeletionLocalCleanupResult> clearAfterServerFence(
-    AccountDeletionLocalWorkSummary localWork,
+    AccountDeletionLocalCleanupRequest request,
   ) async {
     clearCalls++;
+    lastCleanupRequest = request;
+    if (clearCalls <= failClearAttempts) {
+      throw const AccountDeletionCandidateFailure(
+        'AD_DEVICE_CLEANUP_INCOMPLETE',
+      );
+    }
     return AccountDeletionLocalCleanupResult(
       listenersStopped: true,
       notificationRegistrationDetached: true,

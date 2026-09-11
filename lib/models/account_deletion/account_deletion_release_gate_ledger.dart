@@ -38,15 +38,20 @@ final class AccountDeletionReleaseGateEntry {
     if (this.evidenceRefs.toSet().length != this.evidenceRefs.length) {
       throw const FormatException('Release-gate evidence references repeat.');
     }
+    if (this.evidenceRefs.length > this.requiredEvidence.length) {
+      throw const FormatException(
+        'Release-gate evidence cannot exceed the normative requirements.',
+      );
+    }
     for (final reference in this.evidenceRefs) {
       AccountDeletionContract.requireOpaqueId('evidenceRef', reference);
     }
     if (passed &&
         (status != AccountDeletionReleaseGateStatus.passed ||
             owner == null ||
-            this.evidenceRefs.isEmpty)) {
+            this.evidenceRefs.length != this.requiredEvidence.length)) {
       throw const FormatException(
-        'A passed gate requires passed status, an owner, and evidence.',
+        'A passed gate requires an owner and one ordered evidence reference per requirement.',
       );
     }
     if (!passed && status == AccountDeletionReleaseGateStatus.passed) {
@@ -91,6 +96,12 @@ final class AccountDeletionReleaseGateEntry {
   final bool passed;
 
   bool get isClosed => !passed;
+
+  Map<String, String> get evidenceByRequirement =>
+      Map<String, String>.unmodifiable({
+        for (var index = 0; index < evidenceRefs.length; index++)
+          requiredEvidence[index]: evidenceRefs[index],
+      });
 }
 
 final class AccountDeletionReleaseGateLedger {
@@ -106,9 +117,19 @@ final class AccountDeletionReleaseGateLedger {
       throw const FormatException('The release ledger must contain G1-G11.');
     }
     for (var index = 0; index < expectedGateIds.length; index++) {
-      if (this.gates[index].id != expectedGateIds[index]) {
+      final gate = this.gates[index];
+      final expectedId = expectedGateIds[index];
+      if (gate.id != expectedId) {
         throw const FormatException(
           'Release gates must be complete, unique, and ordered G1-G11.',
+        );
+      }
+      final expected = _expectedGateContracts[expectedId]!;
+      if (gate.name != expected.name ||
+          !_sameStrings(gate.requiredEvidence, expected.requiredEvidence) ||
+          (!gate.passed && gate.status != expected.closedStatus)) {
+        throw FormatException(
+          '$expectedId name, closed status, and required evidence must match the normative ledger.',
         );
       }
     }
@@ -160,6 +181,147 @@ final class AccountDeletionReleaseGateLedger {
     'G11',
   ];
 
+  static const Map<String, _ReleaseGateContract> _expectedGateContracts = {
+    'G1': _ReleaseGateContract(
+      name: 'controller_and_retention',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingAuthoritativeDecision,
+      requiredEvidence: [
+        'named_controller',
+        'authorized_decision_maker',
+        'approved_per_class_retention_registry',
+        'approved_disclosure_versions',
+      ],
+    ),
+    'G2': _ReleaseGateContract(
+      name: 'player_and_minor_rights',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingAuthoritativeDecision,
+      requiredEvidence: [
+        'verified_account_person_claim_policy',
+        'guardian_and_non_account_process',
+        'field_level_publication_policy',
+        'ranking_privacy_treatment',
+      ],
+    ),
+    'G3': _ReleaseGateContract(
+      name: 'recoverable_ownership',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingOperationalProof,
+      requiredEvidence: [
+        'named_custody_operator',
+        'named_recovery_operator',
+        'independent_infrastructure_owner',
+        'transfer_rehearsal',
+        'last_owner_suspension_rehearsal',
+      ],
+    ),
+    'G4': _ReleaseGateContract(
+      name: 'legacy_migration_inventory',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingOperationalProof,
+      requiredEvidence: [
+        'fresh_authorized_auth_profile_membership_inventory',
+        'generation_metadata',
+        'approved_owner_bootstrap',
+        'source_and_media_classification',
+        'suppression_before_migration',
+      ],
+    ),
+    'G5': _ReleaseGateContract(
+      name: 'complete_fencing',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingImplementationAndProof,
+      requiredEvidence: [
+        'rules_fence',
+        'command_and_receipt_fence',
+        'provisioning_fence',
+        'notification_fence',
+        'storage_fence',
+        'legacy_and_public_read_fence',
+        'old_client_denial',
+      ],
+    ),
+    'G6': _ReleaseGateContract(
+      name: 'provider_configuration',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingOperationalProof,
+      requiredEvidence: [
+        'pinned_sdk_compatibility',
+        'apple_native_and_web_identifiers',
+        'revocation_material_handling',
+        'provider_event_validation',
+        'app_check',
+        'domains_and_csp',
+        'indexes',
+        'least_privilege_workers',
+      ],
+    ),
+    'G7': _ReleaseGateContract(
+      name: 'deadline_and_operations',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingAuthoritativeDecision,
+      requiredEvidence: [
+        'approved_completion_timing',
+        'staffing_and_alerts',
+        'backlog_capacity',
+        'completion_delivery',
+        'processor_request_process',
+        'outage_and_attention_handling',
+      ],
+    ),
+    'G8': _ReleaseGateContract(
+      name: 'restore_and_retained_copies',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingOperationalProof,
+      requiredEvidence: [
+        'backup_pitr_object_version_log_and_processor_retention',
+        'durable_suppression_ledger',
+        'key_custody',
+        'restore_before_traffic_rehearsal',
+      ],
+    ),
+    'G9': _ReleaseGateContract(
+      name: 'official_stat_integration',
+      closedStatus: AccountDeletionReleaseGateStatus.closedPendingReview,
+      requiredEvidence: [
+        'approved_identity_evidence_privacy_addendum',
+        'legacy_privacy_adapter',
+        'no_certified_hash_conflict',
+        'no_raw_export_or_public_fallback',
+      ],
+    ),
+    'G10': _ReleaseGateContract(
+      name: 'end_to_end_evidence',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingOperationalProof,
+      requiredEvidence: [
+        'applicable_scenario_matrix_pass',
+        'independent_disposition_review',
+        'custody_review',
+        'public_privacy_review',
+        'auth_deletion_scheduled_after_durable_fence_and_minimum_references',
+        'blocked_cleanup_does_not_block_auth_deletion',
+        'verified_auth_absence',
+        'auth_absence_does_not_bypass_cleanup_completion',
+        'zero_unresolved_required_adapters',
+      ],
+    ),
+    'G11': _ReleaseGateContract(
+      name: 'public_and_store_consistency',
+      closedStatus:
+          AccountDeletionReleaseGateStatus.closedPendingOperationalProof,
+      requiredEvidence: [
+        'live_web_route_readback',
+        'privacy_policy_readback',
+        'mobile_and_pwa_screenshots',
+        'reviewer_test_procedure',
+        'app_store_privacy_consistency',
+        'google_data_safety_and_deletion_url_consistency',
+      ],
+    ),
+  };
+
   final String contractVersion;
   final bool activationAllowed;
   final List<AccountDeletionReleaseGateEntry> gates;
@@ -173,6 +335,26 @@ final class AccountDeletionReleaseGateLedger {
         for (final gate in gates.where((entry) => entry.isClosed))
           gate.id: List<String>.unmodifiable(gate.requiredEvidence),
       });
+}
+
+final class _ReleaseGateContract {
+  const _ReleaseGateContract({
+    required this.name,
+    required this.closedStatus,
+    required this.requiredEvidence,
+  });
+
+  final String name;
+  final AccountDeletionReleaseGateStatus closedStatus;
+  final List<String> requiredEvidence;
+}
+
+bool _sameStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 String _string(String field, Object? value) {

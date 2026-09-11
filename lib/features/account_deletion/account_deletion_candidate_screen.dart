@@ -163,8 +163,10 @@ class _AccountDeletionCandidateScreenState
       AccountDeletionJourneyPhase.processing ||
       AccountDeletionJourneyPhase.accountRemovedCleanupPending ||
       AccountDeletionJourneyPhase.attentionRequired ||
+      AccountDeletionJourneyPhase.retrySameOperation ||
+      AccountDeletionJourneyPhase.requestRejected ||
       AccountDeletionJourneyPhase.complete => _status(state),
-      AccountDeletionJourneyPhase.unavailable => _unavailable(),
+      AccountDeletionJourneyPhase.unavailable => _unavailable(state),
     };
   }
 
@@ -402,10 +404,9 @@ class _AccountDeletionCandidateScreenState
           const SizedBox(height: 16),
           const _MessageBanner(
             key: Key('custody-blocker'),
-            icon: Icons.lock_outline,
+            icon: Icons.support_agent,
             text:
-                'No named custody path is ready for this last-owner account. The candidate records operational attention, but production activation remains blocked.',
-            isError: true,
+                'No named custody path is ready for this last-owner account. Your personal deletion may continue. The accepted job must fence shared operations, open CUSTODY_CONFLICT and remain needs attention until an authorized operator resolves custody.',
           ),
         ],
         const SizedBox(height: 20),
@@ -417,16 +418,13 @@ class _AccountDeletionCandidateScreenState
           title: const Text(
             'I understand that account access cannot be restored after the request is accepted.',
           ),
-          onChanged: impact.needsOperationalCustodyResolution
-              ? null
-              : (value) =>
-                    widget.controller.setConsequencesConfirmed(value ?? false),
+          onChanged: (value) =>
+              widget.controller.setConsequencesConfirmed(value ?? false),
         ),
         const SizedBox(height: 8),
         TextField(
           key: const Key('deletion-confirmation-field'),
           controller: _confirmationController,
-          enabled: !impact.needsOperationalCustodyResolution,
           textCapitalization: TextCapitalization.characters,
           autocorrect: false,
           enableSuggestions: false,
@@ -442,9 +440,7 @@ class _AccountDeletionCandidateScreenState
           label: 'Delete my account',
           icon: Icons.delete_forever,
           onPressed: state.canSubmit ? () => _submit(state) : null,
-          disabledHint: impact.needsOperationalCustodyResolution
-              ? 'Shared-account custody must be resolved first.'
-              : 'Confirm the consequences and type DELETE.',
+          disabledHint: 'Confirm the consequences and type DELETE.',
         ),
         const SizedBox(height: 8),
         _CandidateAsyncActionButton(
@@ -522,14 +518,26 @@ class _AccountDeletionCandidateScreenState
           ),
         if (status != null && status.retainedCategoryCodes.isNotEmpty)
           const SizedBox(height: 16),
-        if (state.phase != AccountDeletionJourneyPhase.complete)
+        if (state.phase == AccountDeletionJourneyPhase.retrySameOperation) ...[
+          _CandidateAsyncActionButton(
+            key: const Key('retry-same-deletion-operation'),
+            label: 'Retry the same request',
+            icon: Icons.replay,
+            onPressed: widget.controller.retrySameOperation,
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (state.phase != AccountDeletionJourneyPhase.complete &&
+            state.phase != AccountDeletionJourneyPhase.requestRejected &&
+            state.receipt != null)
           _CandidateAsyncActionButton(
             key: const Key('refresh-deletion-status'),
             label: 'Check status',
             icon: Icons.refresh,
             onPressed: widget.controller.refreshStatus,
           ),
-        if (state.phase == AccountDeletionJourneyPhase.complete &&
+        if ((state.phase == AccountDeletionJourneyPhase.complete ||
+                state.phase == AccountDeletionJourneyPhase.requestRejected) &&
             widget.onExit != null)
           _CandidateAsyncActionButton(
             key: const Key('finish-account-deletion'),
@@ -540,7 +548,7 @@ class _AccountDeletionCandidateScreenState
     );
   }
 
-  Widget _unavailable() => Column(
+  Widget _unavailable(AccountDeletionCandidateState state) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       const Icon(Icons.lock_clock_outlined, size: 56),
@@ -556,8 +564,10 @@ class _AccountDeletionCandidateScreenState
         ),
       ),
       const SizedBox(height: 12),
-      const Text(
-        'No account was deleted. Try the candidate check again or use the existing support path while activation remains closed.',
+      Text(
+        state.errorCode == 'AD_RECEIPT_DEVICE_BINDING_MISMATCH'
+            ? 'A saved deletion receipt belongs to another account generation or device session. It was not used to read status or clear this account’s data. Use the verified recovery path.'
+            : 'This device could not determine whether a saved deletion receipt exists, so deletion status is unknown. No new request was sent. Try the check again or use the verified recovery path.',
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 20),
@@ -657,6 +667,20 @@ class _AccountDeletionCandidateScreenState
           'The required provider outcome, cleanup, custody, privacy and restore checks are recorded complete for this request. Review any provider guidance below.',
       tone: _StatusTone.success,
     ),
+    AccountDeletionJourneyPhase.retrySameOperation => const _StatusPresentation(
+      icon: Icons.replay,
+      title: 'The same request can be retried',
+      message:
+          'Status was checked first. Retry reuses the exact saved operation, request ID and status capability. It does not reauthenticate or create another deletion request.',
+      tone: _StatusTone.warning,
+    ),
+    AccountDeletionJourneyPhase.requestRejected => const _StatusPresentation(
+      icon: Icons.block_outlined,
+      title: 'This request was not accepted',
+      message:
+          'The saved operation cannot be retried or replaced from this screen. Follow the displayed policy or identity guidance; operator-resolution cases require authorized staff action.',
+      tone: _StatusTone.warning,
+    ),
     _ => throw StateError('This phase has no status presentation.'),
   };
 
@@ -667,7 +691,9 @@ class _AccountDeletionCandidateScreenState
     'AD_LOCAL_WORK_NOT_RESOLVED' || 'AD_LOCAL_WORK_UNAVAILABLE' =>
       'Local stat work could not be resolved on this device.',
     'AD_CUSTODY_OPERATIONAL_RESOLUTION_REQUIRED' =>
-      'A safe shared-account custody path has not been resolved.',
+      'Shared operations will be suspended for staff custody resolution while personal account deletion continues.',
+    'AD_CUSTODY_STATUS_MISMATCH' =>
+      'The accepted last-owner request did not return the required custody-conflict status. The account stays fenced and needs staff attention.',
     'AD_INTENT_EXPIRED' || 'AD_IMPACT_CHANGED' =>
       'The account impact expired or changed. Reauthenticate and review a fresh impact.',
     'AD_ACCEPTANCE_UNKNOWN' =>
@@ -675,11 +701,19 @@ class _AccountDeletionCandidateScreenState
     'AD_STATUS_UNAVAILABLE' =>
       'Current deletion status is temporarily unavailable. The saved receipt is still available for another check.',
     'AD_RECEIPT_STORAGE_UNAVAILABLE' =>
-      'This device could not safely save a recovery receipt, so no deletion request was sent.',
+      'This device could not safely confirm storage of a recovery receipt. Deletion status is unknown; do not submit another request until the verified recovery check succeeds.',
     'AD_RECEIPT_CLEAR_FAILED' =>
       'This device could not update its saved receipt. Do not submit another request until recovery status is resolved.',
     'AD_DEVICE_CLEANUP_INCOMPLETE' =>
       'Server deletion continues, but this device has not finished local cleanup.',
+    'AD_RECEIPT_DEVICE_BINDING_MISMATCH' || 'AD_LOCAL_WORK_BINDING_MISMATCH' =>
+      'Saved deletion material does not belong to this account generation and device session.',
+    'AD_IDENTITY_MISMATCH' =>
+      'The current identity does not match this deletion request. It cannot be retried.',
+    'AD_INVALID_REQUEST' || 'AD_OPERATION_CONFLICT' =>
+      'This deletion request was rejected and cannot be retried or replaced from this screen.',
+    'AD_RATE_LIMITED' || 'AD_TEMPORARILY_UNAVAILABLE' =>
+      'The server did not complete this attempt. Only the exact saved request may be retried.',
     'AD_POLICY_NOT_READY' || 'AD_TRANSFER_NOT_READY' =>
       'A required policy or ownership step is not ready. No new request was accepted.',
     _ => 'Account deletion could not continue. No completion is being claimed.',
@@ -690,6 +724,8 @@ class _AccountDeletionCandidateScreenState
       'Provider sign-in was cancelled. No deletion request was sent.',
     'AD_APPLE_REVOCATION_MATERIAL_UNAVAILABLE' =>
       'Apple revocation material was not staged. Any later provider result must say that truthfully.',
+    'AD_APPLE_REVOCATION_MATERIAL_UNKNOWN' =>
+      'The Apple relationship or revocation material could not be confirmed. Any later provider result must remain unknown until verified.',
     'AD_LOCAL_DEVICE_CONSENT_RECORDED' =>
       'This device’s exact local-work decision was recorded. It does not cover another device.',
     'AD_ALREADY_ACCEPTED' =>
@@ -698,6 +734,8 @@ class _AccountDeletionCandidateScreenState
       'The request was accepted and its read-only status receipt was saved.',
     'AD_ACCEPTANCE_UNKNOWN' =>
       'Checking the saved status receipt before any retry.',
+    'AD_RETRYING_SAME_OPERATION' =>
+      'Retrying the exact saved request without creating new operation material.',
     _ => 'The account deletion state changed. Review the current status below.',
   };
 }
