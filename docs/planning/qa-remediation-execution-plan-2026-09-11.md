@@ -121,7 +121,7 @@ Acceptance: a role/route matrix for guest, fan, rep, statistician, media, legacy
 5. Apply coherent copy: viewer-appropriate empty states, correct plurals, one label per concept, clear counts, and primary actions named for what happens. Show installed app version/build from package metadata in About.
 6. Evaluate branding changes with preview, color picker/swatches, contrast guidance and logo preview/error handling. Coordinate any actual media-upload implementation with C/F's Storage and privacy boundary; do not add a broad file upload feature merely to replace a URL field.
 
-Acceptance: reviewed screenshots at 375, 768 and 1440 pixels, iOS/Android representative screens, light/dark modes, large text, keyboard journey and screen-reader results. Include every changed screen and its key error/empty/disabled states. Feature writers must satisfy the same checks before B's final consistency pass.
+Acceptance: reviewed screenshots at 375, 768 and 1440 pixels, iOS/Android representative screens, light/dark modes, large text, keyboard journey and screen-reader results. Include every changed screen and its key error/empty/disabled states. Custom controls must expose name, role, selected/disabled state, adequate target size, visible focus, Enter/Space activation and no duplicate semantics. Feature writers must satisfy the same checks before B's final consistency pass.
 
 ### C. League operations and communications
 
@@ -134,7 +134,7 @@ Acceptance: reviewed screenshots at 375, 768 and 1440 pixels, iOS/Android repres
 7. Align Create Announcement/Post naming and actual audience. For required acknowledgment, make a deadline or an explicit no-deadline choice visible; the recommended default requires a deadline before sending. Do not imply delivery from the mere existence of a post. Show accurate publication/delivery state without exposing backend implementation terminology. Filter notification settings by role capability.
 8. Make season creation a clear prepare-and-activate flow. Warn exactly when the active season pointer will change; prevent duplicate IDs from overwriting an existing season, validate dates, preserve historical results and make cancellation safe. Keep Archive confirmation clear about consequences and reversibility. Label Season Leaderboard honestly as viewing unless an actual governed management workflow is implemented.
 
-Acceptance: create a division and team, register players, submit/approve a rep roster change, generate and edit a schedule, send/acknowledge/remind within local test delivery, and change seasons in synthetic data without broken references. Repeat key workflows with ordinary admin and superAdmin separately.
+Acceptance: create a division and team, register players, submit/approve a rep roster change, generate and edit a schedule, send/acknowledge/remind within local test delivery, and change seasons in synthetic data without broken references. Delete an unused division, block deletion of a referenced division with understandable dependency details, archive without breaking historical routes, preserve stable team/player IDs and distinguish jersey `0` from `00`. Run one timezone case that crosses midnight between Jamaica and the viewer plus a New York DST transition through schedule, calendar, stat queue, reminders, public detail, recap, share and CSV. Repeat key workflows with ordinary admin and superAdmin separately.
 
 ### D. Statistics, review and courtside recovery
 
@@ -147,7 +147,7 @@ Acceptance: create a division and team, register players, submit/approve a rep r
 7. Integrate the existing durable journal with preparation, identity/assignment, writer ownership, server command delivery, durable receipts and foreground/resume recovery. Preserve unsent or response-unknown operations through refresh, crash, network loss, sign-out and stale assignment. Show honest distinctions between saved on device, queued, accepted and needs attention. Do not promise background upload after a closed PWA.
 8. Test loss before/after local commit, duplicate/out-of-order delivery, app relaunch, second-device writer conflict, assignment revocation, storage quota/unavailability and correction of accepted work. Coordinate deletion reconciliation with F so account cleanup cannot silently destroy unsubmitted official work.
 
-Acceptance: a complete synthetic match, post-game-only match, overtime, legitimate exceptional result, rejection/revision, corrected result and interrupted/recovered game. Scores and totals agree across every consumer. Replays do not double count, unauthorized writers fail, and accepted work survives failure. Existing Dart/Node/canonical/optimized-web/journal conformance stays green.
+Acceptance: a complete synthetic match, post-game-only match, overtime, legitimate exceptional result, rejection/revision, corrected result and interrupted/recovered game. A named revision trace submits N, requests changes against N, rejects a stale approval, resubmits N+1, approves exactly N+1 and proves calendar, worklists, box score, standings, leaders, public detail, text/image share and CSV all expose N+1 once without duplicate aggregation. Courtside keyboard tests cover Tab/Shift-Tab, Escape, focus restoration, shortcuts while text fields/dialogs are focused, rebuild/caret preservation and leaving/re-entering without data loss. Scores and totals agree across every consumer. Replays do not double count, unauthorized writers fail, and accepted work survives failure. Existing Dart/Node/canonical/optimized-web/journal conformance stays green.
 
 ### E. Fans, guests, media and public data
 
@@ -157,7 +157,7 @@ Acceptance: a complete synthetic match, post-game-only match, overtime, legitima
 4. Complete the media path from result discovery to box score, recap, share/download and per-game/per-season CSV. Keep all outputs on one result/publication version. Feature-detect sharing and provide explicit Copy/Download alternatives with honest success/failure; test permission denial and image/text fallback on each platform. Preserve the existing strong branded card design.
 5. Include complete available shooting/turnover fields from D, show unknown historical fields honestly, escape spreadsheet-formula prefixes in CSV text, and enforce export capabilities and field-level privacy. A downloaded image/export must not claim a newer publication than its source.
 
-Acceptance: an unauthenticated user finds a result and shares its URL; a journalist can produce consistent text/image/CSV on desktop and phone; filtering, pagination, reload, stale/retracted release and privacy-denied cases behave correctly. No public route can read internal posts, acknowledgments, user records or restricted identity fields.
+Acceptance: first agree one public route namespace with A. Open every game/team/player public URL in a fresh unauthenticated browser, refresh, use Back and verify only public repositories/projections are touched. An unauthenticated user finds a result and shares its URL; a journalist can produce consistent text/image/CSV on desktop and phone; filtering, pagination, reload, stale/retracted release and privacy-denied cases behave correctly. Share acceptance covers image success, image-fail/text-success, both-fail, copy failure, cancel, unsupported platform and duplicate taps without false success. No public route can read internal posts, acknowledgments, user records or restricted identity fields.
 
 ### F. Account lifecycle, privacy and ownership
 
@@ -167,7 +167,7 @@ Acceptance: an unauthenticated user finds a result and shares its URL; a journal
 4. Test fencing before provider mutation, durable cleanup tracking, failed/retried adapters, unknown provider responses, verified Auth absence and remaining cleanup, publication/export suppression, backup restore and stale client denial.
 5. Produce the concrete evidence and policy decision packet for the existing G1-G11 gates. Engineering can prepare and test the candidate while retention/controller/guardian/provider/custody decisions are resolved. Only mark a gate passed when its owner and evidence exist; never silently toggle activation flags to satisfy a test.
 
-Acceptance: local lifecycle scenario matrix passes, production integration is reviewable, and each release gate has an explicit status and evidence. Public activation waits for the actual required decisions and provider/staging proof. The feature is not called complete merely because a Delete button is visible.
+Acceptance: first agree one lifecycle route contract with A. Prove deletion remains reachable for active, blocked/suspended, provider-cancelled, deleting and cleanup-pending accounts without a sign-in/deletion redirect loop. The local lifecycle scenario matrix passes, production integration is reviewable, and each release gate has an explicit status and evidence. Public activation waits for the actual required decisions and provider/staging proof. The feature is not called complete merely because a Delete button is visible.
 
 ## 7. Audit-to-workstream ledger
 
@@ -241,11 +241,11 @@ The existing CI also runs individual Chrome wire/journal tests, optimized Dart2J
 - New/returning account: sign-up/provision, email/Google/Apple sign-in as supported, invalid credentials, recovery, invite redemption, blocked membership and sign-out.
 - Guest/fan: find today's game, open a result/team/player, change division, compare standings, share and refresh a direct link.
 - Rep: review an announcement, acknowledge once, see completion, propose a roster change and see its outcome.
-- Statistician: prepare roster, start under adopted rules, record/edit play, lose connection, restart, recover, submit, receive changes requested and resubmit.
+- Statistician: prepare roster, run candidate-profile scenarios while the adopted-rule decision remains open, record/edit play, lose connection, restart, recover, submit, receive changes requested and resubmit. Keep F-12 `blocked-decision` until JBA records the adopted profile.
 - Admin: see permitted tools, review discrepancies, request changes, approve the exact revision, and verify updated standings/leaders without duplicates.
 - Media and historical press alias: find result, inspect complete stats, copy/download/share/export consistent output.
 - SuperAdmin: manage users/invites/teams/divisions/schedule/branding, preview roles, and prepare/activate/archive a season with clear consequences.
-- Account lifecycle: exercise the appropriate deletion scenarios for every account/ownership state, including old devices and local stat work.
+- Account lifecycle: exercise the appropriate deletion scenarios for every account/ownership state, including old devices and local stat work, but keep production activation blocked until G1-G11 have real owners and evidence.
 
 Run key journeys on iOS and Android, desktop Chrome, iOS Safari/PWA where supported, and phone/tablet widths. Include dark mode, larger text, keyboard, screen readers, empty season, partial data, denied permission, unavailable Functions, slow/offline network and duplicate/retried actions. Record any unavailable physical-device evidence instead of declaring it tested.
 
@@ -279,3 +279,14 @@ Q receives a different brief:
 > Independently verify integrated commit [full SHA] against the findings ledger and acceptance journeys in this plan. Use real UI interaction and the complete isolated test backend. Verify the specific fix, relevant adjacent workflows, role denials, persistence and rendered states. Distinguish implementation failure, fixture error and unavailable infrastructure. Return reproducible findings with role/platform/state, expected/observed result, severity, evidence and responsible workstream. Close findings only with evidence on the integrated commit. Do not change production or independently rewrite files another worker owns.
 
 The first dispatch is Stage 0. Its output is the reproducible base and reviewed contracts that make the three-worker implementation stages safe to start.
+
+## 11. Execution ledger
+
+- Baseline: `ccc53eace3d8b08b49400a033952db7f882f0fae` on `main`, clean when planning began.
+- Integration: `codex/qa-remediation-integration`, plan commit `9164169b112a62338cfa2e94e08ccaded2dc4fa3`.
+- Stage 0 A: `codex/stage0-platform-qa`, active, isolated worktree, platform/test/web boot only.
+- Stage 0 B: `codex/stage0-ui-system`, active, isolated worktree, shared UI/accessibility/login only.
+- Stage 0 D: `codex/stage0-stats-contracts`, active, isolated worktree, dormant statistics adapter/contracts only.
+- Safety baseline: all 50 dormancy tests passed before implementation. Production activation flags, deploy roots and real Firebase data remain unchanged.
+
+Stage 0 integration gates are: the public route contract before A/E, lifecycle route contract before A/F, official result/revision contract before C/D/E, shared accessibility harness before broad feature UI work, and one-at-a-time use of fixed local emulator ports.
