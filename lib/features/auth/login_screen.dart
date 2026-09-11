@@ -8,8 +8,9 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
+import 'auth_error_message.dart';
 import 'login_auth_actions.dart';
-import '../public/public_league_screen.dart';
+import '../../app/router/app_route_contract.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -87,7 +88,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = _friendlyError(error.toString()));
+        setState(() => _error = friendlyAuthErrorMessage(error));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -104,7 +105,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await ref.read(loginAuthActionsProvider).signInWithGoogle();
     } catch (error) {
       if (mounted) {
-        setState(() => _error = _friendlyError(error.toString()));
+        setState(() => _error = friendlyAuthErrorMessage(error));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -121,31 +122,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await ref.read(loginAuthActionsProvider).signInWithApple();
     } catch (error) {
       if (mounted) {
-        setState(() => _error = _friendlyError(error.toString()));
+        setState(() => _error = friendlyAuthErrorMessage(error));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  String _friendlyError(String error) {
-    if (error.contains('user-not-found')) {
-      return 'No account found with that email';
-    }
-    if (error.contains('wrong-password')) return 'Incorrect password';
-    if (error.contains('email-already-in-use')) {
-      return 'An account already exists with that email';
-    }
-    if (error.contains('weak-password')) {
-      return 'Password must be at least 6 characters';
-    }
-    if (error.contains('invalid-email')) {
-      return 'Please enter a valid email address';
-    }
-    if (error.contains('invalid-credential')) {
-      return 'Invalid email or password';
-    }
-    return error.replaceAll(RegExp(r'\[.*?\]'), '').trim();
   }
 
   @override
@@ -334,17 +315,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       onPressed: _submitEmailPassword,
                     ),
                   ),
+                  if (!_isSignUp) ...[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        key: const Key('forgot-password-link'),
+                        onPressed: _loading
+                            ? null
+                            : () {
+                                final email = _emailController.text.trim();
+                                context.push(
+                                  Uri(
+                                    path: '/recover-password',
+                                    queryParameters: email.isEmpty
+                                        ? null
+                                        : {'email': email},
+                                  ).toString(),
+                                );
+                              },
+                        child: const Text('Forgot password?'),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: _loading
                           ? null
-                          : () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => const PublicLeagueScreen(),
-                              ),
-                            ),
+                          : () => context.push(PublicRoutePaths.games),
                       icon: const Icon(Icons.visibility_outlined),
                       label: const Text('Browse scores & schedule as a guest'),
                     ),

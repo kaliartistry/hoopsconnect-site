@@ -13,6 +13,7 @@ import '../../providers/division_providers.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
+import '../../app/router/app_route_contract.dart';
 
 class AdminPanelScreen extends ConsumerWidget {
   const AdminPanelScreen({super.key});
@@ -20,9 +21,13 @@ class AdminPanelScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUser = ref.watch(currentUserProvider).value;
-    final hasLeagueManagement = currentUser?.canManageUsers ?? false;
-    final canManageAssociation =
-        currentUser?.canManageAssociation ?? false;
+    final requestedPreviewRole = ref.watch(rolePreviewProvider);
+    final canUseRolePreview = currentUser?.canManageUsers ?? false;
+    final previewRole = canUseRolePreview ? requestedPreviewRole : null;
+    bool displayAllows(String capability) => previewRole == null
+        ? currentUser?.hasCapability(capability) ?? false
+        : previewRoleShowsCapability(previewRole, capability);
+    final canManageAssociation = displayAllows('association.manage');
     final teamsAsync = ref.watch(teamsStreamProvider);
     final ackPostsAsync = ref.watch(postsRequiringAckProvider);
     final gamesAsync = ref.watch(gamesNeedingStatsProvider);
@@ -40,8 +45,7 @@ class AdminPanelScreen extends ConsumerWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.primaryLight,
-        border:
-            Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
         borderRadius: BorderRadius.circular(AppSizes.radiusMd),
       ),
       child: Row(
@@ -69,8 +73,7 @@ class AdminPanelScreen extends ConsumerWidget {
             ),
           ),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: AppColors.success,
               borderRadius: BorderRadius.circular(4),
@@ -90,33 +93,36 @@ class AdminPanelScreen extends ConsumerWidget {
 
     // Build menu item data for reuse in both layouts
     final sharedItems = <_AdminMenuItem>[
-      _AdminMenuItem(
-        icon: Icons.sports_score,
-        title: 'Enter Game Stats',
-        subtitle: '$gamesCount game${gamesCount == 1 ? '' : 's'} need stats',
-        bgColor: AppColors.statBg,
-        highlightColor: AppColors.statHighlight,
-        onTap: () => context.push('/admin/stats'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.leaderboard,
-        title: 'Season Leaderboard',
-        subtitle: 'View & manage rankings',
-        bgColor: AppColors.statBg,
-        highlightColor: AppColors.statHighlight,
-        onTap: () => context.go('/leaderboard'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.bolt,
-        title: 'Acknowledgment Tracker',
-        subtitle: '$ackCount post${ackCount == 1 ? '' : 's'} pending',
-        bgColor: AppColors.ackBg,
-        highlightColor: AppColors.ack,
-        onTap: () => context.push('/admin/ack-tracker'),
-      ),
+      if (displayAllows('stats.enter'))
+        _AdminMenuItem(
+          icon: Icons.sports_score,
+          title: 'Enter Game Stats',
+          subtitle: '$gamesCount game${gamesCount == 1 ? '' : 's'} need stats',
+          bgColor: AppColors.statBg,
+          highlightColor: AppColors.statHighlight,
+          onTap: () => context.push('/admin/stats'),
+        ),
+      if (displayAllows('association.read'))
+        _AdminMenuItem(
+          icon: Icons.leaderboard,
+          title: 'Season Leaderboard',
+          subtitle: 'View published rankings',
+          bgColor: AppColors.statBg,
+          highlightColor: AppColors.statHighlight,
+          onTap: () => context.go('/leaderboard'),
+        ),
+      if (displayAllows('posts.manage'))
+        _AdminMenuItem(
+          icon: Icons.bolt,
+          title: 'Acknowledgment Tracker',
+          subtitle: '$ackCount post${ackCount == 1 ? '' : 's'} pending',
+          bgColor: AppColors.ackBg,
+          highlightColor: AppColors.ack,
+          onTap: () => context.push('/admin/ack-tracker'),
+        ),
     ];
 
-    final superAdminItems = <_AdminMenuItem>[
+    final managementItems = <_AdminMenuItem>[
       if (canManageAssociation)
         _AdminMenuItem(
           icon: Icons.palette_outlined,
@@ -124,47 +130,53 @@ class AdminPanelScreen extends ConsumerWidget {
           subtitle: 'League identity and title sponsor',
           onTap: () => context.push('/admin/branding'),
         ),
-      _AdminMenuItem(
-        icon: Icons.groups,
-        title: 'Teams & Rosters',
-        subtitle: '$teamCount team${teamCount == 1 ? '' : 's'}',
-        onTap: () => context.push('/admin/teams'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.people,
-        title: 'User Management',
-        subtitle: 'Manage roles & permissions',
-        onTap: () => context.push('/admin/users'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.category,
-        title: 'Divisions / Leagues',
-        subtitle: 'Manage divisions',
-        onTap: () => context.push('/admin/divisions'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.vpn_key,
-        title: 'Invite Codes',
-        subtitle: 'Generate & manage codes',
-        onTap: () => context.push('/admin/invite-codes'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.schedule,
-        title: 'Game Schedule',
-        subtitle: 'Add games to calendar',
-        onTap: () => context.push('/admin/schedule'),
-      ),
-      _AdminMenuItem(
-        icon: Icons.campaign,
-        title: 'Push Announcement',
-        subtitle: 'Send to all teams',
-        onTap: () => context.push('/board/create', extra: {
-          'pinned': true,
-          'urgent': true,
-          'requiresAck': true,
-        }),
-      ),
+      if (displayAllows('teams.manage'))
+        _AdminMenuItem(
+          icon: Icons.groups,
+          title: 'Teams & Rosters',
+          subtitle: '$teamCount team${teamCount == 1 ? '' : 's'}',
+          onTap: () => context.push('/admin/teams'),
+        ),
+      if (displayAllows('members.manage'))
+        _AdminMenuItem(
+          icon: Icons.people,
+          title: 'User Management',
+          subtitle: 'Manage roles & permissions',
+          onTap: () => context.push('/admin/users'),
+        ),
+      if (displayAllows('association.manage'))
+        _AdminMenuItem(
+          icon: Icons.category,
+          title: 'Divisions / Leagues',
+          subtitle: 'Manage divisions',
+          onTap: () => context.push('/admin/divisions'),
+        ),
+      if (displayAllows('invites.manage'))
+        _AdminMenuItem(
+          icon: Icons.vpn_key,
+          title: 'Invite Codes',
+          subtitle: 'Generate & manage codes',
+          onTap: () => context.push('/admin/invite-codes'),
+        ),
+      if (displayAllows('schedule.manage'))
+        _AdminMenuItem(
+          icon: Icons.schedule,
+          title: 'Game Schedule',
+          subtitle: 'Add games to calendar',
+          onTap: () => context.push('/admin/schedule'),
+        ),
+      if (displayAllows('posts.manage'))
+        _AdminMenuItem(
+          icon: Icons.campaign,
+          title: 'Create Announcement',
+          subtitle: 'Prepare an internal league announcement',
+          onTap: () => context.push(
+            '/board/create',
+            extra: {'pinned': true, 'urgent': true, 'requiresAck': true},
+          ),
+        ),
     ];
+    final showManagementSection = managementItems.isNotEmpty;
 
     // Desktop: sidebar + main content area
     if (desktop) {
@@ -181,10 +193,13 @@ class AdminPanelScreen extends ConsumerWidget {
                   padding: const EdgeInsets.all(12),
                   children: [
                     seasonCard,
+                    if (canUseRolePreview) ...[
+                      const SizedBox(height: 12),
+                      const RolePreviewSelector(),
+                    ],
                     const SizedBox(height: 16),
-                    for (final item in sharedItems)
-                      _sidebarItem(item),
-                    if (hasLeagueManagement) ...[
+                    for (final item in sharedItems) _sidebarItem(item),
+                    if (showManagementSection) ...[
                       const Padding(
                         padding: EdgeInsets.only(top: 16, bottom: 8, left: 4),
                         child: Text(
@@ -197,18 +212,17 @@ class AdminPanelScreen extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      for (final item in superAdminItems)
-                        _sidebarItem(item),
+                      for (final item in managementItems) _sidebarItem(item),
+                    ],
+                    if (canManageAssociation) ...[
                       const SizedBox(height: 16),
                       OutlinedButton(
-                        onPressed: () =>
-                            _showArchiveSeasonDialog(context, ref),
+                        onPressed: () => _showArchiveSeasonDialog(context, ref),
                         child: const Text('Archive Season'),
                       ),
                       const SizedBox(height: 8),
                       ElevatedButton(
-                        onPressed: () =>
-                            _showNewSeasonDialog(context, ref),
+                        onPressed: () => _showNewSeasonDialog(context, ref),
                         child: const Text('New Season'),
                       ),
                     ],
@@ -261,9 +275,9 @@ class AdminPanelScreen extends ConsumerWidget {
         padding: const EdgeInsets.all(16),
         children: [
           seasonCard,
-          if (hasLeagueManagement) ...[
+          if (canUseRolePreview) ...[
             const SizedBox(height: 12),
-            _RolePreviewSelector(ref: ref),
+            const RolePreviewSelector(),
           ],
           const SizedBox(height: 16),
 
@@ -280,7 +294,7 @@ class AdminPanelScreen extends ConsumerWidget {
             ),
 
           // --- superAdmin-only items ---
-          if (hasLeagueManagement) ...[
+          if (showManagementSection) ...[
             const Padding(
               padding: EdgeInsets.only(top: 16, bottom: 8, left: 4),
               child: Text(
@@ -293,7 +307,7 @@ class AdminPanelScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            for (final item in superAdminItems)
+            for (final item in managementItems)
               _menuItem(
                 context,
                 item.icon,
@@ -306,7 +320,7 @@ class AdminPanelScreen extends ConsumerWidget {
           ],
 
           const SizedBox(height: 16),
-          if (hasLeagueManagement) ...[
+          if (canManageAssociation) ...[
             OutlinedButton(
               onPressed: () => _showArchiveSeasonDialog(context, ref),
               child: const Text('Archive Season'),
@@ -343,10 +357,7 @@ class AdminPanelScreen extends ConsumerWidget {
             color: item.highlightColor ?? AppColors.textPrimary,
           ),
         ),
-        subtitle: Text(
-          item.subtitle,
-          style: const TextStyle(fontSize: 11),
-        ),
+        subtitle: Text(item.subtitle, style: const TextStyle(fontSize: 11)),
         hoverColor: AppColors.primaryLight,
         onTap: item.onTap,
       ),
@@ -435,20 +446,16 @@ class AdminPanelScreen extends ConsumerWidget {
                 final db = FirebaseFirestore.instance;
                 final batch = db.batch();
 
-                batch.set(
-                  db.doc(FirestorePaths.season(assocId, seasonId)),
-                  {
-                    'name': name,
-                    'startDate': Timestamp.fromDate(startDate),
-                    'endDate': Timestamp.fromDate(endDate),
-                    'isActive': true,
-                  },
-                );
+                batch.set(db.doc(FirestorePaths.season(assocId, seasonId)), {
+                  'name': name,
+                  'startDate': Timestamp.fromDate(startDate),
+                  'endDate': Timestamp.fromDate(endDate),
+                  'isActive': true,
+                });
 
-                batch.update(
-                  db.doc(FirestorePaths.association(assocId)),
-                  {'currentSeasonId': seasonId},
-                );
+                batch.update(db.doc(FirestorePaths.association(assocId)), {
+                  'currentSeasonId': seasonId,
+                });
 
                 await batch.commit();
 
@@ -486,9 +493,7 @@ class AdminPanelScreen extends ConsumerWidget {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.urgent,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.urgent),
             onPressed: () async {
               final assocId = ref.read(currentAssociationIdProvider);
               if (assocId == null || seasonId == null) return;
@@ -539,10 +544,7 @@ class AdminPanelScreen extends ConsumerWidget {
             color: highlightColor ?? AppColors.textPrimary,
           ),
         ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(fontSize: 12),
-        ),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
         trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
         onTap: onTap,
       ),
@@ -570,13 +572,11 @@ class _AdminMenuItem {
   });
 }
 
-class _RolePreviewSelector extends StatelessWidget {
-  final WidgetRef ref;
-
-  const _RolePreviewSelector({required this.ref});
+class RolePreviewSelector extends ConsumerWidget {
+  const RolePreviewSelector({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final previewRole = ref.watch(rolePreviewProvider);
 
     return Container(
@@ -590,7 +590,11 @@ class _RolePreviewSelector extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.visibility, size: 18, color: AppColors.roleSuperAdmin),
+          const Icon(
+            Icons.visibility,
+            size: 18,
+            color: AppColors.roleSuperAdmin,
+          ),
           const SizedBox(width: 8),
           const Text(
             'Preview as:',
@@ -612,6 +616,7 @@ class _RolePreviewSelector extends StatelessWidget {
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<UserRole?>(
+                  key: const Key('role-preview-selector'),
                   value: previewRole,
                   isExpanded: true,
                   isDense: true,
@@ -626,14 +631,28 @@ class _RolePreviewSelector extends StatelessWidget {
                       child: Text('Your Role (Super Admin)'),
                     ),
                     ...UserRole.values
-                        .where((r) => r != UserRole.superAdmin)
-                        .map((role) => DropdownMenuItem<UserRole?>(
-                              value: role,
-                              child: Text(role.name.toUpperCase()),
-                            )),
+                        .where(
+                          (r) =>
+                              r != UserRole.superAdmin && r != UserRole.press,
+                        )
+                        .map(
+                          (role) => DropdownMenuItem<UserRole?>(
+                            value: role,
+                            child: Text(
+                              role == UserRole.media
+                                  ? 'MEDIA'
+                                  : role.name.toUpperCase(),
+                            ),
+                          ),
+                        ),
                   ],
                   onChanged: (role) {
                     ref.read(rolePreviewProvider.notifier).state = role;
+                    if (role != null) {
+                      context.go(
+                        role == UserRole.fan ? '/standings' : '/board',
+                      );
+                    }
                   },
                 ),
               ),

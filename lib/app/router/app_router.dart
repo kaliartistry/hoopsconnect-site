@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../models/user_model.dart';
 import '../../providers/auth_providers.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/auth/join_screen.dart';
 import '../../features/auth/access_blocked_screen.dart';
+import '../../features/auth/access_denied_screen.dart';
+import '../../features/auth/account_lifecycle_route_screen.dart';
+import '../../features/auth/password_recovery_screen.dart';
+import '../../features/public/public_league_screen.dart';
 import '../../features/board/board_screen.dart';
 import '../../features/board/create_post_screen.dart';
 import '../../features/stats/leaderboard_screen.dart';
@@ -37,6 +42,7 @@ import '../../features/press/game_summary_screen.dart';
 import '../../features/press/head_to_head_screen.dart';
 import '../../core/widgets/navigation_loading.dart';
 import '../app_shell.dart';
+import 'app_route_contract.dart';
 
 // Navigator keys — one per StatefulShellBranch to preserve tab state
 final _boardNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'board');
@@ -47,6 +53,89 @@ final _statsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'stats');
 final _scheduleNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'schedule');
 final _adminNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'admin');
 final _pressNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'press');
+final _assignedStatsNavigatorKey = GlobalKey<NavigatorState>(
+  debugLabel: 'assigned-stats',
+);
+
+/// Survives the provider-driven GoRouter rebuild that occurs when Auth changes.
+/// The value is same-app only and is rechecked against the active membership
+/// before it can be restored.
+final pendingRequestedLocationProvider = StateProvider<String?>((ref) => null);
+
+String? resolvePendingRequestedLocation({
+  required String? pendingLocation,
+  required Uri currentLocation,
+  required UserModel user,
+}) {
+  final safe = AppRouteContract.safeRequestedLocation(pendingLocation);
+  if (safe == null) return null;
+  final safeUri = Uri.parse(safe);
+  if (!AppRouteContract.permits(safeUri.path, user)) {
+    return AppRouteContract.landingFor(user);
+  }
+  return safeUri.toString() == currentLocation.toString() ? null : safe;
+}
+
+String? resolveAppRedirect({
+  required Uri location,
+  required String matchedLocation,
+  required AccountAccessStatus accessStatus,
+  required bool isLoggedIn,
+  required UserModel? user,
+}) {
+  final rule = AppRouteContract.ruleFor(matchedLocation);
+  final isPublic = rule?.session == AppRouteSession.public;
+  final isLifecycleRoute =
+      matchedLocation == AccountLifecycleRoutePaths.requestDeletion ||
+      matchedLocation == AccountLifecycleRoutePaths.deletionStatus ||
+      matchedLocation == AccountLifecycleRoutePaths.reconcileDeviceWork;
+
+  if (accessStatus == AccountAccessStatus.loading) {
+    if (isPublic) return null;
+    return matchedLocation == '/loading' ? null : '/loading';
+  }
+
+  if (!isLoggedIn) {
+    return isPublic ? null : AppRouteContract.loginFor(location);
+  }
+
+  if (accessStatus == AccountAccessStatus.pendingProvisioning) {
+    if (isPublic || isLifecycleRoute || matchedLocation == '/join') return null;
+    return '/join';
+  }
+
+  if (accessStatus == AccountAccessStatus.blocked) {
+    if (isPublic || isLifecycleRoute || matchedLocation == '/access-blocked') {
+      return null;
+    }
+    return '/access-blocked';
+  }
+
+  if (user == null) return '/access-blocked';
+
+  if (matchedLocation == '/login' ||
+      matchedLocation == '/join' ||
+      matchedLocation == '/loading' ||
+      matchedLocation == '/access-blocked') {
+    final requested = matchedLocation == '/login'
+        ? AppRouteContract.safeRequestedLocation(
+            location.queryParameters['from'],
+          )
+        : null;
+    if (requested != null &&
+        AppRouteContract.permits(Uri.parse(requested).path, user)) {
+      return requested;
+    }
+    return AppRouteContract.landingFor(user);
+  }
+
+  if (rule != null && !rule.permits(user)) {
+    if (matchedLocation == AppRouteContract.accessDenied) return null;
+    return AppRouteContract.deniedFor(location);
+  }
+
+  return null;
+}
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
@@ -56,88 +145,40 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/board',
     redirect: (context, state) {
-      // While auth is still loading, show the branded loading screen
-      if (accessStatus == AccountAccessStatus.loading) {
-        return state.matchedLocation == '/loading' ? null : '/loading';
-      }
-
+      final matchedRule = AppRouteContract.ruleFor(state.matchedLocation);
+      final isPublic = matchedRule?.session == AppRouteSession.public;
       final isLoggedIn = authState.valueOrNull != null;
-      final userDoc = currentUser.valueOrNull;
-      final isAuthRoute =
-          state.matchedLocation == '/login' || state.matchedLocation == '/join';
-      final isPublicRoute =
-          state.matchedLocation.startsWith('/legal') ||
-          state.matchedLocation == '/about';
-      final isLoadingRoute = state.matchedLocation == '/loading';
-      final isBlockedRoute = state.matchedLocation == '/access-blocked';
-
-      // Not logged in? Go to login (unless already on auth/public page)
-      if (!isLoggedIn) {
-        return (isAuthRoute || isPublicRoute) ? null : '/login';
+      if (!isLoggedIn &&
+          accessStatus != AccountAccessStatus.loading &&
+          !isPublic &&
+          state.matchedLocation != '/login') {
+        ref.read(pendingRequestedLocationProvider.notifier).state = state.uri
+            .toString();
       }
 
-      // An authenticated invitee may not have a profile until the callable
-      // redemption transaction succeeds. Keep that recovery path reachable.
-      if (accessStatus == AccountAccessStatus.pendingProvisioning) {
-        return state.matchedLocation == '/join' ? null : '/join';
+      final activeUser = currentUser.valueOrNull;
+      if (accessStatus == AccountAccessStatus.active &&
+          isLoggedIn &&
+          activeUser != null) {
+        final pending = ref.read(pendingRequestedLocationProvider);
+        if (pending != null) {
+          ref.read(pendingRequestedLocationProvider.notifier).state = null;
+          final restored = resolvePendingRequestedLocation(
+            pendingLocation: pending,
+            currentLocation: state.uri,
+            user: activeUser,
+          );
+          if (restored != null) return restored;
+        }
       }
 
-      if (accessStatus == AccountAccessStatus.blocked) {
-        return isBlockedRoute ? null : '/access-blocked';
-      }
-
-      // Logged in with a profile but on auth or loading page? Go to board
-      if (isLoggedIn && (isAuthRoute || isLoadingRoute)) {
-        return '/board';
-      }
-
-      // Role-based guards
-      if (userDoc != null) {
-        final loc = state.matchedLocation;
-        final isAdminRoute = loc.startsWith('/admin');
-
-        if (isAdminRoute && !userDoc.canAccessAdminPanel) {
-          return '/board';
-        }
-
-        if (loc == '/admin/users' && !userDoc.canManageUsers) {
-          return '/admin';
-        }
-        if (loc == '/admin/divisions' && !userDoc.canManageDivisions) {
-          return '/admin';
-        }
-        if (loc == '/admin/branding' && !userDoc.canManageAssociation) {
-          return '/admin';
-        }
-        if (loc == '/admin/invite-codes' && !userDoc.canManageInviteCodes) {
-          return '/admin';
-        }
-        if (loc.startsWith('/admin/schedule') && !userDoc.canManageSchedule) {
-          return '/admin';
-        }
-
-        // Stats entry routes require canEnterStats permission
-        if (loc == '/live-stats' && !userDoc.canEnterStats) {
-          return '/board';
-        }
-
-        // Press routes
-        if (loc == '/press' && !userDoc.canAccessPressTools) {
-          return '/board';
-        }
-
-        // Press summary: accessible to press users and admins who can approve stats
-        if (loc.startsWith('/press/summary/') &&
-            !userDoc.canAccessPressTools &&
-            !userDoc.canApproveStats) {
-          return '/board';
-        }
-
-        // Head-to-head: accessible to all signed-in users
-        // (was previously restricted to !isFan via canCompareHeadToHead)
-      }
-
-      return null;
+      return resolveAppRedirect(
+        location: state.uri,
+        matchedLocation: state.matchedLocation,
+        accessStatus: accessStatus,
+        isLoggedIn: isLoggedIn,
+        user: currentUser.valueOrNull,
+      );
     },
     routes: [
       // Loading / splash screen
@@ -152,6 +193,54 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/access-blocked',
         builder: (context, state) => const AccessBlockedScreen(),
+      ),
+      GoRoute(
+        path: AppRouteContract.accessDenied,
+        builder: (context, state) {
+          final user = ref.read(currentUserProvider).valueOrNull;
+          return AccessDeniedScreen(
+            startLocation: user == null
+                ? '/login'
+                : AppRouteContract.landingFor(user),
+          );
+        },
+      ),
+      GoRoute(
+        path: AppRouteContract.passwordRecovery,
+        builder: (context, state) => PasswordRecoveryScreen(
+          initialEmail: state.uri.queryParameters['email'],
+        ),
+      ),
+
+      GoRoute(
+        path: PublicRoutePaths.root,
+        redirect: (_, _) => PublicRoutePaths.games,
+      ),
+      GoRoute(
+        path: PublicRoutePaths.games,
+        builder: (context, state) => const PublicLeagueScreen(),
+      ),
+
+      GoRoute(
+        path: AccountLifecycleRoutePaths.requestDeletion,
+        builder: (context, state) => AccountLifecycleRouteScreen(
+          destination: AccountLifecycleDestination.request,
+          isSignedIn: authState.valueOrNull != null,
+        ),
+      ),
+      GoRoute(
+        path: AccountLifecycleRoutePaths.deletionStatus,
+        builder: (context, state) => AccountLifecycleRouteScreen(
+          destination: AccountLifecycleDestination.status,
+          isSignedIn: authState.valueOrNull != null,
+        ),
+      ),
+      GoRoute(
+        path: AccountLifecycleRoutePaths.reconcileDeviceWork,
+        builder: (context, state) => AccountLifecycleRouteScreen(
+          destination: AccountLifecycleDestination.reconcileDeviceWork,
+          isSignedIn: authState.valueOrNull != null,
+        ),
       ),
 
       // Info & Legal (no auth required for legal from login screen)
@@ -235,6 +324,34 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: '/press',
                 pageBuilder: (context, state) =>
                     const NoTransitionPage(child: PressDashboardScreen()),
+              ),
+            ],
+          ),
+
+          // Tab 6: assigned statistician work. This remains separate from the
+          // administrative panel so a statistician can reach assigned games
+          // without receiving any admin presentation or capability.
+          StatefulShellBranch(
+            navigatorKey: _assignedStatsNavigatorKey,
+            routes: [
+              GoRoute(
+                path: AppRouteContract.assignedStats,
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: StatGameSelectScreen()),
+                routes: [
+                  GoRoute(
+                    path: ':eventId',
+                    builder: (context, state) => StatEntryScreen(
+                      eventId: state.pathParameters['eventId']!,
+                    ),
+                  ),
+                  GoRoute(
+                    path: ':eventId/revision',
+                    builder: (context, state) => StatEntryScreen(
+                      eventId: state.pathParameters['eventId']!,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

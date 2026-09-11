@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/app_version.dart';
 import '../../core/constants/app_constants.dart';
 
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends ConsumerWidget {
   const AboutScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final version = ref.watch(appVersionInfoProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('About')),
       body: ListView(
@@ -49,13 +52,15 @@ class AboutScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          const Center(
+          Center(
             child: Text(
-              'Version 1.0.0',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppColors.textMuted,
+              version.when(
+                data: (value) => 'Version ${value.label}',
+                loading: () => 'Version loading…',
+                error: (_, _) => 'Version unavailable',
               ),
+              key: const Key('about-version'),
+              style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
             ),
           ),
           const SizedBox(height: 32),
@@ -65,7 +70,9 @@ class AboutScreen extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: AppColors.accentLight,
-              border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+              border: Border.all(
+                color: AppColors.accent.withValues(alpha: 0.3),
+              ),
               borderRadius: BorderRadius.circular(AppSizes.radiusMd),
             ),
             child: const Column(
@@ -118,16 +125,28 @@ class AboutScreen extends StatelessWidget {
 
           // Legal links
           ListTile(
-            leading: const Icon(Icons.description_outlined, color: AppColors.textSecondary),
+            leading: const Icon(
+              Icons.description_outlined,
+              color: AppColors.textSecondary,
+            ),
             title: const Text('Terms of Use'),
-            trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+            trailing: const Icon(
+              Icons.chevron_right,
+              color: AppColors.textMuted,
+            ),
             onTap: () => context.push('/legal/terms'),
           ),
           const Divider(height: 1),
           ListTile(
-            leading: const Icon(Icons.privacy_tip_outlined, color: AppColors.textSecondary),
+            leading: const Icon(
+              Icons.privacy_tip_outlined,
+              color: AppColors.textSecondary,
+            ),
             title: const Text('Privacy Policy'),
-            trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+            trailing: const Icon(
+              Icons.chevron_right,
+              color: AppColors.textMuted,
+            ),
             onTap: () => context.push('/legal/privacy'),
           ),
         ],

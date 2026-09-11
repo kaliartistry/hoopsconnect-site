@@ -220,9 +220,16 @@ void main() {
     await tester.tap(find.byKey(const Key('login-submit-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Incorrect password'), findsOneWidget);
     expect(
-      find.bySemanticsLabel('We could not sign you in. Incorrect password'),
+      find.text(
+        'The email or password was not recognized. Try again or reset your password.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel(
+        'We could not sign you in. The email or password was not recognized. Try again or reset your password.',
+      ),
       findsOneWidget,
     );
 
@@ -231,7 +238,7 @@ void main() {
       'corrected',
     );
     await tester.pump();
-    expect(find.text('Incorrect password'), findsNothing);
+    expect(find.textContaining('was not recognized'), findsNothing);
     semantics.dispose();
   });
 

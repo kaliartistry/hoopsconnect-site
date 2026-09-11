@@ -7,8 +7,10 @@ import '../core/widgets/responsive_layout.dart';
 import '../core/widgets/sponsor_banner.dart';
 import '../models/user_model.dart';
 import '../providers/connectivity_providers.dart';
+import '../providers/auth_providers.dart';
 import '../providers/division_providers.dart';
 import '../providers/role_preview_provider.dart';
+import 'router/app_route_contract.dart';
 
 /// Represents a tab entry with its branch index, icons, and label.
 class _TabEntry {
@@ -31,11 +33,13 @@ class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
 
   /// Build the list of visible tabs based on user permissions.
-  /// Branch indices: 0=Board, 1=Standings, 2=Stats, 3=Schedule, 4=Admin, 5=Press
+  /// Branch indices: 0=Board, 1=Standings, 2=Stats, 3=Schedule, 4=Admin,
+  /// 5=Media, 6=assigned statistician work.
   List<_TabEntry> _buildTabs({
     required bool showBoard,
     required bool showAdmin,
     required bool showPress,
+    required bool showAssignedStats,
   }) {
     final tabs = <_TabEntry>[];
 
@@ -91,6 +95,17 @@ class AppShell extends ConsumerWidget {
       );
     }
 
+    if (showAssignedStats) {
+      tabs.add(
+        const _TabEntry(
+          branchIndex: 6,
+          icon: Icons.assignment_outlined,
+          selectedIcon: Icons.assignment,
+          label: 'Game Stats',
+        ),
+      );
+    }
+
     if (showAdmin) {
       tabs.add(
         const _TabEntry(
@@ -107,12 +122,24 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final effectiveUser = ref.watch(effectiveUserProvider);
-    final previewRole = ref.watch(rolePreviewProvider);
+    final actualUser = ref.watch(currentUserProvider).valueOrNull;
+    final requestedPreviewRole = ref.watch(rolePreviewProvider);
+    final previewRole = actualUser?.canManageUsers == true
+        ? requestedPreviewRole
+        : null;
     final isPreviewActive = previewRole != null;
-    final showAdmin = effectiveUser?.canAccessAdminPanel ?? false;
-    final showPress = effectiveUser?.canAccessPressTools ?? false;
-    final showBoard = effectiveUser?.canViewBoard ?? true;
+    bool displayAllows(String capability) => previewRole == null
+        ? actualUser?.hasCapability(capability) ?? false
+        : previewRoleShowsCapability(previewRole, capability);
+    final showAdmin = previewRole == null
+        ? actualUser?.canAccessAdminPanel ?? false
+        : displayAllows('association.manage') ||
+              displayAllows('teams.manage') ||
+              displayAllows('posts.manage') ||
+              displayAllows('stats.approve');
+    final showPress = displayAllows('press.read');
+    final showBoard = displayAllows('posts.internal.read');
+    final showAssignedStats = displayAllows('stats.enter') && !showAdmin;
     final wide = isWideScreen(context);
     final desktop = isDesktop(context);
     final isOnline = ref.watch(isOnlineProvider).valueOrNull ?? true;
@@ -121,6 +148,7 @@ class AppShell extends ConsumerWidget {
       showBoard: showBoard,
       showAdmin: showAdmin,
       showPress: showPress,
+      showAssignedStats: showAssignedStats,
     );
 
     // Map the current branch index back to the displayed tab index
@@ -175,7 +203,7 @@ class AppShell extends ConsumerWidget {
                       children: [
                         OfflineBanner(isOffline: !isOnline),
                         if (isPreviewActive)
-                          _RolePreviewBanner(role: previewRole, ref: ref),
+                          RolePreviewBanner(role: previewRole),
                         if (showLeagueScope) const _LeagueScopeBar(),
                         const SponsorBanner(),
                       ],
@@ -206,6 +234,7 @@ class AppShell extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 OfflineBanner(isOffline: !isOnline),
+                if (isPreviewActive) RolePreviewBanner(role: previewRole),
                 if (showLeagueScope) const _LeagueScopeBar(),
                 const SponsorBanner(),
               ],
@@ -343,14 +372,13 @@ class _LeagueScopeBar extends ConsumerWidget {
   }
 }
 
-class _RolePreviewBanner extends StatelessWidget {
+class RolePreviewBanner extends ConsumerWidget {
   final UserRole role;
-  final WidgetRef ref;
 
-  const _RolePreviewBanner({required this.role, required this.ref});
+  const RolePreviewBanner({super.key, required this.role});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -368,17 +396,17 @@ class _RolePreviewBanner extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          GestureDetector(
-            onTap: () => ref.read(rolePreviewProvider.notifier).state = null,
+          TextButton(
+            key: const Key('exit-role-preview'),
+            onPressed: () =>
+                ref.read(rolePreviewProvider.notifier).state = null,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              minimumSize: const Size(48, 40),
+            ),
             child: const Text(
               'EXIT',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                decoration: TextDecoration.underline,
-                decorationColor: Colors.white,
-              ),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
           ),
         ],
