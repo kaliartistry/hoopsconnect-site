@@ -206,18 +206,23 @@ void main() {
     tester,
   ) async {
     final completer = Completer<void>();
+    final stream = StreamController<AssociationBrandingModel>();
+    addTearDown(stream.close);
     var saveCalls = 0;
     AssociationBrandingModel? saved;
     await _pumpScreen(
       tester,
       width: 768,
       height: 1500,
+      stream: stream.stream,
       onSave: (branding) {
         saveCalls += 1;
         saved = branding;
         return completer.future;
       },
     );
+    stream.add(AssociationBrandingModel.jba());
+    await tester.pump();
 
     await tester.enterText(
       _field('Full league or association name'),
@@ -235,10 +240,88 @@ void main() {
     expect(find.text('Saving branding…'), findsOneWidget);
     expect(saved?.leagueName, 'Jamaica Hoops League');
 
+    stream.add(saved!);
+    await tester.pump();
+    expect(find.text('Saved settings changed elsewhere'), findsNothing);
+
     completer.complete();
     await tester.pumpAndSettle();
     expect(find.text('Branding saved and confirmed'), findsOneWidget);
     expect(find.text('All branding changes are saved.'), findsOneWidget);
+  });
+
+  testWidgets('remote updates cannot replace the draft during an in-flight save', (
+    tester,
+  ) async {
+    final stream = StreamController<AssociationBrandingModel>();
+    final save = Completer<void>();
+    addTearDown(stream.close);
+    await _pumpScreen(
+      tester,
+      width: 768,
+      height: 1500,
+      stream: stream.stream,
+      onSave: (_) => save.future,
+    );
+    stream.add(AssociationBrandingModel.jba());
+    await tester.pump();
+
+    await tester.enterText(
+      _field('Full league or association name'),
+      'Locally saving name',
+    );
+    await tester.pump();
+    await tester.ensureVisible(_saveButton());
+    await tester.pumpAndSettle();
+    await tester.tap(_saveButton());
+    await tester.pump();
+
+    stream.add(
+      AssociationBrandingModel.jba().copyWith(
+        leagueName: 'Saved somewhere else',
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
+    expect(tester.widget<FilledButton>(_saveButton()).onPressed, isNull);
+    expect(
+      tester.widget<FilledButton>(
+        find.byKey(const Key('use-saved-branding')),
+      ).onPressed,
+      isNull,
+    );
+    expect(
+      tester.widget<TextButton>(
+        find.byKey(const Key('keep-branding-edits')),
+      ).onPressed,
+      isNull,
+    );
+
+    save.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
+    expect(
+      find.text('Resolve the saved-settings update before saving.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<TextFormField>(_field('Full league or association name'))
+          .controller!
+          .text,
+      'Locally saving name',
+    );
+
+    await tester.tap(find.byKey(const Key('use-saved-branding')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<TextFormField>(_field('Full league or association name'))
+          .controller!
+          .text,
+      'Saved somewhere else',
+    );
   });
 
   testWidgets('save failure maps the error without exposing raw details', (
@@ -310,6 +393,13 @@ void main() {
     await tester.tap(find.text('Keep editing'));
     await tester.pumpAndSettle();
     expect(find.text('Branding & Sponsor'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Discard changes'));
+    await tester.pumpAndSettle();
+    expect(find.text('Branding & Sponsor'), findsNothing);
+    expect(find.text('Open branding'), findsOneWidget);
   });
 }
 

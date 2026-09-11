@@ -64,6 +64,7 @@ class _AssociationBrandingScreenState
   bool _dirty = false;
   bool _hydrating = false;
   String? _saveError;
+  String? _inFlightFingerprint;
 
   List<TextEditingController> get _controllers => [
     _leagueName,
@@ -110,6 +111,17 @@ class _AssociationBrandingScreenState
     final fingerprint = _fingerprint(branding);
     if (_seenProviderFingerprint == fingerprint) return;
     _seenProviderFingerprint = fingerprint;
+
+    // Firestore listeners can observe this device's pending write before the
+    // save Future completes. That matching echo is confirmation, not a remote
+    // conflict.
+    if (_saving && fingerprint == _inFlightFingerprint) return;
+    if (_baseline != null && fingerprint == _fingerprint(_baseline!)) {
+      if (_pendingRemote?.associationId == branding.associationId) {
+        _pendingRemote = null;
+      }
+      return;
+    }
 
     if (_baseline == null || !_dirty) {
       _applyBranding(branding);
@@ -496,15 +508,19 @@ class _AssociationBrandingScreenState
                   if (!associationChanged)
                     TextButton(
                       key: const Key('keep-branding-edits'),
-                      onPressed: () => setState(() => _pendingRemote = null),
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _pendingRemote = null),
                       child: const Text('Keep my edits'),
                     ),
                   FilledButton.tonal(
                     key: const Key('use-saved-branding'),
-                    onPressed: () => setState(() {
-                      final pending = _pendingRemote!;
-                      _applyBranding(pending);
-                    }),
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() {
+                            final pending = _pendingRemote!;
+                            _applyBranding(pending);
+                          }),
                     child: const Text('Use saved version'),
                   ),
                 ],
@@ -647,9 +663,11 @@ class _AssociationBrandingScreenState
     if (!_formKey.currentState!.validate()) return;
 
     final updated = _draftBranding(_baseline!, safeColors: false);
+    final updatedFingerprint = _fingerprint(updated);
     setState(() {
       _saving = true;
       _saveError = null;
+      _inFlightFingerprint = updatedFingerprint;
     });
     try {
       final callback = widget.saveBranding;
@@ -662,7 +680,10 @@ class _AssociationBrandingScreenState
       setState(() {
         _baseline = updated;
         _dirty = false;
-        _pendingRemote = null;
+        if (_pendingRemote != null &&
+            _fingerprint(_pendingRemote!) == updatedFingerprint) {
+          _pendingRemote = null;
+        }
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Branding saved and confirmed')),
@@ -673,7 +694,12 @@ class _AssociationBrandingScreenState
         _saveError = 'Branding was not saved. ${ErrorMapper.map(error)}';
       });
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _inFlightFingerprint = null;
+        });
+      }
     }
   }
 
