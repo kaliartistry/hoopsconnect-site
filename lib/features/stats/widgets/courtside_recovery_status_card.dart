@@ -26,20 +26,11 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final presentation = _presentation(snapshot);
-    final attention = snapshot.operations
+    final attentionOperations = snapshot.operations
         .where(
           (operation) => operation.state == JournalDeliveryState.needsAttention,
         )
-        .firstOrNull;
-    final retryable =
-        attention?.retryClassification == RetryClassification.retrySameCommand
-        ? attention
-        : null;
-    final reauthRequired =
-        attention?.retryClassification ==
-            RetryClassification.refreshAuthenticationThenRetrySameCommand
-        ? attention
-        : null;
+        .toList(growable: false);
     return Semantics(
       container: true,
       liveRegion: true,
@@ -116,41 +107,20 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                if (retryable != null &&
-                    onRetryOperation != null &&
-                    snapshot.workspaceRecoveryState !=
-                        LocalWorkspaceRecoveryState.conflictBranch)
-                  FocusTraversalOrder(
-                    order: const NumericFocusOrder(2),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: FilledButton.icon(
-                        key: const ValueKey('courtside-retry-operation'),
-                        onPressed: () =>
-                            onRetryOperation!(retryable.operationId),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry preserved operation'),
-                      ),
-                    ),
+                for (final (index, operation)
+                    in attentionOperations.indexed) ...[
+                  const SizedBox(height: 8),
+                  _RecoveryOperationRow(
+                    operation: operation,
+                    focusOrder: 2 + index.toDouble(),
+                    actionsEnabled:
+                        snapshot.workspaceRecoveryState !=
+                        LocalWorkspaceRecoveryState.conflictBranch,
+                    onRetryOperation: onRetryOperation,
+                    onReauthenticateAndRetryOperation:
+                        onReauthenticateAndRetryOperation,
                   ),
-                if (reauthRequired != null &&
-                    onReauthenticateAndRetryOperation != null)
-                  FocusTraversalOrder(
-                    order: const NumericFocusOrder(2),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: FilledButton.icon(
-                        key: const ValueKey(
-                          'courtside-reauthenticate-operation',
-                        ),
-                        onPressed: () => onReauthenticateAndRetryOperation!(
-                          reauthRequired.operationId,
-                        ),
-                        icon: const Icon(Icons.lock_reset_outlined),
-                        label: const Text('Sign in again, then retry'),
-                      ),
-                    ),
-                  ),
+                ],
               ],
             ),
           ),
@@ -159,6 +129,135 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
     );
   }
 }
+
+class _RecoveryOperationRow extends StatelessWidget {
+  const _RecoveryOperationRow({
+    required this.operation,
+    required this.focusOrder,
+    required this.actionsEnabled,
+    required this.onRetryOperation,
+    required this.onReauthenticateAndRetryOperation,
+  });
+
+  final CourtsideOperationStatus operation;
+  final double focusOrder;
+  final bool actionsEnabled;
+  final ValueChanged<String>? onRetryOperation;
+  final ValueChanged<String>? onReauthenticateAndRetryOperation;
+
+  @override
+  Widget build(BuildContext context) {
+    final disposition = _disposition(operation.retryClassification);
+    final canRetry =
+        actionsEnabled &&
+        operation.retryClassification == RetryClassification.retrySameCommand &&
+        onRetryOperation != null;
+    final canReauthenticate =
+        actionsEnabled &&
+        operation.retryClassification ==
+            RetryClassification.refreshAuthenticationThenRetrySameCommand &&
+        onReauthenticateAndRetryOperation != null;
+    return Semantics(
+      container: true,
+      label:
+          'Saved operation ${operation.localSequence + 1}. '
+          '${disposition.title}. ${disposition.message}',
+      child: DecoratedBox(
+        key: ValueKey('courtside-recovery-operation-${operation.operationId}'),
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Saved operation ${operation.localSequence + 1}: '
+                '${disposition.title}',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 4),
+              Text(disposition.message),
+              if (canRetry) ...[
+                const SizedBox(height: 8),
+                FocusTraversalOrder(
+                  order: NumericFocusOrder(focusOrder),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.icon(
+                      key: ValueKey(
+                        'courtside-retry-operation-${operation.operationId}',
+                      ),
+                      onPressed: () => onRetryOperation!(operation.operationId),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry preserved operation'),
+                    ),
+                  ),
+                ),
+              ],
+              if (canReauthenticate) ...[
+                const SizedBox(height: 8),
+                FocusTraversalOrder(
+                  order: NumericFocusOrder(focusOrder),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.icon(
+                      key: ValueKey(
+                        'courtside-reauthenticate-operation-'
+                        '${operation.operationId}',
+                      ),
+                      onPressed: () => onReauthenticateAndRetryOperation!(
+                        operation.operationId,
+                      ),
+                      icon: const Icon(Icons.lock_reset_outlined),
+                      label: const Text('Sign in again, then retry'),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+({String title, String message}) _disposition(
+  RetryClassification? classification,
+) => switch (classification) {
+  RetryClassification.retrySameCommand => (
+    title: 'Safe unchanged retry',
+    message: 'This exact saved command can be sent again unchanged.',
+  ),
+  RetryClassification.refreshAuthenticationThenRetrySameCommand => (
+    title: 'Account verification required',
+    message:
+        'Sign in again and verify this account before retrying the unchanged saved command.',
+  ),
+  RetryClassification.refreshStateThenCreateNewCommand => (
+    title: 'Refresh game state',
+    message:
+        'Refresh assignment and revision state, then create a new command. This saved command will not be resent.',
+  ),
+  RetryClassification.operatorResolutionRequired => (
+    title: 'Operator resolution required',
+    message:
+        'Assignment or conflict ownership must be resolved. This saved command will not be resent directly.',
+  ),
+  RetryClassification.never => (
+    title: 'Permanent rejection',
+    message:
+        'This saved command cannot be retried. It remains available for review.',
+  ),
+  null => (
+    title: 'Review required',
+    message:
+        'No safe retry policy was recorded. This saved command remains on this device.',
+  ),
+};
 
 ({String title, String message, IconData icon}) _presentation(
   CourtsideRecoverySnapshot snapshot,
@@ -247,8 +346,16 @@ class CourtsideRecoveryStatusCard extends StatelessWidget {
         .where(
           (operation) => operation.state == JournalDeliveryState.needsAttention,
         )
-        .firstOrNull;
-    final policy = attention?.retryClassification;
+        .toList(growable: false);
+    if (attention.length > 1) {
+      return (
+        title: '${attention.length} saved operations need attention',
+        message:
+            'Review every operation below. Each preserved command has its own safe disposition.',
+        icon: Icons.cloud_off_outlined,
+      );
+    }
+    final policy = attention.firstOrNull?.retryClassification;
     if (policy ==
         RetryClassification.refreshAuthenticationThenRetrySameCommand) {
       return (

@@ -501,6 +501,7 @@ final class LocalJournalDelivery {
   final Fact<String> lastErrorCode;
   final Fact<String> pauseReason;
   final Fact<OperationReceiptContract> serverReceipt;
+  final LocalCandidateRevisionReceiptEnvelope? candidateRevisionReceipt;
   final RetryPolicyMetadata retryPolicy;
 
   LocalJournalDelivery({
@@ -511,6 +512,7 @@ final class LocalJournalDelivery {
     required this.lastErrorCode,
     required this.pauseReason,
     required this.serverReceipt,
+    this.candidateRevisionReceipt,
     required this.retryPolicy,
   }) {
     LocalJournalValidation.requireId('operationId', operationId);
@@ -565,6 +567,17 @@ final class LocalJournalDelivery {
     }
     final receipt = serverReceipt.valueOrNull;
     if (receipt != null) operationReceiptToMap(receipt);
+    final revisionReceipt = candidateRevisionReceipt;
+    if (revisionReceipt != null) {
+      if (state != JournalDeliveryState.accepted ||
+          receipt == null ||
+          !_sameOperationReceipt(receipt, revisionReceipt.operationReceipt)) {
+        throw LocalJournalException(
+          LocalJournalErrorCode.receiptMismatch,
+          'Candidate revision receipt must exactly wrap the accepted receipt',
+        );
+      }
+    }
   }
 
   factory LocalJournalDelivery.savedOnDevice(String operationId) =>
@@ -580,6 +593,8 @@ final class LocalJournalDelivery {
       );
 
   Map<String, Object?> toContractMap() => {
+    if (candidateRevisionReceipt case final receipt?)
+      'candidateRevisionReceipt': receipt.toContractMap(),
     'lastErrorCode': lastErrorCode.toContractMap((value) => value),
     'nextAttemptAt': nextAttemptAt.toContractMap((value) => value),
     'operationId': operationId,
@@ -593,7 +608,7 @@ final class LocalJournalDelivery {
   };
 
   factory LocalJournalDelivery.fromContractMap(Map<String, Object?> map) {
-    LocalJournalValidation.exactKeys(map, const {
+    const requiredKeys = {
       'operationId',
       'state',
       'retryCount',
@@ -602,12 +617,25 @@ final class LocalJournalDelivery {
       'pauseReason',
       'serverReceipt',
       'retryPolicy',
-    });
+    };
+    final actualKeys = map.keys.toSet();
+    if (!actualKeys.containsAll(requiredKeys) ||
+        actualKeys.difference(requiredKeys).difference(const {
+          'candidateRevisionReceipt',
+        }).isNotEmpty) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.invalidArgument,
+        'Delivery contains missing or unsupported fields',
+      );
+    }
     final state = JournalDeliveryState.values
         .where((value) => value.name == map['state'])
         .firstOrNull;
     final retry = map['retryPolicy'];
-    if (state == null || retry is! Map) {
+    final rawRevisionReceipt = map['candidateRevisionReceipt'];
+    if (state == null ||
+        retry is! Map ||
+        (rawRevisionReceipt != null && rawRevisionReceipt is! Map)) {
       throw LocalJournalException(
         LocalJournalErrorCode.invalidArgument,
         'Delivery state or retry policy is invalid',
@@ -633,6 +661,11 @@ final class LocalJournalDelivery {
         map['pauseReason'],
       ),
       serverReceipt: _decodeReceiptFact(map['serverReceipt']),
+      candidateRevisionReceipt: rawRevisionReceipt == null
+          ? null
+          : LocalCandidateRevisionReceiptEnvelope.fromContractMap(
+              Map<String, Object?>.from(rawRevisionReceipt as Map),
+            ),
       retryPolicy: RetryPolicyMetadata.fromContractMap(
         Map<String, Object?>.from(retry),
       ),
@@ -713,6 +746,72 @@ final class LocalCandidateRevisionIdentity {
     );
   }
 }
+
+/// Durable server-receipt evidence for an exact prepared candidate revision.
+///
+/// [OperationReceiptContract] deliberately remains feature-neutral. This
+/// envelope prevents an otherwise valid receipt for revision N from proving
+/// acceptance of revision N+1 after restart, pruning, or recovery export.
+final class LocalCandidateRevisionReceiptEnvelope {
+  LocalCandidateRevisionReceiptEnvelope({
+    required this.operationReceipt,
+    required this.candidateRevision,
+    required this.preparationPackageChecksum,
+  }) {
+    operationReceiptToMap(operationReceipt);
+    LocalJournalValidation.requireHash(
+      'preparationPackageChecksum',
+      preparationPackageChecksum,
+    );
+  }
+
+  final OperationReceiptContract operationReceipt;
+  final LocalCandidateRevisionIdentity candidateRevision;
+  final String preparationPackageChecksum;
+
+  Map<String, Object?> toContractMap() => {
+    'candidateRevision': candidateRevision.toContractMap(),
+    'operationReceipt': operationReceiptToMap(operationReceipt),
+    'preparationPackageChecksum': preparationPackageChecksum,
+  };
+
+  factory LocalCandidateRevisionReceiptEnvelope.fromContractMap(
+    Map<String, Object?> map,
+  ) {
+    LocalJournalValidation.exactKeys(map, const {
+      'candidateRevision',
+      'operationReceipt',
+      'preparationPackageChecksum',
+    });
+    final rawRevision = map['candidateRevision'];
+    final rawReceipt = map['operationReceipt'];
+    if (rawRevision is! Map || rawReceipt is! Map) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.receiptMismatch,
+        'Candidate revision receipt envelope is malformed',
+      );
+    }
+    return LocalCandidateRevisionReceiptEnvelope(
+      operationReceipt: operationReceiptFromMap(
+        Map<String, Object?>.from(rawReceipt),
+      ),
+      candidateRevision: LocalCandidateRevisionIdentity.fromContractMap(
+        Map<String, Object?>.from(rawRevision),
+      ),
+      preparationPackageChecksum: LocalJournalValidation.requireHash(
+        'preparationPackageChecksum',
+        map['preparationPackageChecksum'],
+      ),
+    );
+  }
+}
+
+bool _sameOperationReceipt(
+  OperationReceiptContract left,
+  OperationReceiptContract right,
+) =>
+    OfficialStatCanonicalEncoding.encode(operationReceiptToMap(left)) ==
+    OfficialStatCanonicalEncoding.encode(operationReceiptToMap(right));
 
 bool _sameGameScope(GameScope left, GameScope right) =>
     OfficialStatCanonicalEncoding.encode(left.toContractMap()) ==

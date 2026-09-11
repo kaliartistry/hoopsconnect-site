@@ -75,6 +75,42 @@ CourtsideRecoverySnapshot _snapshot({
   );
 }
 
+CourtsideRecoverySnapshot _mixedAttentionSnapshot() {
+  final base = _snapshot(
+    phase: CourtsideRecoveryPhase.needsAttention,
+    includeOperation: false,
+  );
+  return CourtsideRecoverySnapshot(
+    phase: CourtsideRecoveryPhase.needsAttention,
+    operations: const [
+      CourtsideOperationStatus(
+        operationId: 'operation_operator',
+        commandId: 'command_operator',
+        localSequence: 0,
+        state: JournalDeliveryState.needsAttention,
+        responseUnknown: false,
+        lastErrorCode: 'assignmentRequired',
+        pauseReason: 'operatorResolutionRequired',
+      ),
+      CourtsideOperationStatus(
+        operationId: 'operation_reauth',
+        commandId: 'command_reauth',
+        localSequence: 1,
+        state: JournalDeliveryState.needsAttention,
+        responseUnknown: false,
+        lastErrorCode: 'unauthenticated',
+        pauseReason: 'authenticationRequired',
+      ),
+    ],
+    captureAvailability: base.captureAvailability,
+    workspaceRecoveryState: base.workspaceRecoveryState,
+    workspaceSubmissionState: base.workspaceSubmissionState,
+    boundRevision: base.boundRevision,
+    submissionEvidence: base.submissionEvidence,
+    lastFailureCode: 'assignmentRequired',
+  );
+}
+
 Widget _app({
   required CourtsideRecoverySnapshot snapshot,
   VoidCallback? onRecover,
@@ -190,7 +226,7 @@ void main() {
     expect(find.text('Writer conflict needs attention'), findsOneWidget);
     expect(find.textContaining('branch is preserved'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('courtside-retry-operation')),
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
       findsNothing,
     );
   });
@@ -239,11 +275,13 @@ void main() {
     );
     expect(find.text('Sign in again to retry'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('courtside-reauthenticate-operation')),
+      find.byKey(
+        const ValueKey('courtside-reauthenticate-operation-operation_1'),
+      ),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('courtside-retry-operation')),
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
       findsNothing,
     );
 
@@ -258,9 +296,9 @@ void main() {
       ),
     );
     expect(find.text('Game state changed'), findsOneWidget);
-    expect(find.textContaining('will not be resent'), findsOneWidget);
+    expect(find.textContaining('will not be resent'), findsWidgets);
     expect(
-      find.byKey(const ValueKey('courtside-retry-operation')),
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
       findsNothing,
     );
 
@@ -276,8 +314,61 @@ void main() {
     );
     expect(find.text('Operator resolution required'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('courtside-retry-operation')),
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
       findsNothing,
     );
   });
+
+  testWidgets(
+    'mixed recovery exposes every disposition and only the safe action',
+    (tester) async {
+      String? reauthenticatedOperation;
+      await tester.pumpWidget(
+        _app(
+          snapshot: _mixedAttentionSnapshot(),
+          onRetry: (_) => fail('operator resolution must not retry directly'),
+          onReauthenticate: (operationId) =>
+              reauthenticatedOperation = operationId,
+        ),
+      );
+
+      expect(find.text('2 saved operations need attention'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('courtside-recovery-operation-operation_operator'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('courtside-recovery-operation-operation_reauth'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Operator resolution required'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Account verification required'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('will not be resent directly'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('courtside-retry-operation-operation_operator'),
+        ),
+        findsNothing,
+      );
+      final reauth = find.byKey(
+        const ValueKey('courtside-reauthenticate-operation-operation_reauth'),
+      );
+      expect(reauth, findsOneWidget);
+      await tester.tap(reauth);
+      expect(reauthenticatedOperation, 'operation_reauth');
+    },
+  );
 }

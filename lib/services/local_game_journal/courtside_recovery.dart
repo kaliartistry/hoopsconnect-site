@@ -581,9 +581,9 @@ final class CourtsideRecoveryOrchestrator {
       if (result is CourtsideDeliveryAccepted) {
         try {
           _requireExactRevisionReceipt(result.receipt);
-          await repository.storeServerReceipt(
+          await repository.storeCandidateRevisionServerReceipt(
             material.partition,
-            result.receipt.operationReceipt,
+            _durableReceipt(result.receipt),
           );
         } on LocalJournalException catch (error) {
           if (error.code != LocalJournalErrorCode.receiptMismatch) rethrow;
@@ -651,9 +651,9 @@ final class CourtsideRecoveryOrchestrator {
   ) => _exclusive(() async {
     _requireInitialized();
     _requireExactRevisionReceipt(receipt);
-    await repository.storeServerReceipt(
+    await repository.storeCandidateRevisionServerReceipt(
       material.partition,
-      receipt.operationReceipt,
+      _durableReceipt(receipt),
     );
     await _finalizeSubmittedWorkspaceIfReceipted(
       receipt.operationReceipt.acceptedAt,
@@ -848,6 +848,14 @@ final class CourtsideRecoveryOrchestrator {
       );
     }
   }
+
+  LocalCandidateRevisionReceiptEnvelope _durableReceipt(
+    CourtsideRevisionReceipt receipt,
+  ) => LocalCandidateRevisionReceiptEnvelope(
+    operationReceipt: receipt.operationReceipt,
+    candidateRevision: receipt.candidateRevision,
+    preparationPackageChecksum: receipt.preparationPackageChecksum,
+  );
 
   Future<void> _finalizeSubmittedWorkspaceIfReceipted(
     DateTime observedAt,

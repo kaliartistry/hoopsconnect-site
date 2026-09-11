@@ -973,6 +973,134 @@ void main() {
   );
 
   test(
+    'restart rejects forged N+1 checkpoint backed by pruned N receipt',
+    () async {
+      final store = FaultInjectingMemoryStore();
+      final revisionNMaterial = _material();
+      final firstRepository = _repository(store);
+      final first = CourtsideRecoveryOrchestrator(
+        repository: firstRepository,
+        material: revisionNMaterial,
+        serverAdapter: _ServerAdapter(
+          (request) => CourtsideDeliveryAccepted(_receipt(request)),
+        ),
+      );
+      await first.initialize();
+      await first.capture(_command(0));
+      await first.queueRevisionSubmission(
+        observedAt: DateTime.utc(2026, 9, 11, 14, 2),
+      );
+      final archive = await firstRepository.exportRecoveryArchive(
+        revisionNMaterial.partition,
+        archiveId: 'revision_n_archive',
+        manifestId: 'revision_n_manifest',
+        exportedAt: DateTime.utc(2026, 9, 11, 14, 3),
+      );
+      await firstRepository.confirmRecoveryArchivePersisted(
+        revisionNMaterial.partition,
+        archiveId: archive.archiveId,
+        checksum: archive.checksum,
+        confirmation: 'recoveryArchivePersisted',
+      );
+      final prunedCheckpoint = await firstRepository.pruneAcknowledged(
+        revisionNMaterial.partition,
+        throughSequence: 0,
+        recoveryArchiveId: archive.archiveId,
+        recoveryArchiveChecksum: archive.checksum,
+        prunedAt: DateTime.utc(2026, 9, 11, 14, 4),
+      );
+      await first.closeForSignOut();
+
+      final revisionNPlusOneMaterial = _material(
+        candidateRevision: _revision(
+          number: 2,
+          revisionId: 'revision_2',
+          revisionHash: _hashA,
+        ),
+      );
+      final revisionNPlusOnePackage = revisionNPlusOneMaterial.buildPackage();
+      final forgedEvidence =
+          LocalCandidateRevisionSubmissionEvidence.queued(
+            revision: revisionNPlusOnePackage.candidateRevision!,
+            preparationPackageChecksum: revisionNPlusOnePackage.packageChecksum,
+            submittedThroughSequence:
+                prunedCheckpoint.lastLocalSequence.valueOrNull!,
+            submittedThroughHash:
+                prunedCheckpoint.lastOperationHash.valueOrNull!,
+            observedAt: DateTime.utc(2026, 9, 11, 14, 5),
+          ).accepted(
+            acceptedThroughSequence:
+                prunedCheckpoint.acceptedThroughSequence.valueOrNull!,
+            acceptedJournalHead:
+                prunedCheckpoint.acceptedJournalHead.valueOrNull!,
+            acceptedJournalHash:
+                prunedCheckpoint.acceptedJournalHash.valueOrNull!,
+            observedAt: DateTime.utc(2026, 9, 11, 14, 6),
+          );
+      final forgedCheckpointMap = prunedCheckpoint.toContractMap()
+        ..['preparationPackageChecksum'] = Fact<String>.known(
+          revisionNPlusOnePackage.packageChecksum,
+        ).toContractMap((value) => value)
+        ..['candidateRevisionSubmissionEvidence'] = forgedEvidence
+            .toContractMap()
+        ..['updatedAt'] = DateTime.utc(2026, 9, 11, 14, 6);
+      final forgedCheckpoint = LocalWorkspaceCheckpoint.fromContractMap(
+        LocalJournalRecordCodec.decode(
+          LocalJournalRecordCodec.encode(forgedCheckpointMap),
+        ),
+      );
+      final packageKey = store.unsafeSnapshot().keys.singleWhere(
+        (key) => key.startsWith('package/'),
+      );
+      final checkpointKey = store.unsafeSnapshot().keys.singleWhere(
+        (key) => key.startsWith('checkpoint/'),
+      );
+      final workspaceIndexKey = store.unsafeSnapshot().keys.singleWhere(
+        (key) => key.startsWith('workspaceIndex/'),
+      );
+      final workspaceIndex = LocalJournalRecordCodec.decode(
+        store.unsafeRead(workspaceIndexKey)!,
+      )..['packageChecksum'] = revisionNPlusOnePackage.packageChecksum;
+      store.unsafeWrite(
+        packageKey,
+        LocalJournalRecordCodec.encode(revisionNPlusOnePackage.toContractMap()),
+      );
+      store.unsafeWrite(
+        checkpointKey,
+        LocalJournalRecordCodec.encode(forgedCheckpoint.toContractMap()),
+      );
+      store.unsafeWrite(
+        workspaceIndexKey,
+        LocalJournalRecordCodec.encode(workspaceIndex),
+      );
+
+      final restored = CourtsideRecoveryOrchestrator(
+        repository: _repository(store),
+        material: revisionNPlusOneMaterial,
+        serverAdapter: _ServerAdapter(
+          (request) => CourtsideDeliveryAccepted(_receipt(request)),
+        ),
+      );
+      await expectLater(
+        restored.initialize(),
+        throwsA(
+          isA<LocalJournalException>().having(
+            (error) => error.code,
+            'code',
+            anyOf(
+              LocalJournalErrorCode.receiptMismatch,
+              LocalJournalErrorCode.mutatedRecord,
+            ),
+          ),
+        ),
+      );
+      expect(restored.snapshot.phase, CourtsideRecoveryPhase.needsAttention);
+      expect(restored.snapshot.revisionDeliveryAccepted, isFalse);
+      expect(restored.snapshot.canCapture, isFalse);
+    },
+  );
+
+  test(
     'manual retry requires exact reauthentication and rejects stale-state replay',
     () async {
       var calls = 0;

@@ -708,7 +708,22 @@ final class LocalGameJournalRepository {
   Future<LocalJournalEntry> storeServerReceipt(
     JournalPartition partition,
     OperationReceiptContract receipt,
-  ) async {
+  ) => _storeServerReceipt(partition, receipt);
+
+  Future<LocalJournalEntry> storeCandidateRevisionServerReceipt(
+    JournalPartition partition,
+    LocalCandidateRevisionReceiptEnvelope receipt,
+  ) => _storeServerReceipt(
+    partition,
+    receipt.operationReceipt,
+    candidateRevisionReceipt: receipt,
+  );
+
+  Future<LocalJournalEntry> _storeServerReceipt(
+    JournalPartition partition,
+    OperationReceiptContract receipt, {
+    LocalCandidateRevisionReceiptEnvelope? candidateRevisionReceipt,
+  }) async {
     _requireReady();
     _requirePartitionAccess(partition);
     return _guardedTransaction(
@@ -717,7 +732,16 @@ final class LocalGameJournalRepository {
         // Receipt advancement can cross multiple already-accepted entries.
         // Verify the whole workspace before the first write so a cached caller
         // cannot amplify forged out-of-order delivery evidence.
-        await _requireVerifiedWorkspaceSnapshot(transaction, partition);
+        final snapshot = await _requireVerifiedWorkspaceSnapshot(
+          transaction,
+          partition,
+        );
+        requireLocalCandidateRevisionReceiptBinding(
+          preparedPackage: snapshot.preparedPackage,
+          receipt: receipt,
+          candidateRevisionReceipt: candidateRevisionReceipt,
+          errorCode: LocalJournalErrorCode.receiptMismatch,
+        );
         final entry = await _requireEntryByOperationId(
           transaction,
           partition,
@@ -755,6 +779,7 @@ final class LocalGameJournalRepository {
           lastErrorCode: const Fact.notApplicable(reasonCode: 'accepted'),
           pauseReason: const Fact.notApplicable(reasonCode: 'not_paused'),
           serverReceipt: Fact.known(receipt),
+          candidateRevisionReceipt: candidateRevisionReceipt,
           retryPolicy: entry.delivery.retryPolicy,
         );
         final accepted = LocalJournalEntry(
@@ -767,7 +792,10 @@ final class LocalGameJournalRepository {
         // transaction; pruning cannot proceed without this independent receipt.
         await transaction.put(
           receiptKey,
-          LocalJournalRecordCodec.encode(operationReceiptToMap(receipt)),
+          LocalJournalRecordCodec.encode(
+            candidateRevisionReceipt?.toContractMap() ??
+                operationReceiptToMap(receipt),
+          ),
         );
         await transaction.put(
           _entryKey(partition, entry.operation.localSequence),
@@ -1768,9 +1796,11 @@ final class LocalGameJournalRepository {
           'Pruned operation is missing its durable receipt tombstone',
         );
       }
-      final receipt = operationReceiptFromMap(
+      final package = await _requirePackage(transaction, operation.partition);
+      final receipt = _decodeDurableReceiptEvidence(
         LocalJournalRecordCodec.decode(receiptValue),
-      );
+        package,
+      ).receipt;
       _validateReceipt(operation, receipt);
       return LocalAppendResult(
         entry: null,
@@ -2619,8 +2649,16 @@ final class LocalGameJournalRepository {
             'Accepted operation is missing durable receipt evidence',
           );
         }
-        final durableReceipt = operationReceiptFromMap(
+        final durableEvidence = _decodeDurableReceiptEvidence(
           LocalJournalRecordCodec.decode(receiptValue),
+          package,
+        );
+        final durableReceipt = durableEvidence.receipt;
+        requireLocalCandidateRevisionReceiptBinding(
+          preparedPackage: package,
+          receipt: embeddedReceipt,
+          candidateRevisionReceipt: entry.delivery.candidateRevisionReceipt,
+          errorCode: LocalJournalErrorCode.receiptMismatch,
         );
         if (OfficialStatCanonicalEncoding.encode(
               operationReceiptToMap(embeddedReceipt),
@@ -2651,9 +2689,10 @@ final class LocalGameJournalRepository {
         'Pruned operation is missing its durable receipt tombstone',
       );
     }
-    final receipt = operationReceiptFromMap(
+    final receipt = _decodeDurableReceiptEvidence(
       LocalJournalRecordCodec.decode(receiptValue),
-    );
+      package,
+    ).receipt;
     if (receipt.operationId != operationId ||
         receipt.commandId != commandId ||
         receipt.requestHash != index['requestHash'] ||
@@ -2719,9 +2758,10 @@ final class LocalGameJournalRepository {
           'Referenced pruned operation is missing its durable receipt',
         );
       }
-      final receipt = operationReceiptFromMap(
+      final receipt = _decodeDurableReceiptEvidence(
         LocalJournalRecordCodec.decode(receiptValue),
-      );
+        preparedPackage,
+      ).receipt;
       if (receipt.operationId != operationId ||
           receipt.commandId != commandId ||
           receipt.requestHash != index['requestHash'] ||
@@ -2795,6 +2835,7 @@ final class LocalGameJournalRepository {
       transaction,
       partition,
       checkpoint,
+      package,
     );
     final expectedReceipts = <String, OperationReceiptContract>{
       for (final evidence in prunedEvidence)
@@ -2860,6 +2901,12 @@ final class LocalGameJournalRepository {
         _validateIndex(operation, row.key, commandIndex);
         final retainedReceipt = entry.delivery.serverReceipt.valueOrNull;
         if (retainedReceipt != null) {
+          requireLocalCandidateRevisionReceiptBinding(
+            preparedPackage: package,
+            receipt: retainedReceipt,
+            candidateRevisionReceipt: entry.delivery.candidateRevisionReceipt,
+            errorCode: LocalJournalErrorCode.receiptMismatch,
+          );
           if (expectedReceipts.containsKey(operation.operationId)) {
             throw LocalJournalException(
               LocalJournalErrorCode.receiptMismatch,
@@ -2886,7 +2933,12 @@ final class LocalGameJournalRepository {
         'Checkpoint does not match persisted operation records',
       );
     }
-    await _requireExactReceiptRows(transaction, partition, expectedReceipts);
+    await _requireExactReceiptRows(
+      transaction,
+      partition,
+      package,
+      expectedReceipts,
+    );
     requireLocalJournalAcceptedCheckpointBinding(
       checkpoint: checkpoint,
       retainedEntries: retainedEntries,
@@ -2906,6 +2958,7 @@ final class LocalGameJournalRepository {
     LocalJournalStoreTransaction transaction,
     JournalPartition partition,
     LocalWorkspaceCheckpoint checkpoint,
+    PreparedGameRecoveryPackage package,
   ) async {
     final boundary = checkpoint.prunedThroughSequence.valueOrNull ?? -1;
     final terminalHash = checkpoint.prunedThroughHash.valueOrNull;
@@ -3038,9 +3091,11 @@ final class LocalGameJournalRepository {
             'Pruned operation is missing durable receipt evidence',
           );
         }
-        final receipt = operationReceiptFromMap(
+        final decodedReceipt = _decodeDurableReceiptEvidence(
           LocalJournalRecordCodec.decode(receiptValue),
+          package,
         );
+        final receipt = decodedReceipt.receipt;
         if (receipt.operationId != operationId ||
             receipt.commandId != commandId ||
             receipt.requestHash != requestHash ||
@@ -3059,6 +3114,7 @@ final class LocalGameJournalRepository {
         evidenceBySequence[sequence] = PrunedReceiptEvidence(
           localSequence: sequence,
           receipt: receipt,
+          candidateRevisionReceipt: decodedReceipt.candidateRevisionReceipt,
         );
       }
       cursor = rows.length < LocalGameJournalLimits.integrityScanPageSize
@@ -3141,9 +3197,47 @@ final class LocalGameJournalRepository {
     return List.unmodifiable(evidence);
   }
 
+  static ({
+    OperationReceiptContract receipt,
+    LocalCandidateRevisionReceiptEnvelope? candidateRevisionReceipt,
+  })
+  _decodeDurableReceiptEvidence(
+    Map<String, Object?> payload,
+    PreparedGameRecoveryPackage package,
+  ) {
+    try {
+      final preparedRevision = package.candidateRevision;
+      if (preparedRevision == null) {
+        final receipt = operationReceiptFromMap(payload);
+        return (receipt: receipt, candidateRevisionReceipt: null);
+      }
+      final envelope = LocalCandidateRevisionReceiptEnvelope.fromContractMap(
+        payload,
+      );
+      requireLocalCandidateRevisionReceiptBinding(
+        preparedPackage: package,
+        receipt: envelope.operationReceipt,
+        candidateRevisionReceipt: envelope,
+        errorCode: LocalJournalErrorCode.receiptMismatch,
+      );
+      return (
+        receipt: envelope.operationReceipt,
+        candidateRevisionReceipt: envelope,
+      );
+    } on LocalJournalException catch (error) {
+      if (error.code == LocalJournalErrorCode.receiptMismatch) rethrow;
+      throw LocalJournalException(
+        LocalJournalErrorCode.receiptMismatch,
+        'Durable receipt evidence is malformed or missing revision binding',
+        {'cause': error, 'causeCode': error.code.name},
+      );
+    }
+  }
+
   static Future<void> _requireExactReceiptRows(
     LocalJournalStoreTransaction transaction,
     JournalPartition partition,
+    PreparedGameRecoveryPackage package,
     Map<String, OperationReceiptContract> expected,
   ) async {
     final unmatched = Map<String, OperationReceiptContract>.from(expected);
@@ -3163,9 +3257,10 @@ final class LocalGameJournalRepository {
             'Receipt evidence count exceeds the workspace limit',
           );
         }
-        final receipt = operationReceiptFromMap(
+        final receipt = _decodeDurableReceiptEvidence(
           LocalJournalRecordCodec.decode(row.value),
-        );
+          package,
+        ).receipt;
         final wanted = unmatched.remove(receipt.operationId);
         if (row.key != _receiptKey(partition, receipt.operationId) ||
             wanted == null ||
