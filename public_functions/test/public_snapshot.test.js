@@ -177,6 +177,155 @@ test('snapshot fingerprint is stable across rebuild time and changes with publis
   assert.notEqual(first.schedule[0].resultVersion, corrected.schedule[0].resultVersion);
 });
 
+test('mixed aggregate and division standings publish one deterministic row per team scope', () => {
+  const mixed = fixture();
+  mixed.divisions.push({
+    id: 'development',
+    data: {name: 'Development', seasonId: 'season-1'},
+  });
+  mixed.teams.push({
+    id: 'development-team',
+    data: {name: 'Development Team', seasonId: 'season-1', divisionId: 'development'},
+  });
+  mixed.standings[0].data.standings.push({
+    teamId: 'away', wins: 2, losses: 0, pct: 1, rank: 2, rankStatus: 'ranked',
+  });
+  mixed.standings.unshift({
+    id: 'season-1_all',
+    data: {
+      seasonId: 'season-1',
+      divisionId: null,
+      standings: [
+        {
+          teamId: 'home', divisionId: 'premier', wins: 99, losses: 0,
+          pct: 1, rank: 1, rankStatus: 'ranked',
+        },
+        {
+          teamId: 'away', divisionId: 'premier', wins: 98, losses: 1,
+          pct: 0.99, rank: 2, rankStatus: 'ranked',
+        },
+        {
+          teamId: 'development-team', divisionId: 'development', wins: 3, losses: 1,
+          pct: 0.75, rank: 1, rankStatus: 'ranked',
+        },
+      ],
+    },
+  });
+
+  const snapshot = buildPublicSnapshot(mixed);
+  const replay = fixture({
+    divisions: mixed.divisions,
+    teams: mixed.teams,
+    standings: [...mixed.standings].reverse(),
+  });
+  const replaySnapshot = buildPublicSnapshot(replay);
+
+  assert.deepEqual(snapshot.standings, [
+    {
+      teamId: 'development-team', teamName: 'Development Team', divisionId: 'development',
+      rank: 1, rankStatus: 'ranked', wins: 3, losses: 1, pct: 0.75,
+      gamesBehind: null, streak: null, lastTen: null, pointsFor: null, pointsAgainst: null,
+    },
+    {
+      teamId: 'home', teamName: 'Home Team', divisionId: 'premier',
+      rank: 1, rankStatus: 'ranked', wins: 1, losses: 0, pct: 1,
+      gamesBehind: null, streak: null, lastTen: null, pointsFor: null, pointsAgainst: null,
+    },
+    {
+      teamId: 'away', teamName: 'Away Team', divisionId: 'premier',
+      rank: 2, rankStatus: 'ranked', wins: 2, losses: 0, pct: 1,
+      gamesBehind: null, streak: null, lastTen: null, pointsFor: null, pointsAgainst: null,
+    },
+  ]);
+  assert.equal(
+    new Set(snapshot.standings.map((row) => `${row.divisionId}:${row.teamId}`)).size,
+    snapshot.standings.length,
+  );
+  assert.equal(
+    new Set(snapshot.standings.map((row) => row.teamId)).size,
+    snapshot.standings.length,
+  );
+  assert.deepEqual(replaySnapshot.standings, snapshot.standings);
+  assert.equal(replaySnapshot.snapshotVersion, snapshot.snapshotVersion);
+
+  const sourceVersion = 'a'.repeat(64);
+  const release = buildPublicReleasePackage(
+    snapshot, sourceVersion, 42, '2026-09-10T21:00:00.000Z',
+  );
+  const replayRelease = buildPublicReleasePackage(
+    replaySnapshot, sourceVersion, 42, '2026-09-10T21:00:00.000Z',
+  );
+  assert.equal(replayRelease.releaseId, release.releaseId);
+  assert.deepEqual(replayRelease.manifest, release.manifest);
+  assert.deepEqual(replayRelease.pages, release.pages);
+  const nextSourceRelease = buildPublicReleasePackage(
+    replaySnapshot, 'b'.repeat(64), 42, '2026-09-10T21:00:00.000Z',
+  );
+  assert.notEqual(nextSourceRelease.releaseId, release.releaseId);
+});
+
+test('standings authority changes bind versions while shadow aggregate changes do not', () => {
+  const baseline = fixture();
+  baseline.standings.push({
+    id: 'season-1_all',
+    data: {
+      seasonId: 'season-1', divisionId: null,
+      standings: [{
+        teamId: 'home', divisionId: 'premier', wins: 99, losses: 0,
+        rank: 1, rankStatus: 'ranked',
+      }],
+    },
+  });
+  const first = buildPublicSnapshot(baseline);
+
+  const shadowChanged = fixture({
+    standings: structuredClone(baseline.standings),
+  });
+  shadowChanged.standings[1].data.standings[0].wins = 100;
+  const ignoredCorrection = buildPublicSnapshot(shadowChanged);
+  assert.equal(ignoredCorrection.snapshotVersion, first.snapshotVersion);
+
+  const authorityChanged = fixture({
+    standings: structuredClone(baseline.standings),
+  });
+  authorityChanged.standings[0].data.standings[0].wins = 2;
+  const publishedCorrection = buildPublicSnapshot(authorityChanged);
+  assert.notEqual(publishedCorrection.snapshotVersion, first.snapshotVersion);
+});
+
+test('an empty scoped standings document suppresses stale aggregate fallback', () => {
+  const stale = fixture();
+  stale.standings[0].data.standings = [];
+  stale.standings.push({
+    id: 'season-1_all',
+    data: {
+      seasonId: 'season-1', divisionId: null,
+      standings: [{
+        teamId: 'home', divisionId: 'premier', wins: 20, losses: 0,
+        rank: 1, rankStatus: 'ranked',
+      }],
+    },
+  });
+
+  assert.deepEqual(buildPublicSnapshot(stale).standings, []);
+});
+
+test('ambiguous same-scope standings documents fail closed', () => {
+  const ambiguous = fixture();
+  ambiguous.standings.push({
+    id: 'season-1_premier_copy',
+    data: {
+      seasonId: 'season-1', divisionId: 'premier',
+      standings: [{teamId: 'away', wins: 1, losses: 0}],
+    },
+  });
+
+  assert.throws(
+    () => buildPublicSnapshot(ambiguous),
+    /Standings scope premier has multiple source documents/,
+  );
+});
+
 test('a supplied publicResultVersion must bind every displayed result field', () => {
   const baseline = fixture();
   const version = buildPublicSnapshot(baseline).schedule[0].resultVersion;

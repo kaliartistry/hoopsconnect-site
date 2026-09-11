@@ -149,6 +149,144 @@ function leaderboardOrder(category: string): number {
   return index < 0 ? LEADERBOARD_ORDER.length : index;
 }
 
+type PublicStandingRow = {
+  teamId: string;
+  teamName: string;
+  divisionId: string | null;
+  rank: number | null;
+  rankStatus: string;
+  wins: number | null;
+  losses: number | null;
+  pct: number | null;
+  gamesBehind: number | null;
+  streak: string | null;
+  lastTen: string | null;
+  pointsFor: number | null;
+  pointsAgainst: number | null;
+};
+
+type PublicStandingCandidate = {
+  row: PublicStandingRow;
+  sourceId: string;
+  sourceIndex: number;
+};
+
+function buildPublicStandings(
+  records: RecordWithId[],
+  seasonId: string,
+  teamNames: Map<string, string>,
+  teamDivisions: Map<string, string | null>,
+): PublicStandingRow[] {
+  const currentDocuments = records
+    .filter((entry) => entry.data.seasonId === seasonId)
+    .map((entry) => ({
+      ...entry,
+      divisionId: nullableText(entry.data.divisionId),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  // One source document owns each scope. Silently choosing between multiple
+  // same-scope documents could publish an arbitrary ranking and make the
+  // snapshot version depend on Firestore query order.
+  const documentByScope = new Map<string, string>();
+  for (const document of currentDocuments) {
+    const scope = document.divisionId || "__association__";
+    const existing = documentByScope.get(scope);
+    if (existing) {
+      throw new Error(
+        `Standings scope ${scope} has multiple source documents: ${existing}, ${document.id}.`,
+      );
+    }
+    documentByScope.set(scope, document.id);
+  }
+
+  const divisionScopes = new Set(
+    currentDocuments
+      .map((document) => document.divisionId)
+      .filter((divisionId): divisionId is string => divisionId !== null),
+  );
+  const scopedTeamIds = new Set(
+    currentDocuments
+      .filter((document) => document.divisionId !== null)
+      .flatMap((document) => objectList(document.data.standings))
+      .map((row) => text(row.teamId))
+      .filter((teamId) => teamId.length > 0),
+  );
+  const selected = new Map<string, PublicStandingCandidate>();
+
+  for (const document of currentDocuments) {
+    const rows = objectList(document.data.standings);
+    for (const [sourceIndex, sourceRow] of rows.entries()) {
+      const teamId = text(sourceRow.teamId);
+      if (!teamId) continue;
+      const rowDivisionId = nullableText(sourceRow.divisionId);
+      const teamDivisionId = teamDivisions.get(teamId) ?? null;
+      if (document.divisionId && rowDivisionId && document.divisionId !== rowDivisionId) {
+        throw new Error(
+          `Standing ${teamId} in ${document.id} conflicts with its document division.`,
+        );
+      }
+      if (document.divisionId && teamDivisionId && document.divisionId !== teamDivisionId) {
+        throw new Error(
+          `Standing ${teamId} in ${document.id} conflicts with its team division.`,
+        );
+      }
+      if (rowDivisionId && teamDivisionId && rowDivisionId !== teamDivisionId) {
+        throw new Error(
+          `Standing ${teamId} in ${document.id} conflicts with its team division.`,
+        );
+      }
+      const divisionId = document.divisionId || rowDivisionId || teamDivisionId;
+
+      // A division-scoped document is the public ranking authority for that
+      // division. The association aggregate remains a fallback only for a
+      // division that has no scoped standings document at all, including when
+      // the scoped document intentionally publishes an empty table.
+      if (!document.divisionId &&
+        (scopedTeamIds.has(teamId) || (divisionId && divisionScopes.has(divisionId)))) {
+        continue;
+      }
+
+      const parsedRank = nullableInteger(sourceRow.rank);
+      const rank = parsedRank !== null && parsedRank > 0 ? parsedRank : null;
+      const rankStatus = text(sourceRow.rankStatus);
+      const row: PublicStandingRow = {
+        teamId,
+        teamName: teamNames.get(teamId) || "Team",
+        divisionId,
+        rank,
+        rankStatus: rank !== null && (rankStatus === "ranked" || rankStatus === "tied") ?
+          rankStatus : "unresolved",
+        wins: nullableInteger(sourceRow.wins),
+        losses: nullableInteger(sourceRow.losses),
+        pct: numberValue(sourceRow.pct),
+        gamesBehind: numberValue(sourceRow.gb),
+        streak: nullableText(sourceRow.streak),
+        lastTen: nullableText(sourceRow.lastTen),
+        pointsFor: nullableInteger(sourceRow.pointsFor),
+        pointsAgainst: nullableInteger(sourceRow.pointsAgainst),
+      };
+      const existing = selected.get(teamId);
+      if (existing) {
+        throw new Error(
+          `Standings sources contain duplicate team ${teamId}: ` +
+          `${existing.sourceId}, ${document.id}.`,
+        );
+      }
+      selected.set(teamId, {row, sourceId: document.id, sourceIndex});
+    }
+  }
+
+  return [...selected.values()]
+    .sort((a, b) => {
+      const divisionOrder = (a.row.divisionId || "").localeCompare(b.row.divisionId || "");
+      if (divisionOrder !== 0) return divisionOrder;
+      const sourceOrder = a.sourceId.localeCompare(b.sourceId);
+      return sourceOrder !== 0 ? sourceOrder : a.sourceIndex - b.sourceIndex;
+    })
+    .map((candidate) => candidate.row);
+}
+
 export function buildPublicSnapshot(input: {
   associationId: string;
   association: Record<string, unknown>;
@@ -174,6 +312,9 @@ export function buildPublicSnapshot(input: {
   );
   const teamNames = new Map(
     seasonTeams.map((entry) => [entry.id, text(entry.data.name, "Team")]),
+  );
+  const teamDivisions = new Map(
+    seasonTeams.map((entry) => [entry.id, nullableText(entry.data.divisionId)]),
   );
   const approvedStats = new Map(
     input.gameStats
@@ -234,33 +375,12 @@ export function buildPublicSnapshot(input: {
     .filter((entry) => entry.startTime !== null)
     .sort((a, b) => a.startTime!.localeCompare(b.startTime!) || a.gameId.localeCompare(b.gameId));
 
-  const standings = input.standings
-    .filter((entry) => entry.data.seasonId === seasonId)
-    .flatMap((entry) => {
-      const divisionId = nullableText(entry.data.divisionId);
-      return objectList(entry.data.standings).map((row) => {
-        const teamId = text(row.teamId);
-        const parsedRank = nullableInteger(row.rank);
-        const rank = parsedRank !== null && parsedRank > 0 ? parsedRank : null;
-        const rankStatus = text(row.rankStatus);
-        return {
-          teamId,
-          teamName: teamNames.get(teamId) || "Team",
-          divisionId: nullableText(row.divisionId) || divisionId,
-          rank,
-          rankStatus: rank !== null && (rankStatus === "ranked" || rankStatus === "tied") ?
-            rankStatus : "unresolved",
-          wins: nullableInteger(row.wins),
-          losses: nullableInteger(row.losses),
-          pct: numberValue(row.pct),
-          gamesBehind: numberValue(row.gb),
-          streak: nullableText(row.streak),
-          lastTen: nullableText(row.lastTen),
-          pointsFor: nullableInteger(row.pointsFor),
-          pointsAgainst: nullableInteger(row.pointsAgainst),
-        };
-      }).filter((row) => row.teamId.length > 0);
-    });
+  const standings = buildPublicStandings(
+    input.standings,
+    seasonId,
+    teamNames,
+    teamDivisions,
+  );
 
   const leaderboards = input.leaderboards
     .filter((entry) => entry.data.seasonId === seasonId)
