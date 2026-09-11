@@ -1,7 +1,10 @@
 {
   "adapterVersion": "legacy-game-stats-to-official-v2-candidate-v1",
+  "canonicalEncodingVersion": "official-stat-canonical-json-v1",
   "candidateSchemaVersion": 1,
   "fixtureSchemaVersion": 1,
+  "unicodeNormalizationImplementationVersion": "unicode-17.0-unorm-dart-0.3.2-hangul-boundary-patch1",
+  "unicodeNormalizationVersion": "official-stat-unicode-nfc-v2",
   "cases": [
     {
       "id": "approved_legacy_record_remains_unverified",
@@ -81,8 +84,8 @@
         }
       },
       "expected": {
-        "candidateHash": "b5a5138d30bccbf988156ec8c8141ac6d754305214cac6c3bdd8d12612295a26",
-        "canonicalByteLength": 7101,
+        "candidateHash": "990c85cae504ad04a4421a48fd4f8dd57ce8d441c1b3997cde4ecd31ad3a5bae",
+        "canonicalByteLength": 7558,
         "evidenceClassification": "unverified",
         "issueCodes": [
           "legacyApprovalIsNotCertification"

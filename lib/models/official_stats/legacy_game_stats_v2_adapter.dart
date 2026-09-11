@@ -23,6 +23,17 @@ abstract final class LegacyGameStatsV2AdapterContract {
       'identity_mapping_not_reviewed';
 }
 
+String _canonicalLegacyKey(String field, String value) {
+  if (value.isEmpty) {
+    throw FormatException('$field must not be empty');
+  }
+  final normalized = OfficialStatUnicodeNormalization.nfc(value);
+  if (normalized.isEmpty) {
+    throw FormatException('$field must remain nonempty after Unicode NFC');
+  }
+  return normalized;
+}
+
 /// A named immutable rules dependency supplied by the integration owner.
 ///
 /// No duration, period count, overtime duration, or foul limit is inferred by
@@ -55,14 +66,22 @@ final class LegacyGameStatsSourceReference {
   final String sourcePayloadHash;
 
   LegacyGameStatsSourceReference({
-    required this.documentId,
-    required this.sourcePath,
+    required String documentId,
+    required String sourcePath,
     required this.sourcePayloadHash,
-  }) {
-    if (documentId.isEmpty || sourcePath.isEmpty) {
-      throw FormatException('Legacy source identity must not be empty');
+  }) : documentId = _canonicalLegacyKey('documentId', documentId),
+       sourcePath = OfficialStatUnicodeNormalization.nfc(sourcePath) {
+    final segments = this.sourcePath.split('/');
+    if (segments.length != 4 ||
+        segments[0] != 'associations' ||
+        segments[1].isEmpty ||
+        segments[2] != 'gameStats' ||
+        segments[3].isEmpty) {
+      throw FormatException(
+        'Legacy source path must be associations/{associationId}/gameStats/{documentId}',
+      );
     }
-    if (sourcePath.split('/').last != documentId) {
+    if (segments[3] != this.documentId) {
       throw FormatException(
         'Legacy source path must terminate in the exact document ID',
       );
@@ -73,11 +92,85 @@ final class LegacyGameStatsSourceReference {
     );
   }
 
+  String get associationId => sourcePath.split('/')[1];
+
   Map<String, Object?> toContractMap() => {
     'documentId': documentId,
     'sourcePath': sourcePath,
     'sourcePayloadHash': sourcePayloadHash,
     'sourceSchemaVersion': LegacyGameStatsV2AdapterContract.sourceSchemaVersion,
+  };
+}
+
+enum LegacyGameStatsScopeBindingKind { exact, reviewedMapping }
+
+/// A reviewed one-direction source-game to v2-game mapping.
+///
+/// Association identity is never remapped: the source path association must
+/// still equal the v2 [GameScope.associationId]. The mapping exists only for a
+/// legacy document/event identifier that differs from the reviewed v2 game ID.
+final class LegacyGameStatsReviewedScopeMapping {
+  final String sourceDocumentId;
+  final String sourceEventId;
+  final String targetGameId;
+  final String mappingVersion;
+  final String evidenceHash;
+
+  LegacyGameStatsReviewedScopeMapping({
+    required String sourceDocumentId,
+    required String sourceEventId,
+    required String targetGameId,
+    required this.mappingVersion,
+    required this.evidenceHash,
+  }) : sourceDocumentId = _canonicalLegacyKey(
+         'sourceDocumentId',
+         sourceDocumentId,
+       ),
+       sourceEventId = _canonicalLegacyKey('sourceEventId', sourceEventId),
+       targetGameId = _canonicalLegacyKey('targetGameId', targetGameId) {
+    OfficialStatIdentifiers.requireValid('mappingVersion', mappingVersion);
+    OfficialStatIdentifiers.requireSha256('evidenceHash', evidenceHash);
+  }
+
+  Map<String, Object?> toContractMap() => {
+    'evidenceHash': evidenceHash,
+    'mappingVersion': mappingVersion,
+    'sourceDocumentId': sourceDocumentId,
+    'sourceEventId': sourceEventId,
+    'targetGameId': targetGameId,
+  };
+}
+
+/// The exact source association/document/event binding included in candidate
+/// content identity. Differing game IDs require a reviewed mapping and hash.
+final class LegacyGameStatsScopeBinding {
+  final LegacyGameStatsScopeBindingKind kind;
+  final String sourceAssociationId;
+  final String sourceDocumentId;
+  final String sourceEventId;
+  final String targetGameId;
+  final LegacyGameStatsReviewedScopeMapping? reviewedMapping;
+
+  const LegacyGameStatsScopeBinding._({
+    required this.kind,
+    required this.sourceAssociationId,
+    required this.sourceDocumentId,
+    required this.sourceEventId,
+    required this.targetGameId,
+    required this.reviewedMapping,
+  });
+
+  Map<String, Object?> toContractMap() => {
+    'kind': kind.name,
+    'reviewedMapping': reviewedMapping == null
+        ? const Fact<String>.notApplicable(
+            reasonCode: 'exact_source_game_identity',
+          ).toContractMap((value) => value)
+        : {'state': 'known', 'value': reviewedMapping!.toContractMap()},
+    'sourceAssociationId': sourceAssociationId,
+    'sourceDocumentId': sourceDocumentId,
+    'sourceEventId': sourceEventId,
+    'targetGameId': targetGameId,
   };
 }
 
@@ -273,6 +366,7 @@ final class LegacyPlayerStatEvidence {
 /// Deterministic, read-only evidence candidate for later reviewed integration.
 final class LegacyGameStatsV2Candidate {
   final GameScope scope;
+  final LegacyGameStatsScopeBinding scopeBinding;
   final LegacyGameStatsSourceReference source;
   final OfficialStatRulesProfilePin rulesProfile;
   final Fact<String> legacyStatus;
@@ -286,6 +380,7 @@ final class LegacyGameStatsV2Candidate {
 
   const LegacyGameStatsV2Candidate({
     required this.scope,
+    required this.scopeBinding,
     required this.source,
     required this.rulesProfile,
     required this.legacyStatus,
@@ -319,6 +414,7 @@ final class LegacyGameStatsV2Candidate {
     'adapterVersion': LegacyGameStatsV2AdapterContract.adapterVersion,
     'calculatorBlockers': calculatorBlockers,
     'calculatorInputAllowed': calculatorInputAllowed,
+    'canonicalEncodingVersion': OfficialStatContractVersions.canonicalEncoding,
     'candidateSchemaVersion':
         LegacyGameStatsV2AdapterContract.candidateSchemaVersion,
     'certificationAllowed': certificationAllowed,
@@ -330,9 +426,13 @@ final class LegacyGameStatsV2Candidate {
     'playerLines': [for (final player in playerLines) player.toContractMap()],
     'rulesProfile': rulesProfile.toContractMap(),
     'scope': scope.toContractMap(),
+    'scopeBinding': scopeBinding.toContractMap(),
     'source': source.toContractMap(),
     'targetCalculatorVersion': normalizedBoxScoreCalculatorVersion,
     'teams': [for (final team in teams) team.toContractMap()],
+    'unicodeNormalizationImplementationVersion':
+        OfficialStatUnicodeNormalization.implementationVersion,
+    'unicodeNormalizationVersion': normalizedBoxScoreUnicodeVersion,
     'unmappedSourcePaths': unmappedSourcePaths,
   };
 
@@ -351,6 +451,7 @@ abstract interface class LegacyGameStatsV2CandidateAdapter {
     required Map<String, Object?> legacyDocument,
     required GameScope scope,
     required OfficialStatRulesProfilePin rulesProfile,
+    LegacyGameStatsReviewedScopeMapping? reviewedScopeMapping,
   });
 }
 
@@ -394,23 +495,25 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     required Map<String, Object?> legacyDocument,
     required GameScope scope,
     required OfficialStatRulesProfilePin rulesProfile,
+    LegacyGameStatsReviewedScopeMapping? reviewedScopeMapping,
   }) {
     if (rulesProfile.rulesetVersion.associationId != scope.associationId) {
       throw ArgumentError(
         'Rules profile and game scope must share one association',
       );
     }
-    _requireScopeMatch(
-      legacyDocument,
-      'eventId',
-      scope.gameId,
-      source.documentId,
+    final sourceEventId = _requiredIdentityKey(legacyDocument, 'eventId');
+    final scopeBinding = _bindScope(
+      source: source,
+      sourceEventId: sourceEventId,
+      scope: scope,
+      reviewedScopeMapping: reviewedScopeMapping,
     );
-    _requireScopeMatch(legacyDocument, 'seasonId', scope.seasonId, null);
-    _requireScopeMatch(legacyDocument, 'divisionId', scope.divisionId, null);
+    _requireScopeMatch(legacyDocument, 'seasonId', scope.seasonId);
+    _requireScopeMatch(legacyDocument, 'divisionId', scope.divisionId);
 
-    final homeTeamId = _requiredText(legacyDocument, 'homeTeamId');
-    final awayTeamId = _requiredText(legacyDocument, 'awayTeamId');
+    final homeTeamId = _requiredIdentityKey(legacyDocument, 'homeTeamId');
+    final awayTeamId = _requiredIdentityKey(legacyDocument, 'awayTeamId');
     final homeTeamName = _requiredText(legacyDocument, 'homeTeamName');
     final awayTeamName = _requiredText(legacyDocument, 'awayTeamName');
     final homeScore = _intFact(legacyDocument, 'homeScore', r'$.homeScore');
@@ -460,6 +563,7 @@ final class ReadOnlyLegacyGameStatsV2Adapter
 
     return LegacyGameStatsV2Candidate(
       scope: scope,
+      scopeBinding: scopeBinding,
       source: source,
       rulesProfile: rulesProfile,
       legacyStatus: legacyStatus,
@@ -506,7 +610,6 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     Map<String, Object?> source,
     String field,
     String expected,
-    String? alternateExpected,
   ) {
     final value = source[field];
     if (value is! String || value.isEmpty) {
@@ -515,12 +618,55 @@ final class ReadOnlyLegacyGameStatsV2Adapter
         '$field must be a nonempty string',
       );
     }
-    if (value != expected && value != alternateExpected) {
+    if (value != expected) {
       throw FormatException(
         r'$.'
         '$field does not match the reviewed v2 scope',
       );
     }
+  }
+
+  static LegacyGameStatsScopeBinding _bindScope({
+    required LegacyGameStatsSourceReference source,
+    required String sourceEventId,
+    required GameScope scope,
+    required LegacyGameStatsReviewedScopeMapping? reviewedScopeMapping,
+  }) {
+    if (source.associationId != scope.associationId) {
+      throw FormatException(
+        'Legacy source association does not match the reviewed v2 scope',
+      );
+    }
+    if (reviewedScopeMapping == null) {
+      if (source.documentId != scope.gameId || sourceEventId != scope.gameId) {
+        throw FormatException(
+          'Legacy document and event IDs must match the v2 game or use a reviewed mapping',
+        );
+      }
+      return LegacyGameStatsScopeBinding._(
+        kind: LegacyGameStatsScopeBindingKind.exact,
+        sourceAssociationId: source.associationId,
+        sourceDocumentId: source.documentId,
+        sourceEventId: sourceEventId,
+        targetGameId: scope.gameId,
+        reviewedMapping: null,
+      );
+    }
+    if (reviewedScopeMapping.sourceDocumentId != source.documentId ||
+        reviewedScopeMapping.sourceEventId != sourceEventId ||
+        reviewedScopeMapping.targetGameId != scope.gameId) {
+      throw FormatException(
+        'Reviewed scope mapping does not bind the exact source and target game',
+      );
+    }
+    return LegacyGameStatsScopeBinding._(
+      kind: LegacyGameStatsScopeBindingKind.reviewedMapping,
+      sourceAssociationId: source.associationId,
+      sourceDocumentId: source.documentId,
+      sourceEventId: sourceEventId,
+      targetGameId: scope.gameId,
+      reviewedMapping: reviewedScopeMapping,
+    );
   }
 
   static String _requiredText(Map<String, Object?> source, String field) {
@@ -533,6 +679,11 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     }
     return value;
   }
+
+  static String _requiredIdentityKey(
+    Map<String, Object?> source,
+    String field,
+  ) => _canonicalLegacyKey(field, _requiredText(source, field));
 
   static Fact<String> _stringFact(
     Map<String, Object?> source,
@@ -554,6 +705,16 @@ final class ReadOnlyLegacyGameStatsV2Adapter
       throw FormatException('$path must be a nonempty string when present');
     }
     return Fact.known(value);
+  }
+
+  static Fact<String> _identityFact(
+    Map<String, Object?> source,
+    String field,
+    String path,
+  ) {
+    final fact = _stringFact(source, field, path);
+    final value = fact.valueOrNull;
+    return value == null ? fact : Fact.known(_canonicalLegacyKey(field, value));
   }
 
   static Fact<int> _intFact(
@@ -618,7 +779,7 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     for (final entry in entries) {
       final line = entry.value;
       final path = r'$.playerLines.' + entry.key;
-      final teamId = _stringFact(line, 'teamId', '$path.teamId');
+      final teamId = _identityFact(line, 'teamId', '$path.teamId');
       if (teamId.valueOrNull case final String value
           when value != homeTeamId && value != awayTeamId) {
         issues.add(
@@ -718,8 +879,13 @@ final class ReadOnlyLegacyGameStatsV2Adapter
     for (final entry in raw.entries) {
       final key = entry.key;
       final number = key is int ? key : int.tryParse(key.toString());
-      if (number == null || number <= 0 || result.containsKey(number)) {
-        throw FormatException('$path keys must be unique positive integers');
+      if (number == null ||
+          number <= 0 ||
+          number > OfficialStatCanonicalEncoding.maxSafeInteger ||
+          result.containsKey(number)) {
+        throw FormatException(
+          '$path keys must be unique positive canonical safe integers',
+        );
       }
       result[number] = _intFact(
         <String, Object?>{'value': entry.value},

@@ -32,6 +32,9 @@ candidateSchemaVersion: 1
 adapterVersion: legacy-game-stats-to-official-v2-candidate-v1
 sourceSchemaVersion: legacy-game-stats-v1
 targetCalculatorVersion: hoopsconnect-normalized-box-score-v2
+canonicalEncodingVersion: official-stat-canonical-json-v1
+unicodeNormalizationVersion: official-stat-unicode-nfc-v2
+unicodeNormalizationImplementationVersion: unicode-17.0-unorm-dart-0.3.2-hangul-boundary-patch1
 ```
 
 `ReadOnlyLegacyGameStatsV2Adapter.adapt` requires all of the following. There
@@ -45,11 +48,24 @@ are no ambient defaults:
 4. An `OfficialStatRulesProfilePin` containing a named profile ID and immutable
    association-scoped ruleset version/hash.
 
-The adapter rejects a source season, division, or game that disagrees with the
-reviewed scope. It never derives a scope from the current season, a team name,
-or a display field. It records legacy team IDs as evidence and leaves v2 season
-team-entry IDs unknown until a reviewed C-owned mapping exists. Player keys and
-names likewise remain source evidence, not identity matches.
+The source path must be exactly
+`associations/{associationId}/gameStats/{documentId}`. The path association
+always equals the reviewed `GameScope.associationId`. By default the source
+document ID and stored event ID must both equal `GameScope.gameId`. A differing
+legacy document/event pair is accepted only through a
+`LegacyGameStatsReviewedScopeMapping` that binds the exact source document,
+source event, target game, mapping version, and evidence hash. That binding is
+part of candidate content identity. Cross-association mapping remains
+prohibited.
+
+The adapter rejects a source season, division, or game binding that disagrees
+with the reviewed scope. It never derives a scope from the current season, a
+team name, or a display field. It records legacy team IDs as evidence and
+leaves v2 season team-entry IDs unknown until a reviewed C-owned mapping
+exists. Player keys and names likewise remain source evidence, not identity
+matches. Legacy player keys, home/away team IDs, and player-line team IDs are
+normalized through the pinned Unicode NFC contract before identity comparison;
+canonically equivalent spellings cannot bypass collision or membership checks.
 
 The candidate separates three kinds of data:
 
@@ -127,9 +143,17 @@ and SHA-256 candidate hash. Tests prove:
 - missing normalized statistics remain unknown;
 - a rules-profile change changes candidate identity while period count does not
   select rules or duration;
+- canonical encoding and Unicode normalization contract/implementation
+  versions participate in candidate identity;
+- source association, document, event, and reviewed mapping bindings fail
+  closed on any mismatch;
+- home/away and player-team comparisons use canonical NFC identity keys;
+- period keys accept the canonical safe-integer maximum and reject the next
+  integer during adaptation;
 - scope mismatch and malformed counters fail closed;
 - contradictions remain reviewable but uncertifiable; and
-- production import roots do not import the candidate module.
+- recursive Dart import/export traversal from production entrypoints cannot
+  reach the candidate module.
 
 These tests establish only the candidate interface. They do not establish JBA
 rules adoption, calculator readiness, journal delivery, certified results,

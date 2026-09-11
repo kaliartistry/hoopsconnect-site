@@ -2,10 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hoops_connect/models/official_stats/calculators/normalized_box_score.dart';
+import 'package:hoops_connect/models/official_stats/canonical_encoding.dart';
 import 'package:hoops_connect/models/official_stats/contract_versions.dart';
 import 'package:hoops_connect/models/official_stats/domain_contracts.dart';
 import 'package:hoops_connect/models/official_stats/fact.dart';
 import 'package:hoops_connect/models/official_stats/legacy_game_stats_v2_adapter.dart';
+import 'package:hoops_connect/models/official_stats/unicode_normalization.dart';
 
 Map<String, dynamic> _loadFixture() =>
     jsonDecode(
@@ -92,6 +95,48 @@ OfficialStatRulesProfilePin _baseRules({
   ),
 );
 
+Set<String> _reachableLocalDartFiles(Iterable<String> entrypoints) {
+  final libRoot = Directory('lib').absolute.path;
+  final pending = <String>[
+    for (final entrypoint in entrypoints) File(entrypoint).absolute.path,
+  ];
+  final visited = <String>{};
+  final directivePattern = RegExp(
+    r'''(?:^|\n)\s*(?:import|export|part)\s+([^;]+);''',
+  );
+  final uriPattern = RegExp(r'''["']([^"']+)["']''');
+
+  while (pending.isNotEmpty) {
+    final current = pending.removeLast();
+    if (!visited.add(current)) continue;
+    final file = File(current);
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    for (final directive in directivePattern.allMatches(source)) {
+      final body = directive.group(1)!;
+      for (final uriMatch in uriPattern.allMatches(body)) {
+        final importUri = uriMatch.group(1)!;
+        String? resolved;
+        const packagePrefix = 'package:hoops_connect/';
+        if (importUri.startsWith(packagePrefix)) {
+          resolved = File(
+            'lib/${importUri.substring(packagePrefix.length)}',
+          ).absolute.path;
+        } else if (!Uri.parse(importUri).hasScheme) {
+          resolved = File.fromUri(file.absolute.uri.resolve(importUri)).path;
+        }
+        if (resolved != null &&
+            resolved.startsWith('$libRoot${Platform.pathSeparator}') &&
+            resolved.endsWith('.dart') &&
+            File(resolved).existsSync()) {
+          pending.add(resolved);
+        }
+      }
+    }
+  }
+  return visited;
+}
+
 void main() {
   final fixture = _loadFixture();
 
@@ -105,6 +150,18 @@ void main() {
         fixture['candidateSchemaVersion'],
         LegacyGameStatsV2AdapterContract.candidateSchemaVersion,
       );
+      expect(
+        fixture['canonicalEncodingVersion'],
+        OfficialStatContractVersions.canonicalEncoding,
+      );
+      expect(
+        fixture['unicodeNormalizationVersion'],
+        normalizedBoxScoreUnicodeVersion,
+      );
+      expect(
+        fixture['unicodeNormalizationImplementationVersion'],
+        OfficialStatUnicodeNormalization.implementationVersion,
+      );
     });
 
     test('canonical candidate is deterministic and source ordered', () {
@@ -115,6 +172,15 @@ void main() {
       final second = _adaptCase(fixtureCase);
 
       expect(first.canonicalJson, second.canonicalJson);
+      expect(first.scopeBinding.kind, LegacyGameStatsScopeBindingKind.exact);
+      expect(
+        first.toContractMap()['canonicalEncodingVersion'],
+        fixture['canonicalEncodingVersion'],
+      );
+      expect(
+        first.toContractMap()['unicodeNormalizationVersion'],
+        fixture['unicodeNormalizationVersion'],
+      );
       expect(first.candidateHash, expected['candidateHash']);
       expect(first.canonicalByteLength, expected['canonicalByteLength']);
       expect(
@@ -238,6 +304,110 @@ void main() {
       },
     );
 
+    test('source association mismatch fails closed', () {
+      final source = LegacyGameStatsSourceReference(
+        documentId: 'game_1',
+        sourcePath: 'associations/another/gameStats/game_1',
+        sourcePayloadHash: List.filled(64, 'a').join(),
+      );
+
+      expect(
+        () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: source,
+          legacyDocument: _baseLegacyDocument(),
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('source document mismatch requires an explicit reviewed mapping', () {
+      final source = LegacyGameStatsSourceReference(
+        documentId: 'legacy_document',
+        sourcePath: 'associations/jba/gameStats/legacy_document',
+        sourcePayloadHash: List.filled(64, 'a').join(),
+      );
+
+      expect(
+        () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: source,
+          legacyDocument: _baseLegacyDocument(),
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('source event mismatch requires an explicit reviewed mapping', () {
+      final legacy = _baseLegacyDocument()..['eventId'] = 'legacy_event';
+
+      expect(
+        () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: _baseSource(),
+          legacyDocument: legacy,
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test(
+      'hash-bound reviewed mapping permits differing document and event IDs',
+      () {
+        final source = LegacyGameStatsSourceReference(
+          documentId: 'legacy_document',
+          sourcePath: 'associations/jba/gameStats/legacy_document',
+          sourcePayloadHash: List.filled(64, 'a').join(),
+        );
+        final legacy = _baseLegacyDocument()..['eventId'] = 'legacy_event';
+        final mapping = LegacyGameStatsReviewedScopeMapping(
+          sourceDocumentId: 'legacy_document',
+          sourceEventId: 'legacy_event',
+          targetGameId: 'game_1',
+          mappingVersion: 'legacy_game_mapping_v1',
+          evidenceHash: List.filled(64, 'c').join(),
+        );
+        final candidate = ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: source,
+          legacyDocument: legacy,
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+          reviewedScopeMapping: mapping,
+        );
+        final differentEvidenceCandidate = ReadOnlyLegacyGameStatsV2Adapter()
+            .adapt(
+              source: source,
+              legacyDocument: legacy,
+              scope: _baseScope(),
+              rulesProfile: _baseRules(),
+              reviewedScopeMapping: LegacyGameStatsReviewedScopeMapping(
+                sourceDocumentId: 'legacy_document',
+                sourceEventId: 'legacy_event',
+                targetGameId: 'game_1',
+                mappingVersion: 'legacy_game_mapping_v1',
+                evidenceHash: List.filled(64, 'd').join(),
+              ),
+            );
+
+        expect(
+          candidate.scopeBinding.kind,
+          LegacyGameStatsScopeBindingKind.reviewedMapping,
+        );
+        expect(
+          candidate.scopeBinding.reviewedMapping?.evidenceHash,
+          mapping.evidenceHash,
+        );
+        expect(candidate.toContractMap()['scopeBinding'], isNotNull);
+        expect(
+          candidate.candidateHash,
+          isNot(differentEvidenceCandidate.candidateHash),
+        );
+      },
+    );
+
     test('source path is bound to the exact source document ID', () {
       expect(
         () => LegacyGameStatsSourceReference(
@@ -320,25 +490,95 @@ void main() {
       );
     });
 
+    test('canonically equivalent home and away team IDs collide', () {
+      final legacy = _baseLegacyDocument()
+        ..['homeTeamId'] = 'Cafe\u0301'
+        ..['awayTeamId'] = 'Café';
+      final candidate = ReadOnlyLegacyGameStatsV2Adapter().adapt(
+        source: _baseSource(),
+        legacyDocument: legacy,
+        scope: _baseScope(),
+        rulesProfile: _baseRules(),
+      );
+
+      expect(candidate.teams[0].legacyTeamId, 'Café');
+      expect(candidate.teams[1].legacyTeamId, 'Café');
+      expect(
+        candidate.issues.map((issue) => issue.code),
+        contains(LegacyGameStatsAdapterIssueCode.homeAwayTeamCollision),
+      );
+    });
+
+    test('canonically equivalent player and game team IDs match', () {
+      final legacy = _baseLegacyDocument()
+        ..['homeTeamId'] = 'Café'
+        ..['playerLines'] = {
+          'player_1': {'name': 'Player', 'teamId': 'Cafe\u0301'},
+        };
+      final candidate = ReadOnlyLegacyGameStatsV2Adapter().adapt(
+        source: _baseSource(),
+        legacyDocument: legacy,
+        scope: _baseScope(),
+        rulesProfile: _baseRules(),
+      );
+
+      expect(candidate.playerLines.single.legacyTeamId.valueOrNull, 'Café');
+      expect(
+        candidate.issues.map((issue) => issue.code),
+        isNot(contains(LegacyGameStatsAdapterIssueCode.playerTeamOutsideGame)),
+      );
+    });
+
+    test('maximum canonical-safe period number is preserved', () {
+      final maximum = OfficialStatCanonicalEncoding.maxSafeInteger;
+      final legacy = _baseLegacyDocument()
+        ..['homeQuarterScores'] = {'$maximum': 0}
+        ..['awayQuarterScores'] = {'$maximum': 0};
+      final candidate = ReadOnlyLegacyGameStatsV2Adapter().adapt(
+        source: _baseSource(),
+        legacyDocument: legacy,
+        scope: _baseScope(),
+        rulesProfile: _baseRules(),
+      );
+
+      expect(candidate.periods.single.legacyPeriodNumber, maximum);
+    });
+
+    test('period number above canonical-safe range fails during adapt', () {
+      final aboveMaximum = OfficialStatCanonicalEncoding.maxSafeInteger + 1;
+      final legacy = _baseLegacyDocument()
+        ..['homeQuarterScores'] = {'$aboveMaximum': 0};
+
+      expect(
+        () => ReadOnlyLegacyGameStatsV2Adapter().adapt(
+          source: _baseSource(),
+          legacyDocument: legacy,
+          scope: _baseScope(),
+          rulesProfile: _baseRules(),
+        ),
+        throwsFormatException,
+      );
+    });
+
     test('candidate module remains outside production import roots', () {
-      const importNeedle = 'legacy_game_stats_v2_adapter.dart';
-      final productionRoots = [
-        Directory('lib/app'),
-        Directory('lib/features'),
-        Directory('lib/providers'),
-        Directory('lib/services/repositories'),
-      ];
-      final importingFiles = <String>[];
-      for (final root in productionRoots) {
-        for (final entity in root.listSync(recursive: true)) {
-          if (entity is File &&
-              entity.path.endsWith('.dart') &&
-              entity.readAsStringSync().contains(importNeedle)) {
-            importingFiles.add(entity.path);
-          }
-        }
-      }
-      expect(importingFiles, isEmpty);
+      final productionEntrypoints = Directory('lib')
+          .listSync()
+          .whereType<File>()
+          .where(
+            (file) => RegExp(
+              r'^main[^/]*\.dart$',
+            ).hasMatch(file.uri.pathSegments.last),
+          )
+          .map((file) => file.path)
+          .toList();
+      final reachable = _reachableLocalDartFiles(productionEntrypoints);
+      final candidatePath = File(
+        'lib/models/official_stats/legacy_game_stats_v2_adapter.dart',
+      ).absolute.path;
+
+      expect(productionEntrypoints, isNotEmpty);
+      expect(reachable.length, greaterThan(10));
+      expect(reachable, isNot(contains(candidatePath)));
     });
   });
 }
