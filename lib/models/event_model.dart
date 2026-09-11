@@ -191,3 +191,88 @@ List<ManualScheduleConflict> findManualScheduleConflicts({
 }
 
 final _scheduleIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
+
+class ScheduleOperationReceipt {
+  final String operationId;
+  final String eventId;
+  final String status;
+  final int scheduleVersion;
+  final String? itemKey;
+
+  const ScheduleOperationReceipt({
+    required this.operationId,
+    required this.eventId,
+    required this.status,
+    required this.scheduleVersion,
+    this.itemKey,
+  });
+
+  factory ScheduleOperationReceipt.fromMap(
+    Map<String, dynamic> map, {
+    String? parentOperationId,
+  }) {
+    final operationId = parentOperationId ?? map['operationId'];
+    final eventId = map['eventId'];
+    final status = map['status'];
+    final version = map['scheduleVersion'];
+    if (operationId is! String ||
+        !_scheduleIdPattern.hasMatch(operationId) ||
+        eventId is! String ||
+        !_scheduleIdPattern.hasMatch(eventId) ||
+        status is! String ||
+        !{'created', 'updated', 'cancelled'}.contains(status) ||
+        version is! int ||
+        version < 1) {
+      throw const FormatException('Invalid schedule operation receipt');
+    }
+    return ScheduleOperationReceipt(
+      operationId: operationId,
+      eventId: eventId,
+      status: status,
+      scheduleVersion: version,
+      itemKey: map['itemKey'] as String?,
+    );
+  }
+}
+
+enum ScheduledGameMutationAction { edit, reschedule, cancel }
+
+class ScheduledGameMutationRequest {
+  final String operationId;
+  final String eventId;
+  final int expectedScheduleVersion;
+  final ScheduledGameMutationAction action;
+  final DateTime? startTimeUtc;
+  final DateTime? endTimeUtc;
+  final String? location;
+  final String? title;
+  final String? description;
+  final String? reason;
+
+  const ScheduledGameMutationRequest({
+    required this.operationId,
+    required this.eventId,
+    required this.expectedScheduleVersion,
+    required this.action,
+    this.startTimeUtc,
+    this.endTimeUtc,
+    this.location,
+    this.title,
+    this.description,
+    this.reason,
+  });
+
+  Map<String, Object?> toMap() => {
+    'schemaVersion': ManualGameScheduleRequest.schemaVersion,
+    'operationId': operationId,
+    'eventId': eventId,
+    'expectedScheduleVersion': expectedScheduleVersion,
+    'action': action.name,
+    if (startTimeUtc != null) 'startTimeUtc': startTimeUtc!.toIso8601String(),
+    if (endTimeUtc != null) 'endTimeUtc': endTimeUtc!.toIso8601String(),
+    if (location != null) 'location': location,
+    if (title != null) 'title': title,
+    if (description != null) 'description': description,
+    if (reason != null) 'reason': reason,
+  };
+}

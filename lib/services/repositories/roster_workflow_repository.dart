@@ -17,8 +17,16 @@ RosterClientAuthority rosterClientAuthority({
   required UserModel user,
   required String teamId,
 }) {
-  if (user.hasCapability('teams.manage')) return RosterClientAuthority.manage;
-  if (user.hasCapability('teams.represent') && user.teamId == teamId) {
+  if (user.hasCapability('teams.manage') ||
+      user.hasCapability('rosters.manage')) {
+    return RosterClientAuthority.manage;
+  }
+  // V2 grant scope is intentionally server-private. The membership-level
+  // capability may expose the action, but only the callable resolves and
+  // authorizes the exact canonical team entry. Legacy representatives retain
+  // their explicit team-ID precheck for a clearer local denial.
+  if (user.hasCapability('rosters.assert') ||
+      (user.hasCapability('teams.represent') && user.teamId == teamId)) {
     return RosterClientAuthority.propose;
   }
   return RosterClientAuthority.denied;

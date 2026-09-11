@@ -1,16 +1,41 @@
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/event_model.dart';
 
+typedef EventCallable =
+    Future<Map<String, dynamic>> Function(
+      String name,
+      Map<String, Object?> data,
+    );
+
+class ScheduleWorkflowException implements Exception {
+  final String code;
+  final String message;
+
+  const ScheduleWorkflowException(this.code, this.message);
+
+  @override
+  String toString() => message;
+}
+
 class EventRepository {
   final FirebaseFirestore? _firestore;
+  final FirebaseFunctions? _functions;
+  final EventCallable? _callable;
   final Random _random;
 
-  EventRepository({FirebaseFirestore? firestore, Random? random})
-    : _firestore = firestore,
-      _random = random ?? Random.secure();
+  EventRepository({
+    FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
+    EventCallable? callable,
+    Random? random,
+  }) : _firestore = firestore,
+       _functions = functions,
+       _callable = callable,
+       _random = random ?? Random.secure();
 
   FirebaseFirestore get _db => _firestore ?? FirebaseFirestore.instance;
 
@@ -101,5 +126,79 @@ class EventRepository {
     Map<String, dynamic> data,
   ) {
     return _db.doc(FirestorePaths.event(assocId, eventId)).update(data);
+  }
+
+  Future<ScheduleOperationReceipt> scheduleGame(
+    ManualGameScheduleRequest request,
+  ) async {
+    final result = await _invoke('scheduleGame', request.toMap());
+    return ScheduleOperationReceipt.fromMap(result);
+  }
+
+  Future<ScheduleOperationReceipt> mutateScheduledGame(
+    ScheduledGameMutationRequest request,
+  ) async {
+    final result = await _invoke('mutateScheduledGame', request.toMap());
+    return ScheduleOperationReceipt.fromMap(result);
+  }
+
+  Future<List<ScheduleOperationReceipt>> createScheduleBatch({
+    required String operationId,
+    required List<Map<String, Object?>> games,
+  }) async {
+    final result = await _invoke('createScheduleBatch', {
+      'schemaVersion': ManualGameScheduleRequest.schemaVersion,
+      'operationId': operationId,
+      'games': games,
+    });
+    final rows = result['results'];
+    if (result['status'] != 'created' || rows is! List) {
+      throw const FormatException('Invalid schedule batch receipt');
+    }
+    return rows
+        .map(
+          (row) => ScheduleOperationReceipt.fromMap(
+            Map<String, dynamic>.from(row as Map),
+            parentOperationId: operationId,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<Map<String, dynamic>> _invoke(
+    String name,
+    Map<String, Object?> data,
+  ) async {
+    try {
+      if (_callable != null) return await _callable(name, data);
+      final result = await (_functions ?? FirebaseFunctions.instance)
+          .httpsCallable(name)
+          .call<Map<Object?, Object?>>(data);
+      return result.data.map((key, value) => MapEntry(key.toString(), value));
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'not-found' || error.code == 'unimplemented') {
+        throw const ScheduleWorkflowException(
+          'workflow-unavailable',
+          'Scheduling is temporarily unavailable. No game was changed.',
+        );
+      }
+      if (error.code == 'permission-denied') {
+        throw const ScheduleWorkflowException(
+          'permission-denied',
+          'Your current league access does not allow this schedule change.',
+        );
+      }
+      if (error.code == 'aborted') {
+        throw const ScheduleWorkflowException(
+          'stale-schedule',
+          'The schedule changed while you were working. Reload it before trying again.',
+        );
+      }
+      throw ScheduleWorkflowException(
+        error.code,
+        error.message ??
+            'The schedule service could not complete this request.',
+      );
+    }
   }
 }

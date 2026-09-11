@@ -8,6 +8,7 @@ import '../../core/widgets/app_state_message.dart';
 import '../../models/division_model.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/league_workflow_providers.dart';
 
 class DivisionManagementScreen extends ConsumerWidget {
   const DivisionManagementScreen({super.key});
@@ -89,6 +90,7 @@ class _DivisionCard extends ConsumerStatefulWidget {
 
 class _DivisionCardState extends ConsumerState<_DivisionCard> {
   bool _updating = false;
+  String? _deleteOperationId;
 
   @override
   Widget build(BuildContext context) {
@@ -219,6 +221,12 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
           .read(divisionRepositoryProvider)
           .inspectDependencies(assocId, widget.division.id);
       if (!mounted) return;
+      final deleteReady =
+          ref
+              .read(leagueWorkflowCapabilityProvider)
+              .valueOrNull
+              ?.divisionDeletionEnabled ==
+          true;
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -254,10 +262,13 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
                       .map((reference) => Text('• ${reference.displayName}')),
                 ],
                 const SizedBox(height: 16),
-                const AppStateMessage(
-                  title: 'Permanent deletion is unavailable',
-                  message:
-                      'An atomic server check must inspect legacy and canonical references in the same transaction before deleting. Archive is available now.',
+                AppStateMessage(
+                  title: deleteReady
+                      ? 'Protected deletion is ready'
+                      : 'Permanent deletion is unavailable',
+                  message: deleteReady
+                      ? 'The server will fence this division, inspect legacy and canonical dependencies, and delete only if every reference check is empty.'
+                      : 'The server capability has not confirmed the callable, lifecycle fences, and direct-write deny rules. Archive is available now.',
                   tone: AppStateTone.warning,
                   compact: true,
                 ),
@@ -265,6 +276,11 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
             ),
           ),
           actions: [
+            if (deleteReady)
+              TextButton(
+                onPressed: () => _deletePermanently(ctx),
+                child: const Text('Permanently delete'),
+              ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Close'),
@@ -280,6 +296,70 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
       }
     } finally {
       if (mounted) setState(() => _updating = false);
+    }
+  }
+
+  Future<void> _deletePermanently(BuildContext dialogContext) async {
+    final operationId = _deleteOperationId ??= ref
+        .read(divisionRepositoryProvider)
+        .newDeleteOperationId();
+    try {
+      final receipt = await ref
+          .read(divisionRepositoryProvider)
+          .deleteIfUnreferenced(
+            operationId: operationId,
+            divisionId: widget.division.id,
+            expectedDivisionVersion: widget.division.version,
+          );
+      if (!mounted || !dialogContext.mounted) return;
+      if (receipt.deleted) {
+        Navigator.of(dialogContext).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${widget.division.name} permanently deleted.'),
+          ),
+        );
+        return;
+      }
+      // A blocked receipt is a completed operation. A later attempt after the
+      // dependencies are resolved must use a new operation ID.
+      _deleteOperationId = null;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Division is still in use'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Nothing was deleted. Move or retain these records, or archive the division.',
+                ),
+                const SizedBox(height: 12),
+                ...receipt.references
+                    .take(20)
+                    .map(
+                      (reference) => Text(
+                        '• ${reference.displayName ?? reference.id} (${reference.kind})',
+                      ),
+                    ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(ErrorMapper.map(error))));
     }
   }
 }

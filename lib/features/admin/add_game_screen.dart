@@ -3,10 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/time/league_time.dart';
+import '../../core/utils/error_mapper.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/event_model.dart';
 import '../../models/team_model.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/league_workflow_providers.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
@@ -32,6 +34,8 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
   late final String _operationId;
   String? _readinessMessage;
   bool _readinessIsError = false;
+  ManualGameScheduleRequest? _preparedRequest;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -57,6 +61,7 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
       setState(() {
         _date = date;
         _readinessMessage = null;
+        _preparedRequest = null;
       });
     }
   }
@@ -67,6 +72,7 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
       setState(() {
         _time = time;
         _readinessMessage = null;
+        _preparedRequest = null;
       });
     }
   }
@@ -133,15 +139,43 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
       setState(() {
         _readinessIsError = false;
         _readinessMessage =
-            'Local checks passed. Saving remains unavailable until the idempotent server scheduler is integrated.';
+            'Local checks passed. The server will repeat every scope and conflict check before saving.';
+        _preparedRequest = request;
       });
     } catch (error) {
       setState(() {
         _readinessIsError = true;
+        _preparedRequest = null;
         _readinessMessage = error is StateError
             ? error.message
             : 'The schedule details are not valid: $error';
       });
+    }
+  }
+
+  Future<void> _save() async {
+    final request = _preparedRequest;
+    if (request == null || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final receipt = await ref
+          .read(eventRepositoryProvider)
+          .scheduleGame(request);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Game scheduled. Version ${receipt.scheduleVersion}.'),
+        ),
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _readinessIsError = true;
+        _readinessMessage = ErrorMapper.map(error);
+      });
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -150,6 +184,11 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
     final teamsAsync = ref.watch(teamsStreamProvider);
     final seasonAsync = ref.watch(activeSeasonIdProvider);
     final seasonId = seasonAsync.valueOrNull;
+    final workflow = ref.watch(leagueWorkflowCapabilityProvider).valueOrNull;
+    final serverReady =
+        workflow?.schedulingEnabled == true &&
+        workflow?.activeSeasonId == seasonId;
+    final canSave = serverReady && _preparedRequest != null && !_saving;
     final divisions = ref.watch(activeDivisionsProvider);
     final teams = seasonId == null || _divisionId == null
         ? const <TeamModel>[]
@@ -181,10 +220,20 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
         leading: const BackButton(),
         title: const Text('Schedule Game'),
         actions: [
-          const Tooltip(
-            message:
-                'Saving requires the idempotent server scheduling workflow.',
-            child: TextButton(onPressed: null, child: Text('Save unavailable')),
+          Tooltip(
+            message: serverReady
+                ? 'Run local checks before saving.'
+                : 'Saving requires the verified server scheduling workflow.',
+            child: TextButton(
+              onPressed: canSave ? _save : null,
+              child: Text(
+                _saving
+                    ? 'Saving…'
+                    : serverReady
+                    ? 'Save game'
+                    : 'Save unavailable',
+              ),
+            ),
           ),
         ],
       ),
@@ -193,10 +242,13 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
         child: ListView(
           padding: const EdgeInsets.all(AppSizes.paddingMd),
           children: [
-            const AppStateMessage(
-              title: 'Scheduling save is not available yet',
-              message:
-                  'You can prepare and check a game, but the app will not write it until the server can atomically prevent duplicate and overlapping schedules.',
+            AppStateMessage(
+              title: serverReady
+                  ? 'Server scheduling is ready'
+                  : 'Scheduling save is not available yet',
+              message: serverReady
+                  ? 'Review the game locally, then save it through the protected league scheduler.'
+                  : 'You can prepare and check a game, but the app will not write it until the server capability confirms the callable and deny rules are active.',
               tone: AppStateTone.warning,
               compact: true,
             ),
@@ -246,7 +298,10 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
             // Location
             TextFormField(
               controller: _locationController,
-              onChanged: (_) => setState(() => _readinessMessage = null),
+              onChanged: (_) => setState(() {
+                _readinessMessage = null;
+                _preparedRequest = null;
+              }),
               decoration: const InputDecoration(
                 labelText: 'Location',
                 hintText: 'e.g. National Arena',
@@ -276,6 +331,7 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
                       _homeTeamId = null;
                       _awayTeamId = null;
                       _readinessMessage = null;
+                      _preparedRequest = null;
                     }),
               validator: (value) =>
                   value == null ? 'Choose an active division' : null,
@@ -299,6 +355,7 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
               onChanged: (value) => setState(() {
                 _homeTeamId = value;
                 _readinessMessage = null;
+                _preparedRequest = null;
               }),
               validator: (v) => v == null ? 'Required' : null,
             ),
@@ -321,6 +378,7 @@ class _AddGameScreenState extends ConsumerState<AddGameScreen> {
               onChanged: (value) => setState(() {
                 _awayTeamId = value;
                 _readinessMessage = null;
+                _preparedRequest = null;
               }),
               validator: (v) => v == null ? 'Required' : null,
             ),

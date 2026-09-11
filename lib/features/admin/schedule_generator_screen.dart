@@ -3,10 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/time/league_time.dart';
+import '../../core/utils/error_mapper.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/team_model.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/league_workflow_providers.dart';
 import '../../providers/season_providers.dart';
+import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
 
 // ── Round-robin helpers ──────────────────────────────────────────────
@@ -176,6 +179,8 @@ class _ScheduleGeneratorScreenState
   // Step 5: Preview
   List<_ScheduledGame> _preview = [];
   String? _previewBlockMessage;
+  String? _batchOperationId;
+  bool _savingSchedule = false;
 
   @override
   void dispose() {
@@ -283,8 +288,59 @@ class _ScheduleGeneratorScreenState
     setState(() {
       _preview = scheduled;
       _previewBlockMessage = null;
+      _batchOperationId = ref
+          .read(eventRepositoryProvider)
+          .newScheduleOperationId();
     });
     return true;
+  }
+
+  Future<void> _saveSchedule() async {
+    final seasonId = ref.read(activeSeasonIdProvider).valueOrNull;
+    final divisionId = _divisionId;
+    final operationId = _batchOperationId;
+    if (_savingSchedule ||
+        seasonId == null ||
+        divisionId == null ||
+        operationId == null ||
+        _preview.isEmpty ||
+        _preview.length > 25) {
+      return;
+    }
+    setState(() => _savingSchedule = true);
+    try {
+      final games = _preview.indexed
+          .map((indexed) {
+            final (index, game) = indexed;
+            return <String, Object?>{
+              'itemKey': 'preview_${index.toString().padLeft(3, '0')}',
+              'seasonId': seasonId,
+              'divisionId': divisionId,
+              'homeTeamId': game.homeId,
+              'awayTeamId': game.awayId,
+              'startTimeUtc': game.dateTime.toUtc().toIso8601String(),
+              'endTimeUtc': game.dateTime
+                  .toUtc()
+                  .add(AppDefaults.defaultGameDuration)
+                  .toIso8601String(),
+              'location': game.venue,
+            };
+          })
+          .toList(growable: false);
+      final receipts = await ref
+          .read(eventRepositoryProvider)
+          .createScheduleBatch(operationId: operationId, games: games);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${receipts.length} games scheduled.')),
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _previewBlockMessage = ErrorMapper.map(error));
+    } finally {
+      if (mounted) setState(() => _savingSchedule = false);
+    }
   }
 
   void _setCustomRounds(String value) {
@@ -813,6 +869,19 @@ class _ScheduleGeneratorScreenState
       );
     }
 
+    final seasonId = ref.watch(activeSeasonIdProvider).valueOrNull;
+    final workflow = ref.watch(leagueWorkflowCapabilityProvider).valueOrNull;
+    final serverReady =
+        workflow?.schedulingEnabled == true &&
+        workflow?.activeSeasonId == seasonId;
+    final withinAtomicLimit = _preview.length <= 25;
+    final canCreate =
+        serverReady &&
+        withinAtomicLimit &&
+        _preview.isNotEmpty &&
+        _batchOperationId != null &&
+        !_savingSchedule;
+
     // Group by week
     final grouped = <String, List<_ScheduledGame>>{};
     final weekFmt = DateFormat('MMM d');
@@ -833,7 +902,9 @@ class _ScheduleGeneratorScreenState
         ),
         const SizedBox(height: 4),
         Text(
-          'Review the Jamaica schedule below. Server-backed creation is not available yet.',
+          serverReady
+              ? 'Review the Jamaica schedule below. The server will revalidate the full batch atomically.'
+              : 'Review the Jamaica schedule below. Creation stays closed until the server capability is verified.',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 16),
@@ -877,10 +948,17 @@ class _ScheduleGeneratorScreenState
 
         const SizedBox(height: 16),
 
-        const AppStateMessage(
-          title: 'Schedule creation unavailable',
-          message:
-              'A fixed-purpose server operation must validate the active season, division, teams, conflicts, and idempotency before writing this schedule.',
+        AppStateMessage(
+          title: !withinAtomicLimit
+              ? 'Schedule is too large for one atomic save'
+              : serverReady
+              ? 'Protected schedule creation ready'
+              : 'Schedule creation unavailable',
+          message: !withinAtomicLimit
+              ? 'This preview has ${_preview.length} games. The current safe limit is 25, so no partial schedule will be written. Shorten the date range or split the season deliberately.'
+              : serverReady
+              ? 'All games will be created together, or none will be created if any server-side scope or conflict check fails.'
+              : 'A fixed-purpose server operation and direct-write deny rules must both be active before this schedule can be written.',
           tone: AppStateTone.warning,
           compact: true,
         ),
@@ -888,9 +966,17 @@ class _ScheduleGeneratorScreenState
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.lock_outline),
-            label: Text('Create ${_preview.length} Games unavailable'),
+            onPressed: canCreate ? _saveSchedule : null,
+            icon: Icon(
+              serverReady ? Icons.cloud_done_outlined : Icons.lock_outline,
+            ),
+            label: Text(
+              _savingSchedule
+                  ? 'Creating schedule…'
+                  : canCreate
+                  ? 'Create ${_preview.length} Games'
+                  : 'Create ${_preview.length} Games unavailable',
+            ),
           ),
         ),
         const SizedBox(height: 8),

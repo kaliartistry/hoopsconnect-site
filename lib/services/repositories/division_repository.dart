@@ -1,12 +1,34 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'dart:math';
 import '../../core/constants/firestore_paths.dart';
 import '../../models/division_model.dart';
 
 class DivisionRepository {
   final FirebaseFirestore _db;
+  final FirebaseFunctions? _functions;
+  final Future<Map<String, dynamic>> Function(String, Map<String, Object?>)?
+  _callable;
+  final Random _random;
 
-  DivisionRepository({FirebaseFirestore? firestore})
-    : _db = firestore ?? FirebaseFirestore.instance;
+  DivisionRepository({
+    FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
+    Future<Map<String, dynamic>> Function(String, Map<String, Object?>)?
+    callable,
+    Random? random,
+  }) : _db = firestore ?? FirebaseFirestore.instance,
+       _functions = functions,
+       _callable = callable,
+       _random = random ?? Random.secure();
+
+  String newDeleteOperationId({DateTime? now}) {
+    final entropy = List.generate(
+      12,
+      (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    return 'division_${(now ?? DateTime.now()).toUtc().microsecondsSinceEpoch}_$entropy';
+  }
 
   CollectionReference<DivisionModel> _divisionsRef(String assocId) {
     return _db
@@ -96,6 +118,38 @@ class DivisionRepository {
       teamReferences: teams,
       eventReferences: events,
     );
+  }
+
+  Future<DivisionDeleteReceipt> deleteIfUnreferenced({
+    required String operationId,
+    required String divisionId,
+    required int expectedDivisionVersion,
+  }) async {
+    final request = <String, Object?>{
+      'schemaVersion': 1,
+      'operationId': operationId,
+      'divisionId': divisionId,
+      'expectedDivisionVersion': expectedDivisionVersion,
+    };
+    try {
+      final Map<String, dynamic> result;
+      if (_callable != null) {
+        result = await _callable('deleteDivisionIfUnreferenced', request);
+      } else {
+        final response = await (_functions ?? FirebaseFunctions.instance)
+            .httpsCallable('deleteDivisionIfUnreferenced')
+            .call<Map<Object?, Object?>>(request);
+        result = response.data.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+      return DivisionDeleteReceipt.fromMap(result);
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(
+        error.message ??
+            'The division deletion service could not complete this request.',
+      );
+    }
   }
 }
 

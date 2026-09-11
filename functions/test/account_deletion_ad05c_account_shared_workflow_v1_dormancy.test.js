@@ -17,9 +17,9 @@ const fixturePath =
   'contracts/account_deletion/ad05/account_shared_workflow_fixtures_v1.json';
 
 const pinnedBaseBlobs = Object.freeze({
-  'functions/src/index.ts': '78ebe0c51a1550132da8201b0f2e7b783260cb38',
+  'functions/src/index.ts': '04347ea48ff46cdc6564489b682c22c4495c2df4',
   'firebase.json': 'ce8dc404b218493d2cb1ee6fae159b36f408bab3',
-  'firestore.rules': '9dc99cf1f7c597dd556898424b2911154abe3fc3',
+  'firestore.rules': 'd65c153e6c6c85eb47b928d511324790748bca7a',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/account_deletion/ad05_identity_suppression_records.ts':
     '6624d768d8910060c792605b1330ca757f05fcf8',
