@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/widgets/empty_state.dart';
+import '../board/board_post_visibility.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/post_providers.dart';
+import '../../providers/role_preview_provider.dart';
 
 class AckDetailScreen extends ConsumerWidget {
   final String postId;
@@ -13,7 +16,8 @@ class AckDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final postAsync = ref.watch(postDetailProvider(postId));
-    final currentUser = ref.watch(currentUserProvider).value;
+    final presentationUser = ref.watch(effectiveUserProvider);
+    final realUser = ref.watch(currentUserProvider).valueOrNull;
     final assocId = ref.watch(currentAssociationIdProvider);
 
     return Scaffold(
@@ -26,9 +30,19 @@ class AckDetailScreen extends ConsumerWidget {
           if (post == null) {
             return const Center(child: Text('Post not found'));
           }
+          if (!postIsVisibleInBoardPresentation(post, presentationUser)) {
+            return const EmptyState(
+              icon: Icons.visibility_off_outlined,
+              title: 'Post hidden in this role preview',
+              subtitle: 'Return to the Board to choose a visible post.',
+            );
+          }
 
-          final userAcked =
-              currentUser != null && post.hasUserAcked(currentUser.id);
+          final userAcked = realUser != null && post.hasUserAcked(realUser.id);
+          final previewShowsAcknowledge =
+              presentationUser?.hasCapability('posts.acknowledge') ?? false;
+          final realUserCanAcknowledge =
+              realUser?.hasCapability('posts.acknowledge') ?? false;
           final isOverdue = post.isAckOverdue();
 
           return ListView(
@@ -149,17 +163,23 @@ class AckDetailScreen extends ConsumerWidget {
               const SizedBox(height: 24),
 
               // Acknowledge button
-              if (!userAcked && currentUser != null) ...[
+              if (!userAcked &&
+                  previewShowsAcknowledge &&
+                  realUserCanAcknowledge) ...[
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      if (assocId != null) {
-                        ref.read(postRepositoryProvider).acknowledge(
-                              assocId,
-                              post.id,
-                            );
+                      final actingUser = ref
+                          .read(currentUserProvider)
+                          .valueOrNull;
+                      if (assocId != null &&
+                          actingUser?.hasCapability('posts.acknowledge') ==
+                              true) {
+                        ref
+                            .read(postRepositoryProvider)
+                            .acknowledge(assocId, post.id);
                       }
                     },
                     style: ElevatedButton.styleFrom(
