@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'app/app.dart';
 import 'platform/qa_environment.dart';
@@ -15,6 +16,7 @@ import 'services/notification_service.dart';
 /// emulators before the application widget tree is created.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  usePathUrlStrategy();
   if (!QaEnvironment.enabled) {
     throw StateError(
       'lib/main_qa.dart requires --dart-define=HOOPSCONNECT_QA_MODE=true.',

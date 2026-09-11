@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/artifact_downloader.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
+import '../../core/time/league_time.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/association_branding_model.dart';
 import '../../models/public_league_snapshot.dart';
@@ -395,9 +395,8 @@ class _MetadataCard extends StatelessWidget {
           children: [
             _MetadataRow(
               icon: Icons.calendar_today_outlined,
-              label: DateFormat(
-                'EEEE, MMMM d, yyyy · h:mm a',
-              ).format(game.startTime.toLocal()),
+              label:
+                  '${LeagueTime.formatJamaicaDate(game.startTime)} · ${LeagueTime.formatJamaicaTime(game.startTime)}',
             ),
             _MetadataRow(
               icon: Icons.emoji_events_outlined,

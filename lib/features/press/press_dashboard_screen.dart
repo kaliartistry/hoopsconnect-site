@@ -10,11 +10,11 @@ import '../../core/sharing/artifact_downloader.dart';
 import '../../core/time/league_time.dart';
 import '../../core/widgets/skeleton_loader.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../services/public_artifact_release_validator.dart';
 import '../../services/public_stat_export_service.dart';
-import '../public/public_player_detail_screen.dart';
 
 class PressDashboardScreen extends ConsumerWidget {
   final ArtifactDownloader? downloader;
@@ -638,14 +638,7 @@ class _LeaderRow extends StatelessWidget {
     return InkWell(
       onTap: detail == null
           ? null
-          : () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => PublicPlayerDetailScreen(
-                  snapshot: snapshot,
-                  detail: detail,
-                ),
-              ),
-            ),
+          : () => context.push(PublicRoutePaths.player(leader.playerId!)),
       borderRadius: BorderRadius.circular(AppSizes.radiusMd),
       child: Container(
         padding: const EdgeInsets.all(12),

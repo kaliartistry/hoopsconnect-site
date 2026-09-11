@@ -10,6 +10,7 @@ import '../../features/auth/access_denied_screen.dart';
 import '../../features/auth/account_lifecycle_route_screen.dart';
 import '../../features/auth/password_recovery_screen.dart';
 import '../../features/public/public_league_screen.dart';
+import '../../features/public/public_detail_route_screen.dart';
 import '../../features/board/board_screen.dart';
 import '../../features/board/create_post_screen.dart';
 import '../../features/stats/leaderboard_screen.dart';
@@ -56,6 +57,12 @@ final _pressNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'press');
 final _assignedStatsNavigatorKey = GlobalKey<NavigatorState>(
   debugLabel: 'assigned-stats',
 );
+
+Uri? _absolutePublicUri(String path) {
+  final base = Uri.base;
+  if (base.scheme != 'http' && base.scheme != 'https') return null;
+  return base.resolve(path);
+}
 
 /// Survives the provider-driven GoRouter rebuild that occurs when Auth changes.
 /// The value is same-app only and is rechecked against the active membership
@@ -274,6 +281,39 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: PublicRoutePaths.games,
         builder: (context, state) => const PublicLeagueScreen(),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.standings,
+        builder: (context, state) => const PublicLeagueScreen(initialTab: 1),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.leaders,
+        builder: (context, state) => const PublicLeagueScreen(initialTab: 2),
+      ),
+      GoRoute(
+        path: '${PublicRoutePaths.games}/:gameId',
+        builder: (context, state) {
+          final path = PublicRoutePaths.game(state.pathParameters['gameId']!);
+          return PublicDetailRouteScreen(
+            kind: PublicDetailRouteKind.game,
+            id: state.pathParameters['gameId']!,
+            canonicalUri: _absolutePublicUri(path),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${PublicRoutePaths.root}/teams/:teamId',
+        builder: (context, state) => PublicDetailRouteScreen(
+          kind: PublicDetailRouteKind.team,
+          id: state.pathParameters['teamId']!,
+        ),
+      ),
+      GoRoute(
+        path: '${PublicRoutePaths.root}/players/:playerId',
+        builder: (context, state) => PublicDetailRouteScreen(
+          kind: PublicDetailRouteKind.player,
+          id: state.pathParameters['playerId']!,
+        ),
       ),
 
       GoRoute(

@@ -1,19 +1,18 @@
 import '../../models/user_model.dart';
 
-/// Public URL names owned by the fan/media workstream.
-///
-/// The access workstream pins the namespace so links can be shared before the
-/// destination widgets are completed. Only [games] is mounted in this packet;
-/// the remaining destinations are reserved for the public-data workstream.
+/// Stable public URL names shared by guest, fan, and media journeys.
 abstract final class PublicRoutePaths {
   static const root = '/public';
   static const games = '/public/games';
   static const standings = '/public/standings';
   static const leaders = '/public/leaders';
 
-  static String game(String eventId) => '/public/games/$eventId';
-  static String team(String teamId) => '/public/teams/$teamId';
-  static String player(String playerId) => '/public/players/$playerId';
+  static String game(String eventId) =>
+      '$games/${Uri.encodeComponent(eventId)}';
+  static String team(String teamId) =>
+      '$root/teams/${Uri.encodeComponent(teamId)}';
+  static String player(String playerId) =>
+      '$root/players/${Uri.encodeComponent(playerId)}';
 }
 
 /// Stable account-lifecycle URLs shared with the deletion workstream.

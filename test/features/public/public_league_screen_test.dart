@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:hoops_connect/app/router/app_route_contract.dart';
+import 'package:hoops_connect/features/public/public_detail_route_screen.dart';
 import 'package:hoops_connect/features/public/public_league_screen.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
 import 'package:hoops_connect/providers/public_league_provider.dart';
@@ -170,6 +173,26 @@ void main() {
     expect(find.text('Home 0'), findsOneWidget);
     expect(find.text('Load 1 more games'), findsNothing);
   });
+
+  testWidgets('fresh public detail URLs resolve and unknown IDs stay public', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _snapshot(),
+      initialLocation: PublicRoutePaths.game('game-1'),
+    );
+    expect(find.text('Game details'), findsOneWidget);
+    expect(find.text('Home Team won a close game.'), findsOneWidget);
+
+    await _pump(
+      tester,
+      _snapshot(),
+      initialLocation: PublicRoutePaths.game('missing-game'),
+    );
+    expect(find.text('Published game not found'), findsOneWidget);
+    expect(find.textContaining('private'), findsNothing);
+  });
 }
 
 Future<void> _pump(
@@ -177,11 +200,43 @@ Future<void> _pump(
   PublicLeagueSnapshot? snapshot, {
   Size size = const Size(900, 1200),
   Stream<PublicLeagueSnapshot?>? stream,
+  String initialLocation = PublicRoutePaths.games,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  final router = GoRouter(
+    initialLocation: initialLocation,
+    routes: [
+      GoRoute(
+        path: PublicRoutePaths.games,
+        builder: (_, _) => const PublicLeagueScreen(),
+      ),
+      GoRoute(
+        path: '${PublicRoutePaths.games}/:gameId',
+        builder: (_, state) => PublicDetailRouteScreen(
+          kind: PublicDetailRouteKind.game,
+          id: state.pathParameters['gameId']!,
+        ),
+      ),
+      GoRoute(
+        path: '${PublicRoutePaths.root}/teams/:teamId',
+        builder: (_, state) => PublicDetailRouteScreen(
+          kind: PublicDetailRouteKind.team,
+          id: state.pathParameters['teamId']!,
+        ),
+      ),
+      GoRoute(
+        path: '${PublicRoutePaths.root}/players/:playerId',
+        builder: (_, state) => PublicDetailRouteScreen(
+          kind: PublicDetailRouteKind.player,
+          id: state.pathParameters['playerId']!,
+        ),
+      ),
+    ],
+  );
+  addTearDown(router.dispose);
   await tester.pumpWidget(
     ProviderScope(
       key: UniqueKey(),
@@ -190,7 +245,7 @@ Future<void> _pump(
           (ref) => stream ?? Stream.value(snapshot),
         ),
       ],
-      child: const MaterialApp(home: PublicLeagueScreen()),
+      child: MaterialApp.router(routerConfig: router),
     ),
   );
   await tester.pumpAndSettle();

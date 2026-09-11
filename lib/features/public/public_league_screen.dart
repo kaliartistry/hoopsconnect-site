@@ -2,23 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/time/league_time.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/public_league_snapshot.dart';
 import '../../providers/public_league_provider.dart';
-import 'public_game_detail_screen.dart';
-import 'public_player_detail_screen.dart';
-import 'public_team_detail_screen.dart';
 
 class PublicLeagueScreen extends ConsumerWidget {
-  const PublicLeagueScreen({super.key});
+  const PublicLeagueScreen({super.key, this.initialTab = 0});
+
+  final int initialTab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final snapshot = ref.watch(publicLeagueSnapshotProvider);
     return DefaultTabController(
       length: 3,
+      initialIndex: initialTab,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Jamaica Basketball'),
@@ -243,16 +244,7 @@ class _GameCard extends StatelessWidget {
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(AppSizes.radiusMd),
-        onTap: () {
-          final detail = snapshot.gameDetail(game.gameId);
-          if (detail == null) return;
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) =>
-                  PublicGameDetailScreen(snapshot: snapshot, detail: detail),
-            ),
-          );
-        },
+        onTap: () => context.push(PublicRoutePaths.game(game.gameId)),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -404,20 +396,9 @@ class _StandingsTabState extends State<_StandingsTab> {
                     return ListTile(
                       onTap: row.teamId == null
                           ? null
-                          : () {
-                              final detail = widget.snapshot.teamDetail(
-                                row.teamId!,
-                              );
-                              if (detail == null) return;
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => PublicTeamDetailScreen(
-                                    snapshot: widget.snapshot,
-                                    detail: detail,
-                                  ),
-                                ),
-                              );
-                            },
+                          : () => context.push(
+                              PublicRoutePaths.team(row.teamId!),
+                            ),
                       leading: CircleAvatar(child: Text(_rankLabel(row))),
                       title: Text(
                         row.teamName,
@@ -561,20 +542,11 @@ class _LeadersTabState extends State<_LeadersTab> {
                         ListTile(
                           onTap: board.rankings[index].playerId == null
                               ? null
-                              : () {
-                                  final detail = widget.snapshot.playerDetail(
+                              : () => context.push(
+                                  PublicRoutePaths.player(
                                     board.rankings[index].playerId!,
-                                  );
-                                  if (detail == null) return;
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => PublicPlayerDetailScreen(
-                                        snapshot: widget.snapshot,
-                                        detail: detail,
-                                      ),
-                                    ),
-                                  );
-                                },
+                                  ),
+                                ),
                           leading: CircleAvatar(child: Text('${index + 1}')),
                           title: Text(board.rankings[index].displayName),
                           subtitle: Text(

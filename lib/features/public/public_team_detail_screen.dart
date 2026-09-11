@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/public_league_snapshot.dart';
-import 'public_game_detail_screen.dart';
-import 'public_player_detail_screen.dart';
 
 class PublicTeamDetailScreen extends StatelessWidget {
   final PublicLeagueSnapshot snapshot;
@@ -59,22 +59,13 @@ class PublicTeamDetailScreen extends StatelessWidget {
                   onTap: () {
                     final gameDetail = snapshot.gameDetail(game.gameId);
                     if (gameDetail == null) return;
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => PublicGameDetailScreen(
-                          snapshot: snapshot,
-                          detail: gameDetail,
-                        ),
-                      ),
-                    );
+                    context.push(PublicRoutePaths.game(game.gameId));
                   },
                   title: Text(
                     '${game.homeTeamName ?? 'Home'} vs ${game.awayTeamName ?? 'Away'}',
                   ),
                   subtitle: Text(
-                    DateFormat(
-                      'MMM d, yyyy · h:mm a',
-                    ).format(game.startTime.toLocal()),
+                    '${LeagueTime.formatJamaicaDate(game.startTime, pattern: 'MMM d, yyyy')} · ${LeagueTime.formatJamaicaTime(game.startTime)}',
                   ),
                   trailing: Text(
                     game.isFinal
@@ -114,20 +105,9 @@ class PublicTeamDetailScreen extends StatelessWidget {
                       (leader) => ListTile(
                         onTap: leader.playerId == null
                             ? null
-                            : () {
-                                final player = snapshot.playerDetail(
-                                  leader.playerId!,
-                                );
-                                if (player == null) return;
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => PublicPlayerDetailScreen(
-                                      snapshot: snapshot,
-                                      detail: player,
-                                    ),
-                                  ),
-                                );
-                              },
+                            : () => context.push(
+                                PublicRoutePaths.player(leader.playerId!),
+                              ),
                         title: Text(leader.displayName),
                         subtitle: Text(_gamesPlayed(leader.gamesPlayed)),
                         trailing: Text(_metric(leader.value)),

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
+import '../../core/time/league_time.dart';
 import '../../models/association_branding_model.dart';
 import '../../models/player_season_stats_model.dart';
 import '../../providers/public_league_provider.dart';
@@ -211,7 +211,7 @@ class PlayerCardScreen extends ConsumerWidget {
   }
 
   Widget _gameLogRow(BuildContext context, GameLogEntry game) {
-    final dateStr = DateFormat('MMM d').format(game.date);
+    final dateStr = LeagueTime.formatJamaicaDate(game.date, pattern: 'MMM d');
 
     return GestureDetector(
       onTap: () => context.push('/box-score/${game.eventId}'),

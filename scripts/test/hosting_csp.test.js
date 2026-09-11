@@ -22,6 +22,28 @@ const directives = Object.fromEntries(
     }),
 );
 
+test('production and QA web entrypoints use clean-path routing', () => {
+  for (const entrypoint of ['lib/main.dart', 'lib/main_qa.dart']) {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../..', entrypoint),
+      'utf8',
+    );
+    assert.match(
+      source,
+      /package:flutter_web_plugins\/url_strategy\.dart/,
+      `${entrypoint} must import Flutter's reviewed URL strategy`,
+    );
+    assert.match(
+      source,
+      /WidgetsFlutterBinding\.ensureInitialized\(\);\s*usePathUrlStrategy\(\);/,
+      `${entrypoint} must select clean paths before app initialization`,
+    );
+  }
+  assert.deepEqual(firebase.hosting.rewrites, [
+    {source: '**', destination: '/index.html'},
+  ]);
+});
+
 function sourceAllows(source, urlString, selfOrigin) {
   if (source === "'self'") {
     return new URL(urlString, selfOrigin).origin === selfOrigin;

@@ -44,6 +44,13 @@ void main() {
         AppRouteContract.safeRequestedLocation('/calendar?division=women'),
         '/calendar?division=women',
       );
+      expect(PublicRoutePaths.game('game 1'), '/public/games/game%201');
+      expect(PublicRoutePaths.team('team/1'), '/public/teams/team%2F1');
+      expect(PublicRoutePaths.player('player 1'), '/public/players/player%201');
+      expect(
+        AppRouteContract.permits(PublicRoutePaths.game('game 1'), null),
+        isTrue,
+      );
     });
 
     test(
