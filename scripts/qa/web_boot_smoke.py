@@ -167,7 +167,10 @@ def evaluate(websocket, identifier, expression, deadline):
 
 BOOT_STATE = r"""
 (() => ({
-  documentToken: window.__hoopsconnectQaDocumentToken ||= crypto.randomUUID(),
+  documentToken: window.__hoopsconnectQaDocumentToken ||= (
+    globalThis.crypto?.randomUUID?.() ??
+    `${performance.timeOrigin}-${Date.now()}-${Math.random()}`
+  ),
   navigationTimeOrigin: performance.timeOrigin,
   readyState: document.readyState,
   title: document.title,
