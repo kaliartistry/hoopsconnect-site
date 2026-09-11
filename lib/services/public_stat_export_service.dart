@@ -224,15 +224,26 @@ class PublicStatExportService {
   /// Quoting a CSV field alone does not stop formula execution.
   static String escapeSpreadsheetText(String value) {
     if (value.isEmpty || value.startsWith("'")) return value;
-    final trimmed = value.trimLeft();
+    var firstMeaningful = 0;
+    while (firstMeaningful < value.length) {
+      final code = value.codeUnitAt(firstMeaningful);
+      final ignorablePrefix =
+          code <= 0x20 ||
+          code == 0x7f ||
+          code == 0xa0 ||
+          code == 0x200b ||
+          code == 0xfeff;
+      if (!ignorablePrefix) break;
+      firstMeaningful++;
+    }
+    final trimmed = value.substring(firstMeaningful);
     final startsWithFormula =
         trimmed.startsWith('=') ||
         trimmed.startsWith('+') ||
         trimmed.startsWith('-') ||
         trimmed.startsWith('@');
     final firstCodeUnit = value.codeUnitAt(0);
-    final startsWithControl =
-        firstCodeUnit == 0x09 || firstCodeUnit == 0x0A || firstCodeUnit == 0x0D;
+    final startsWithControl = firstCodeUnit <= 0x1f || firstCodeUnit == 0x7f;
     return startsWithFormula || startsWithControl ? "'$value" : value;
   }
 

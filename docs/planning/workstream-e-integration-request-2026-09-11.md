@@ -1,7 +1,7 @@
 # Workstream E integration request: public routes and result release
 
-Status: ready for A/D/I review; no route or production activation change is in
-this branch.
+Status: candidate implementation only; no route, rule, trigger, or production
+activation change is in this branch.
 
 Baseline: Stage 0 integration commit `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
 
@@ -28,11 +28,40 @@ Baseline: Stage 0 integration commit `6e74ba13faf316da2c506c2cafcfca985dd774cc`.
   player/leader identity rows. Those rows return only with the v1.1 allowlist
   and an explicit privacy epoch, so integration should expect Leaders to remain
   unavailable until that policy-bound snapshot exists.
+- Media Head-to-Head now reads teams, records, games, players, and metrics only
+  from the same public snapshot. It has no imports of the private season, team,
+  roster, or stats providers.
+- The dormant projector prepares immutable `public-release-v2` release data:
+  a manifest plus content pages capped at a conservative 480 KiB JSON budget.
+  A release is rejected if one item, the manifest, or the 64-page bound would
+  be exceeded. There is no silent row truncation.
+- Source reads filter by the exact current `seasonId` before each 200-document
+  page and paginate deterministically by document ID until exhaustion.
+- A current pointer can advance only after an exact transaction-time match of
+  the server-owned source token, monotonic source sequence, and source commit
+  time, current season, publication state, privacy epoch, and protocol. The
+  trusted writer must atomically issue a unique, never-reused token, increment
+  the sequence, and persist the commit time on every source mutation. A pointer
+  never moves to a lower sequence. This
+  prevents an older or mixed rebuild from overwriting a newer publication or
+  retraction.
+- The compatibility builder reports `compatibilityCandidate`, never
+  `certified` or `legacyApproved`. No Cloud Function trigger is registered in
+  this candidate, so it cannot mutate the live public projection by deployment.
+- `DormantVersionedPublicReleaseRepository` is the matching, unmounted v2
+  client. It reads the exact pointer path, manifest, and every referenced page;
+  verifies page/release/source digests, ordering, counts, size bounds, state,
+  season, and privacy epoch; then rereads the pointer before returning. Missing,
+  duplicate, changed, oversized, or stale data fails closed.
+- The active `publicLeagueSnapshotProvider` still reads the legacy monolithic
+  snapshot. It is intentionally not pointed at v2 while v2 has no deployed
+  projector/rules. The dormant projector and dormant v2 client must be enabled
+  together, never one at a time.
 
 ## Request to A: publish the public route namespace
 
-Please publish route names and path builders for these destinations before E
-edits `lib/app/`:
+Integration must mount the already accepted canonical `PublicRoutePaths`
+names and builders for these destinations before E edits `lib/app/`:
 
 1. public league landing;
 2. public game detail by stable game ID;
@@ -74,8 +103,8 @@ v2 `releaseId` or legacy `approved` as certification.
 
 There is also a deliberate compatibility gate in the current branch:
 `firestore.rules` only permits public snapshot reads when
-`certificationStatus == 'certified'` and `published == true`. E's revised
-projector emits `legacyApproved`, and a retracted snapshot emits
+`certificationStatus == 'certified'` and `published == true`. E's dormant
+projector emits `compatibilityCandidate`, and a retracted snapshot emits
 `published == false`. Therefore the revised projector must not be deployed by
 itself: clients would receive a denied/unavailable read, and they could not
 distinguish a retraction. D/I must either keep the existing projector dormant
@@ -88,6 +117,18 @@ rule to any private source collection.
 
 - Merge E after A's route patch and D's adapter decision, resolving only the
   published interfaces above.
+- Mount every public destination through canonical `PublicRoutePaths`; do not
+  preserve E's temporary local `Navigator` destinations as the route contract.
+- Replace every E-side `DateTime.toLocal()` display/day-boundary calculation
+  with the accepted Stage 1 `LeagueTime` Jamaica-zone utility. This branch did
+  not duplicate that later baseline implementation.
+- Treat rules, the v2 manifest/page reader, the current-pointer check, and the
+  server-owned source-token writer as one atomic cutover. Do not expose an
+  immutable release page directly; reads must be authorized through the exact
+  current pointer, release digest, state, and privacy epoch.
+- During that cutover, replace the active legacy repository/provider with
+  `DormantVersionedPublicReleaseRepository`; do not leave both transports live
+  or silently fall back from a failed v2 integrity check to the legacy document.
 - Keep the app and `public_functions` compatibility update in one candidate so
   artifact creation is not enabled against an unversioned live snapshot.
 - Add the accepted public projection path to the I-owned shared
@@ -97,9 +138,9 @@ rule to any private source collection.
 - Run public Functions tests, Flutter model/widget/export/share tests, the frozen
   security/account-deletion suite, optimized web build, and unauthenticated
   browser URL refresh/Back checks.
-- Do not deploy `onPublicAssociationWritten`, rebuild a live snapshot, migrate
-  data, or activate v2 as part of merging this branch. Those remain separate
-  provider-readback and release gates.
+- Do not add a trigger around `rebuildVersionedPublicRelease`, rebuild a live
+  snapshot, migrate data, or activate v2 as part of merging this branch. Those
+  remain separate provider-readback and release gates.
 - Update the isolated QA seed through I so synthetic player/leader rows use the
   explicit `publicDisplayName`/`publicPlayerLines` allowlist. E intentionally
   removed the legacy `name` and `playerLines` privacy fallbacks, so the current
@@ -111,9 +152,10 @@ rule to any private source collection.
 
 ## Remaining acceptance dependencies
 
-- A route namespace and canonical URLs.
+- Canonical `PublicRoutePaths` mounting and canonical URLs.
 - D's actual accepted revision/publication transport and complete stat fields.
-- I's atomic public-rule/transport choice and explicit-public-field QA fixture.
+- I's atomic public-rule, source-token writer, manifest/page reader, pointer
+  authorization, and explicit-public-field QA fixture.
 - The approved standings/qualification policy.
 - The player/guardian field-level publication policy and privacy-epoch source.
 - Platform browser/device checks for share permission denial, image/text

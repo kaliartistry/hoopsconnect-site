@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -66,6 +67,27 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Copy published summary'), findsOneWidget);
+  });
+
+  testWidgets('media game CSV disables duplicate taps while pending', (
+    tester,
+  ) async {
+    final downloader = _PendingDownloader();
+    await _pumpDetail(tester, downloader: downloader);
+
+    await tester.tap(find.text('Download game CSV'));
+    await tester.pump();
+
+    final button = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Saving CSV…'),
+    );
+    expect(button.onPressed, isNull);
+    expect(downloader.calls, 1);
+
+    downloader.complete('verified.csv');
+    await tester.pumpAndSettle();
+    expect(downloader.calls, 1);
+    expect(find.textContaining('CSV download started for'), findsOneWidget);
   });
 }
 
@@ -182,5 +204,25 @@ class _UnsupportedDownloader implements ArtifactDownloader {
     required String mimeType,
   }) {
     throw UnsupportedError('synthetic unsupported platform');
+  }
+}
+
+class _PendingDownloader implements ArtifactDownloader {
+  final _pending = Completer<String>();
+  int calls = 0;
+
+  @override
+  bool get isSupported => true;
+
+  void complete(String destination) => _pending.complete(destination);
+
+  @override
+  Future<String> download({
+    required Uint8List bytes,
+    required String fileName,
+    required String mimeType,
+  }) {
+    calls++;
+    return _pending.future;
   }
 }

@@ -3,7 +3,14 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {Timestamp} = require('firebase-admin/firestore');
-const {buildPublicSnapshot} = require('../lib/index');
+const {
+  MAX_PUBLIC_RELEASE_PAGES,
+  PUBLIC_PAGE_TARGET_BYTES,
+  buildPublicReleasePackage,
+  buildPublicSnapshot,
+  canAdvancePublicReleasePointer,
+  currentPointerAllowsCandidate,
+} = require('../lib/index');
 
 function fixture(overrides = {}) {
   return {
@@ -17,8 +24,8 @@ function fixture(overrides = {}) {
     season: {id: 'season-1', data: {name: '2026 NBL'}},
     divisions: [{id: 'premier', data: {name: 'Premier', seasonId: 'season-1', managerUid: 'private'}}],
     teams: [
-      {id: 'home', data: {name: 'Home Team', divisionId: 'premier', repIds: ['private-user']}},
-      {id: 'away', data: {name: 'Away Team', divisionId: 'premier'}},
+      {id: 'home', data: {name: 'Home Team', seasonId: 'season-1', divisionId: 'premier', repIds: ['private-user']}},
+      {id: 'away', data: {name: 'Away Team', seasonId: 'season-1', divisionId: 'premier'}},
     ],
     events: [{id: 'game-1', data: {
       type: 'game', seasonId: 'season-1', divisionId: 'premier', title: 'Private Admin Title',
@@ -74,7 +81,8 @@ test('public snapshot exposes one versioned approved result and strips private s
 
   assert.match(snapshot.snapshotVersion, /^[a-f0-9]{64}$/);
   assert.equal(snapshot.publication.snapshotVersion, snapshot.snapshotVersion);
-  assert.equal(snapshot.publication.verificationStatus, 'legacyApproved');
+  assert.equal(snapshot.publication.verificationStatus, 'compatibilityCandidate');
+  assert.equal(snapshot.certificationStatus, 'compatibilityCandidate');
   assert.equal(snapshot.publication.privacyEpoch, 7);
   assert.equal(snapshot.season.name, '2026 NBL');
   assert.equal(snapshot.divisions[0].name, 'Premier');
@@ -251,4 +259,196 @@ test('a missing publication state fails closed', () => {
   assert.equal(snapshot.published, false);
   assert.deepEqual(snapshot.schedule, []);
   assert.deepEqual(snapshot.leaderboards, []);
+});
+
+test('projection keeps complete current-season coverage without legacy caps', () => {
+  const complete = fixture();
+  complete.events = Array.from({length: 333}, (_, index) => ({
+    id: `game-${index.toString().padStart(4, '0')}`,
+    data: {
+      type: 'game',
+      seasonId: 'season-1',
+      startTime: Timestamp.fromMillis(1_800_000_000_000 + index * 60_000),
+      teamIds: ['home', 'away'],
+    },
+  }));
+  complete.gameStats = [];
+  complete.leaderboards = Array.from({length: 73}, (_, index) => ({
+    id: `board-${index}`,
+    data: {
+      seasonId: 'season-1', category: `custom-${index}`,
+      rankings: Array.from({length: 41}, (_, rank) => ({
+        playerId: `player-${index}-${rank}`,
+        publicDisplayName: `Player ${index} ${rank}`,
+        teamId: 'home', value: rank, gp: 1,
+      })),
+    },
+  }));
+
+  const snapshot = buildPublicSnapshot(complete);
+
+  assert.equal(snapshot.schedule.length, 333);
+  assert.equal(snapshot.leaderboards.length, 73);
+  assert.equal(snapshot.leaderboards[0].rankings.length, 41);
+});
+
+test('versioned release pages stay far below Firestore 1 MiB at worst-case volume', () => {
+  const large = fixture();
+  large.events = Array.from({length: 300}, (_, index) => ({
+    id: `game-${index.toString().padStart(4, '0')}`,
+    data: {
+      type: 'game', seasonId: 'season-1',
+      startTime: Timestamp.fromMillis(1_800_000_000_000 + index * 60_000),
+      location: `${'V'.repeat(150)} ${index}`,
+      teamIds: ['home', 'away'],
+    },
+  }));
+  large.gameStats = large.events.map((event, index) => ({
+    id: event.id,
+    data: {
+      status: 'approved', seasonId: 'season-1',
+      homeTeamId: 'home', awayTeamId: 'away', homeScore: 90, awayScore: 80,
+      publicRecap: `${'R'.repeat(2990)} ${index}`,
+      publicPlayerLines: Array.from({length: 100}, (_, player) => ({
+        playerId: `p-${index}-${player}`,
+        publicDisplayName: `${'N'.repeat(140)} ${player}`,
+        teamId: player % 2 === 0 ? 'home' : 'away', points: player,
+      })),
+    },
+  }));
+  const snapshot = buildPublicSnapshot(large);
+  const sourceVersion = 'b'.repeat(64);
+  const release = buildPublicReleasePackage(
+    snapshot, sourceVersion, 42, '2026-09-10T21:00:00.000Z',
+  );
+
+  assert.equal(release.manifest.pageCount, release.pages.length);
+  assert.ok(release.pages.length > 1);
+  assert.ok(release.pages.length <= MAX_PUBLIC_RELEASE_PAGES);
+  assert.equal(release.manifest.counts.schedule, 300);
+  for (const page of release.pages) {
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(page.data), 'utf8') <= PUBLIC_PAGE_TARGET_BYTES,
+      `${page.id} exceeded the safe page budget`,
+    );
+  }
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(release.manifest), 'utf8') <= PUBLIC_PAGE_TARGET_BYTES,
+  );
+});
+
+test('an oversized item or release fails explicitly instead of truncating', () => {
+  const snapshot = buildPublicSnapshot(fixture());
+  snapshot.schedule[0].recap = 'x'.repeat(PUBLIC_PAGE_TARGET_BYTES);
+  assert.throws(
+    () => buildPublicReleasePackage(
+      snapshot, 'c'.repeat(64), 42, '2026-09-10T21:00:00.000Z',
+    ),
+    /exceeds the safe document budget/,
+  );
+
+  const tiny = buildPublicSnapshot(fixture());
+  const original = tiny.schedule[0];
+  tiny.schedule = Array.from(
+    {length: MAX_PUBLIC_RELEASE_PAGES + 20},
+    (_, index) => ({...original, gameId: `capacity-${index}`, recap: 'z'.repeat(470_000)}),
+  );
+  assert.throws(
+    () => buildPublicReleasePackage(
+      tiny, 'd'.repeat(64), 42, '2026-09-10T21:00:00.000Z',
+    ),
+    /maximum is/,
+  );
+});
+
+test('oversized public source fields fail explicitly instead of being clipped', () => {
+  const oversized = fixture();
+  oversized.teams[0].data.name = 'x'.repeat(161);
+  assert.throws(
+    () => buildPublicSnapshot(oversized),
+    /exceeds the 160-character contract limit/,
+  );
+
+  const extraTeam = fixture();
+  extraTeam.events[0].data.teamIds = ['team-a', 'team-b', 'team-c'];
+  assert.throws(
+    () => buildPublicSnapshot(extraTeam),
+    /more than two team IDs/,
+  );
+});
+
+test('current pointer guard rejects stale source, season, state, and privacy epoch', () => {
+  const expected = {
+    expectedSourceVersion: 'e'.repeat(64),
+    expectedSourceSequence: 42,
+    expectedSourceCommittedAt: '2026-09-11T12:00:00.000Z',
+    expectedSeasonId: 'season-1',
+    expectedState: 'published',
+    expectedPrivacyEpoch: 7,
+  };
+  const association = {
+    currentSeasonId: 'season-1', publicLeagueState: 'published', publicPrivacyEpoch: 7,
+    publicProjectionProtocol: 'public-release-v2',
+    publicProjectionSourceVersion: 'e'.repeat(64),
+    publicProjectionSourceSequence: 42,
+    publicProjectionSourceCommittedAt: '2026-09-11T12:00:00.000Z',
+  };
+  assert.equal(canAdvancePublicReleasePointer({...expected, association}), true);
+  assert.equal(canAdvancePublicReleasePointer({
+    ...expected,
+    association: {...association, publicProjectionSourceVersion: 'f'.repeat(64)},
+  }), false);
+  assert.equal(canAdvancePublicReleasePointer({
+    ...expected,
+    association: {...association, publicLeagueState: 'retracted'},
+  }), false);
+  assert.equal(canAdvancePublicReleasePointer({
+    ...expected,
+    association: {...association, currentSeasonId: 'season-2'},
+  }), false);
+  assert.equal(canAdvancePublicReleasePointer({
+    ...expected,
+    association: {...association, publicPrivacyEpoch: 8},
+  }), false);
+  assert.equal(canAdvancePublicReleasePointer({
+    ...expected,
+    association: {...association, publicProjectionSourceSequence: 41},
+  }), false);
+  assert.equal(canAdvancePublicReleasePointer({
+    ...expected,
+    association: {...association, publicProjectionSourceCommittedAt: '2026-09-11T12:00:01.000Z'},
+  }), false);
+});
+
+test('current pointer refuses a conflicting release at the same sequence', () => {
+  const candidate = {
+    releaseId: 'a'.repeat(64),
+    releaseDigest: 'b'.repeat(64),
+    sourceVersion: 'c'.repeat(64),
+    sourceSequence: 42,
+    sourceCommittedAt: '2026-09-11T12:00:00.000Z',
+    state: 'published',
+    seasonId: 'season-1',
+    privacyEpoch: 7,
+  };
+  const current = {
+    protocolVersion: 'public-release-v2',
+    ...candidate,
+  };
+  assert.equal(currentPointerAllowsCandidate(null, candidate), true);
+  assert.equal(currentPointerAllowsCandidate({...current, sourceSequence: 41}, candidate), true);
+  assert.equal(currentPointerAllowsCandidate(current, candidate), true);
+  assert.equal(currentPointerAllowsCandidate({...current, releaseId: 'd'.repeat(64)}, candidate), false);
+  assert.equal(currentPointerAllowsCandidate({...current, state: 'retracted'}, candidate), false);
+  assert.equal(currentPointerAllowsCandidate({
+    ...current, sourceCommittedAt: '2026-09-11T12:00:00Z',
+  }, candidate), false);
+  assert.equal(currentPointerAllowsCandidate({...current, sourceSequence: 43}, candidate), false);
+  assert.equal(currentPointerAllowsCandidate({...current, sourceSequence: '42'}, candidate), false);
+});
+
+test('compatibility module registers no deployable projection triggers', () => {
+  const moduleExports = require('../lib/index');
+  assert.equal(moduleExports.onPublicLeagueSourceWritten, undefined);
+  assert.equal(moduleExports.onPublicAssociationWritten, undefined);
 });

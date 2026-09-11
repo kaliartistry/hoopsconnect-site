@@ -35,6 +35,18 @@ void main() {
         "'\n=1+1",
       );
       expect(
+        PublicStatExportService.escapeSpreadsheetText('\u0000=1+1'),
+        "'\u0000=1+1",
+      );
+      expect(
+        PublicStatExportService.escapeSpreadsheetText('\ufeff=1+1'),
+        "'\ufeff=1+1",
+      );
+      expect(
+        PublicStatExportService.escapeSpreadsheetText('\u200b@SUM(A1)'),
+        "'\u200b@SUM(A1)",
+      );
+      expect(
         PublicStatExportService.escapeSpreadsheetText('Kingston'),
         'Kingston',
       );
@@ -61,6 +73,10 @@ void main() {
     expect(csv, contains('Unknown'));
     expect(csv, isNot(contains('private@example.com')));
     expect(csv, isNot(contains('guardian')));
+    for (final row in csv.trim().split('\r\n').skip(1)) {
+      expect(row, contains(_snapshotHash));
+      expect(row, contains(_resultHash));
+    }
   });
 
   test('player identity rows are excluded without the field-level grant', () {

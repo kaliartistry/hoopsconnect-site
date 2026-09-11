@@ -1,23 +1,18 @@
 import {createHash} from "node:crypto";
 
 import * as admin from "firebase-admin";
-import {Timestamp} from "firebase-admin/firestore";
-import {onDocumentWritten} from "firebase-functions/v2/firestore";
+import {FieldPath, Timestamp} from "firebase-admin/firestore";
 
 admin.initializeApp();
 
 const PUBLIC_SCHEMA_VERSION = 1;
 const PUBLIC_CONTRACT_VERSION = "legacy-public-snapshot-v1.1";
+const PUBLIC_RELEASE_PROTOCOL = "public-release-v2";
 const PUBLIC_ASSOCIATION_ID = "jba";
-const PUBLIC_SOURCE_COLLECTIONS = new Set([
-  "divisions",
-  "events",
-  "gameStats",
-  "leaderboard",
-  "seasons",
-  "standings",
-  "teams",
-]);
+export const PUBLIC_PAGE_TARGET_BYTES = 480 * 1024;
+export const MAX_PUBLIC_RELEASE_PAGES = 64;
+const SOURCE_QUERY_PAGE_SIZE = 200;
+const PUBLIC_WRITE_BATCH_PAGES = 10;
 const LEADERBOARD_ORDER = ["ppg", "rpg", "apg", "spg", "bpg"];
 const SHA256 = /^[a-f0-9]{64}$/;
 
@@ -25,12 +20,21 @@ type RecordWithId = {id: string; data: Record<string, unknown>};
 type PublicState = "published" | "retracted" | "unavailable";
 
 function text(value: unknown, fallback = ""): string {
-  return typeof value === "string" ? value.trim().slice(0, 160) : fallback;
+  if (typeof value !== "string") return fallback;
+  const result = value.trim();
+  if (result.length > 160) {
+    throw new Error("A public text field exceeds the 160-character contract limit.");
+  }
+  return result;
 }
 
 function longText(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ?
-    value.trim().slice(0, 3000) : null;
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const result = value.trim();
+  if (result.length > 3000) {
+    throw new Error("A public long-text field exceeds the 3000-character contract limit.");
+  }
+  return result;
 }
 
 function nullableText(value: unknown): string | null {
@@ -111,7 +115,7 @@ function publicPeriodScores(stats: Record<string, unknown> | undefined) {
 function publicPlayerLines(stats: Record<string, unknown> | undefined) {
   // Only a pre-whitelisted publicPlayerLines array crosses this boundary.
   // Legacy playerLines may contain unreviewed names or identity-bearing keys.
-  return objectList(stats?.publicPlayerLines).slice(0, 100).map((row) => ({
+  return objectList(stats?.publicPlayerLines).map((row) => ({
     playerId: text(row.playerId),
     displayName: text(row.publicDisplayName),
     teamId: text(row.teamId),
@@ -159,7 +163,7 @@ export function buildPublicSnapshot(input: {
   const canPublishPlayerIdentity = privacyEpoch !== null;
   const generatedAt = input.generatedAt || new Date().toISOString();
   const seasonTeams = input.teams.filter(
-    (entry) => !entry.data.seasonId || entry.data.seasonId === seasonId,
+    (entry) => entry.data.seasonId === seasonId,
   );
   const teamNames = new Map(
     seasonTeams.map((entry) => [entry.id, text(entry.data.name, "Team")]),
@@ -175,7 +179,10 @@ export function buildPublicSnapshot(input: {
     .map((entry) => {
       const stats = approvedStats.get(entry.id);
       const teamIds = Array.isArray(entry.data.teamIds) ?
-        entry.data.teamIds.filter((value): value is string => typeof value === "string").slice(0, 2) : [];
+        entry.data.teamIds.filter((value): value is string => typeof value === "string") : [];
+      if (teamIds.length > 2) {
+        throw new Error(`Game ${entry.id} has more than two team IDs.`);
+      }
       const homeTeamId = text(stats?.homeTeamId, teamIds[0] || "");
       const awayTeamId = text(stats?.awayTeamId, teamIds[1] || "");
       const result = stats ? {
@@ -209,14 +216,13 @@ export function buildPublicSnapshot(input: {
       };
     })
     .filter((entry) => entry.startTime !== null)
-    .sort((a, b) => a.startTime!.localeCompare(b.startTime!) || a.gameId.localeCompare(b.gameId))
-    .slice(-250);
+    .sort((a, b) => a.startTime!.localeCompare(b.startTime!) || a.gameId.localeCompare(b.gameId));
 
   const standings = input.standings
     .filter((entry) => entry.data.seasonId === seasonId)
     .flatMap((entry) => {
       const divisionId = nullableText(entry.data.divisionId);
-      return objectList(entry.data.standings).slice(0, 100).map((row) => {
+      return objectList(entry.data.standings).map((row) => {
         const teamId = text(row.teamId);
         const parsedRank = nullableInteger(row.rank);
         const rank = parsedRank !== null && parsedRank > 0 ? parsedRank : null;
@@ -249,7 +255,7 @@ export function buildPublicSnapshot(input: {
         divisionId,
         qualificationLabel: nullableText(entry.data.qualificationLabel),
         rankings: (canPublishPlayerIdentity ?
-          objectList(entry.data.rankings).slice(0, 25) : []).map((row) => {
+          objectList(entry.data.rankings) : []).map((row) => {
           const teamId = text(row.teamId);
           return {
             playerId: text(row.playerId),
@@ -268,7 +274,7 @@ export function buildPublicSnapshot(input: {
       a.category.localeCompare(b.category));
 
   const divisions = (input.divisions || [])
-    .filter((entry) => !entry.data.seasonId || entry.data.seasonId === seasonId)
+    .filter((entry) => entry.data.seasonId === seasonId)
     .map((entry) => ({divisionId: entry.id, name: text(entry.data.name, "Division")}))
     .sort((a, b) => a.name.localeCompare(b.name) || a.divisionId.localeCompare(b.divisionId));
   const teams = seasonTeams
@@ -317,7 +323,7 @@ export function buildPublicSnapshot(input: {
     schemaVersion: PUBLIC_SCHEMA_VERSION,
     contractVersion: PUBLIC_CONTRACT_VERSION,
     published: state === "published",
-    certificationStatus: "legacyApproved",
+    certificationStatus: "compatibilityCandidate",
     publicationState: state,
     snapshotVersion,
     generatedAt,
@@ -326,7 +332,7 @@ export function buildPublicSnapshot(input: {
       state,
       contractVersion: PUBLIC_CONTRACT_VERSION,
       snapshotVersion,
-      verificationStatus: "legacyApproved",
+      verificationStatus: "compatibilityCandidate",
       privacyEpoch,
       generatedAt,
     },
@@ -338,68 +344,402 @@ export function buildPublicSnapshot(input: {
   };
 }
 
-function documentRecords(snapshot: admin.firestore.QuerySnapshot): RecordWithId[] {
-  return snapshot.docs.map((doc) => ({id: doc.id, data: doc.data()}));
+type SnapshotDocument = ReturnType<typeof buildPublicSnapshot>;
+type ContentKey = "divisions" | "teams" | "schedule" | "standings" | "leaderboards";
+
+export type PublicReleasePage = {
+  protocolVersion: string;
+  releaseId: string;
+  sourceVersion: string;
+  contentType: ContentKey;
+  pageIndex: number;
+  itemCount: number;
+  items: unknown[];
+  pageDigest: string;
+};
+
+export type PublicReleasePackage = {
+  releaseId: string;
+  manifest: Record<string, unknown>;
+  pages: Array<{id: string; data: PublicReleasePage}>;
+};
+
+function utf8JsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
-export async function rebuildPublicSnapshot(associationId: string): Promise<void> {
-  if (associationId !== PUBLIC_ASSOCIATION_ID) return;
+function assertSourceVersion(value: string): void {
+  if (!SHA256.test(value)) {
+    throw new Error("publicProjectionSourceVersion must be a lowercase SHA-256 value.");
+  }
+}
+
+/**
+ * Splits a complete public projection into immutable, conservatively sized
+ * Firestore page documents. Capacity failures are explicit; no row is sliced
+ * or silently dropped.
+ */
+export function buildPublicReleasePackage(
+  snapshot: SnapshotDocument,
+  sourceVersion: string,
+  sourceSequence: number,
+  sourceCommittedAt: string,
+): PublicReleasePackage {
+  assertSourceVersion(sourceVersion);
+  if (!Number.isSafeInteger(sourceSequence) || sourceSequence < 0) {
+    throw new Error("sourceSequence must be a nonnegative safe integer.");
+  }
+  if (timestampIso(sourceCommittedAt) !== sourceCommittedAt) {
+    throw new Error("sourceCommittedAt must be a canonical ISO timestamp.");
+  }
+  const releaseId = fingerprint({
+    protocolVersion: PUBLIC_RELEASE_PROTOCOL,
+    snapshotVersion: snapshot.snapshotVersion,
+    sourceVersion,
+    sourceSequence,
+    sourceCommittedAt,
+  });
+  const pages: Array<{id: string; data: PublicReleasePage}> = [];
+  const pageRefs: Array<Record<string, unknown>> = [];
+  const counts: Record<string, number> = {};
+  const contentKeys: ContentKey[] = [
+    "divisions", "teams", "schedule", "standings", "leaderboards",
+  ];
+
+  for (const contentType of contentKeys) {
+    const items = snapshot[contentType] as unknown[];
+    counts[contentType] = items.length;
+    let pageItems: unknown[] = [];
+    let pageIndex = 0;
+
+    const finishPage = () => {
+      if (pageItems.length === 0) return;
+      const pageWithoutDigest = {
+        protocolVersion: PUBLIC_RELEASE_PROTOCOL,
+        releaseId,
+        sourceVersion,
+        contentType,
+        pageIndex,
+        itemCount: pageItems.length,
+        items: pageItems,
+      };
+      const data: PublicReleasePage = {
+        ...pageWithoutDigest,
+        pageDigest: fingerprint(pageWithoutDigest),
+      };
+      if (utf8JsonBytes(data) > PUBLIC_PAGE_TARGET_BYTES) {
+        throw new Error(`Public ${contentType} page exceeds the safe document budget.`);
+      }
+      const id = `${contentType}-${pageIndex.toString().padStart(4, "0")}`;
+      pages.push({id, data});
+      pageRefs.push({
+        id,
+        contentType,
+        pageIndex,
+        itemCount: data.itemCount,
+        pageDigest: data.pageDigest,
+      });
+      pageIndex += 1;
+      pageItems = [];
+    };
+
+    for (const item of items) {
+      const candidate = [...pageItems, item];
+      const candidateDocument = {
+        protocolVersion: PUBLIC_RELEASE_PROTOCOL,
+        releaseId,
+        sourceVersion,
+        contentType,
+        pageIndex,
+        itemCount: candidate.length,
+        items: candidate,
+        pageDigest: "0".repeat(64),
+      };
+      if (utf8JsonBytes(candidateDocument) > PUBLIC_PAGE_TARGET_BYTES) {
+        if (pageItems.length === 0) {
+          throw new Error(`One public ${contentType} item exceeds the safe document budget.`);
+        }
+        finishPage();
+      }
+      pageItems.push(item);
+    }
+    finishPage();
+  }
+
+  if (pages.length > MAX_PUBLIC_RELEASE_PAGES) {
+    throw new Error(
+      `Public release requires ${pages.length} pages; maximum is ${MAX_PUBLIC_RELEASE_PAGES}.`,
+    );
+  }
+
+  const metadata = Object.fromEntries(
+    Object.entries(snapshot).filter(([key]) => !contentKeys.includes(key as ContentKey)),
+  );
+  const releaseDigest = fingerprint({
+    releaseId, sourceVersion, sourceSequence, sourceCommittedAt, metadata, pageRefs, counts,
+  });
+  const manifest: Record<string, unknown> = {
+    protocolVersion: PUBLIC_RELEASE_PROTOCOL,
+    releaseId,
+    sourceVersion,
+    sourceSequence,
+    sourceCommittedAt,
+    releaseDigest,
+    state: snapshot.publicationState,
+    seasonId: snapshot.seasonId,
+    privacyEpoch: snapshot.privacyEpoch,
+    pageCount: pages.length,
+    pages: pageRefs,
+    counts,
+    metadata,
+  };
+  if (utf8JsonBytes(manifest) > PUBLIC_PAGE_TARGET_BYTES) {
+    throw new Error("Public release manifest exceeds the safe document budget.");
+  }
+  return {releaseId, manifest, pages};
+}
+
+export function canAdvancePublicReleasePointer(input: {
+  expectedSourceVersion: string;
+  expectedSourceSequence: number;
+  expectedSourceCommittedAt: string;
+  expectedSeasonId: string;
+  expectedState: PublicState;
+  expectedPrivacyEpoch: number | null;
+  association: Record<string, unknown>;
+}): boolean {
+  const liveEpoch = nullableInteger(input.association.publicPrivacyEpoch);
+  const liveSequence = nullableInteger(input.association.publicProjectionSourceSequence);
+  const liveCommittedAt = timestampIso(input.association.publicProjectionSourceCommittedAt);
+  return input.association.publicProjectionProtocol === PUBLIC_RELEASE_PROTOCOL &&
+    input.association.publicProjectionSourceVersion === input.expectedSourceVersion &&
+    liveSequence === input.expectedSourceSequence && input.expectedSourceSequence >= 0 &&
+    liveCommittedAt === input.expectedSourceCommittedAt &&
+    text(input.association.currentSeasonId) === input.expectedSeasonId &&
+    publicationState(input.association) === input.expectedState &&
+    liveEpoch === input.expectedPrivacyEpoch;
+}
+
+export function currentPointerAllowsCandidate(
+  current: Record<string, unknown> | null,
+  candidate: {
+    releaseId: string;
+    releaseDigest: string;
+    sourceVersion: string;
+    sourceSequence: number;
+    sourceCommittedAt: string;
+    state: PublicState;
+    seasonId: string;
+    privacyEpoch: number | null;
+  },
+): boolean {
+  if (current === null) return true;
+  const currentSequence = nullableInteger(current.sourceSequence);
+  if (currentSequence === null || currentSequence > candidate.sourceSequence) return false;
+  if (currentSequence < candidate.sourceSequence) return true;
+  return current.protocolVersion === PUBLIC_RELEASE_PROTOCOL &&
+    current.releaseId === candidate.releaseId &&
+    current.releaseDigest === candidate.releaseDigest &&
+    current.sourceVersion === candidate.sourceVersion &&
+    current.sourceCommittedAt === candidate.sourceCommittedAt &&
+    current.state === candidate.state &&
+    current.seasonId === candidate.seasonId &&
+    nullableInteger(current.privacyEpoch) === candidate.privacyEpoch;
+}
+
+async function readCurrentSeasonRecords(
+  collection: admin.firestore.CollectionReference,
+  seasonId: string,
+): Promise<RecordWithId[]> {
+  const records: RecordWithId[] = [];
+  let cursor: admin.firestore.QueryDocumentSnapshot | undefined;
+  do {
+    let query: admin.firestore.Query = collection
+      .where("seasonId", "==", seasonId)
+      .orderBy(FieldPath.documentId())
+      .limit(SOURCE_QUERY_PAGE_SIZE);
+    if (cursor) query = query.startAfter(cursor);
+    const page = await query.get();
+    for (const doc of page.docs) records.push({id: doc.id, data: doc.data()});
+    cursor = page.docs.length === SOURCE_QUERY_PAGE_SIZE ? page.docs.at(-1) : undefined;
+  } while (cursor);
+  return records;
+}
+
+async function createImmutablePageChunk(
+  db: admin.firestore.Firestore,
+  manifestRef: admin.firestore.DocumentReference,
+  pages: Array<{id: string; data: PublicReleasePage}>,
+): Promise<void> {
+  const refs = pages.map((page) => manifestRef.collection("pages").doc(page.id));
+  const existing = await db.getAll(...refs);
+  const batch = db.batch();
+  let creates = 0;
+  for (let index = 0; index < pages.length; index += 1) {
+    const snapshot = existing[index];
+    const page = pages[index];
+    if (snapshot.exists) {
+      if (fingerprint(snapshot.data()) !== fingerprint(page.data)) {
+        throw new Error(`Immutable public release page ${page.id} conflicts.`);
+      }
+      continue;
+    }
+    batch.create(refs[index], page.data);
+    creates += 1;
+  }
+  if (creates === 0) return;
+  try {
+    await batch.commit();
+  } catch (error) {
+    // A concurrent identical retry may have created the whole chunk after our
+    // read. Exact digest readback makes that idempotent without permitting an
+    // overwrite.
+    const after = await db.getAll(...refs);
+    if (after.some((doc, index) =>
+      !doc.exists || fingerprint(doc.data()) !== fingerprint(pages[index].data))) {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Dormant compatibility bridge for a future trusted public-release-v2
+ * transport. Nothing in this module registers a Cloud Function trigger.
+ *
+ * The trusted writer must atomically change publicProjectionSourceVersion on
+ * every source mutation. The final transaction rechecks that token plus the
+ * publication state, season, and privacy epoch, so an older or mixed rebuild
+ * cannot replace a newer publication or retraction.
+ */
+export async function rebuildVersionedPublicRelease(
+  associationId: string,
+  expectedSourceVersion: string,
+): Promise<string> {
+  if (associationId !== PUBLIC_ASSOCIATION_ID) {
+    throw new Error("Only the configured public association can be projected.");
+  }
+  assertSourceVersion(expectedSourceVersion);
   const db = admin.firestore();
   const associationRef = db.doc(`associations/${associationId}`);
-  const publicSnapshotRef = db.doc(`publicData/${associationId}/snapshots/current`);
   const associationSnap = await associationRef.get();
-  if (!associationSnap.exists) {
-    await publicSnapshotRef.delete();
-    return;
-  }
+  if (!associationSnap.exists) throw new Error("Association does not exist.");
   const association = associationSnap.data() || {};
   const seasonId = text(association.currentSeasonId);
-  if (!seasonId) {
-    await publicSnapshotRef.delete();
-    return;
+  if (!seasonId) throw new Error("Association currentSeasonId is required.");
+  const state = publicationState(association);
+  const privacyEpoch = nullableInteger(association.publicPrivacyEpoch);
+  const sourceSequence = nullableInteger(association.publicProjectionSourceSequence);
+  const sourceCommittedAt = timestampIso(association.publicProjectionSourceCommittedAt);
+  if (sourceSequence === null || sourceSequence < 0) {
+    throw new Error("A nonnegative publicProjectionSourceSequence is required.");
   }
-  const [season, divisions, events, gameStats, standings, leaderboards, teams] = await Promise.all([
-    associationRef.collection("seasons").doc(seasonId).get(),
-    associationRef.collection("divisions").limit(50).get(),
-    associationRef.collection("events").orderBy("startTime").limit(250).get(),
-    associationRef.collection("gameStats").limit(250).get(),
-    associationRef.collection("standings").limit(50).get(),
-    associationRef.collection("leaderboard").limit(50).get(),
-    associationRef.collection("teams").limit(100).get(),
-  ]);
+  if (sourceCommittedAt === null) {
+    throw new Error("A valid publicProjectionSourceCommittedAt is required.");
+  }
+  if (!canAdvancePublicReleasePointer({
+    expectedSourceVersion,
+    expectedSourceSequence: sourceSequence,
+    expectedSourceCommittedAt: sourceCommittedAt,
+    expectedSeasonId: seasonId,
+    expectedState: state,
+    expectedPrivacyEpoch: privacyEpoch,
+    association,
+  })) {
+    throw new Error("Public projection protocol or exact source version is not ready.");
+  }
+
+  const [season, divisions, events, gameStats, standings, leaderboards, teams] =
+    await Promise.all([
+      associationRef.collection("seasons").doc(seasonId).get(),
+      readCurrentSeasonRecords(associationRef.collection("divisions"), seasonId),
+      readCurrentSeasonRecords(associationRef.collection("events"), seasonId),
+      readCurrentSeasonRecords(associationRef.collection("gameStats"), seasonId),
+      readCurrentSeasonRecords(associationRef.collection("standings"), seasonId),
+      readCurrentSeasonRecords(associationRef.collection("leaderboard"), seasonId),
+      readCurrentSeasonRecords(associationRef.collection("teams"), seasonId),
+    ]);
   const snapshot = buildPublicSnapshot({
     associationId,
     association,
     season: season.exists ? {id: season.id, data: season.data() || {}} : null,
-    divisions: documentRecords(divisions),
-    events: documentRecords(events),
-    gameStats: documentRecords(gameStats),
-    standings: documentRecords(standings),
-    leaderboards: documentRecords(leaderboards),
-    teams: documentRecords(teams),
+    divisions,
+    events,
+    gameStats,
+    standings,
+    leaderboards,
+    teams,
+    generatedAt: sourceCommittedAt,
   });
-  await publicSnapshotRef.set(snapshot, {merge: false});
-}
-
-export const onPublicLeagueSourceWritten = onDocumentWritten(
-  "associations/{associationId}/{collectionId}/{documentId}",
-  async (event) => {
-    const {associationId, collectionId} = event.params;
-    if (associationId !== PUBLIC_ASSOCIATION_ID || !PUBLIC_SOURCE_COLLECTIONS.has(collectionId)) return;
-    await rebuildPublicSnapshot(associationId);
-  },
-);
-
-export const onPublicAssociationWritten = onDocumentWritten(
-  "associations/{associationId}",
-  async (event) => {
-    if (event.params.associationId !== PUBLIC_ASSOCIATION_ID) return;
-    if (!event.data?.after.exists) {
-      await admin.firestore()
-        .doc(`publicData/${event.params.associationId}/snapshots/current`)
-        .delete();
-      return;
+  const release = buildPublicReleasePackage(
+    snapshot,
+    expectedSourceVersion,
+    sourceSequence,
+    sourceCommittedAt,
+  );
+  const manifestRef = db.doc(`publicData/${associationId}/releases/${release.releaseId}`);
+  for (let offset = 0; offset < release.pages.length; offset += PUBLIC_WRITE_BATCH_PAGES) {
+    await createImmutablePageChunk(
+      db,
+      manifestRef,
+      release.pages.slice(offset, offset + PUBLIC_WRITE_BATCH_PAGES),
+    );
+  }
+  const releaseBatch = db.batch();
+  releaseBatch.create(manifestRef, release.manifest);
+  try {
+    await releaseBatch.commit();
+  } catch (error) {
+    const existing = await manifestRef.get();
+    if (!existing.exists || fingerprint(existing.data()) !== fingerprint(release.manifest)) {
+      throw error;
     }
-    await rebuildPublicSnapshot(event.params.associationId);
-  },
-);
+  }
+
+  const pointerRef = db.doc(`publicData/${associationId}/releasePointers/current`);
+  await db.runTransaction(async (transaction) => {
+    const liveSnap = await transaction.get(associationRef);
+    const currentPointer = await transaction.get(pointerRef);
+    const live = liveSnap.data() || {};
+    if (!liveSnap.exists || !canAdvancePublicReleasePointer({
+      expectedSourceVersion,
+      expectedSourceSequence: sourceSequence,
+      expectedSourceCommittedAt: sourceCommittedAt,
+      expectedSeasonId: seasonId,
+      expectedState: state,
+      expectedPrivacyEpoch: privacyEpoch,
+      association: live,
+    })) {
+      throw new Error("Public source changed while the release was being built.");
+    }
+    if (!currentPointerAllowsCandidate(
+      currentPointer.exists ? currentPointer.data() || {} : null,
+      {
+        releaseId: release.releaseId,
+        releaseDigest: release.manifest.releaseDigest as string,
+        sourceVersion: expectedSourceVersion,
+        sourceSequence,
+        sourceCommittedAt,
+        state,
+        seasonId,
+        privacyEpoch,
+      },
+    )) {
+      throw new Error("The current public release pointer conflicts with this candidate.");
+    }
+    transaction.set(pointerRef, {
+      protocolVersion: PUBLIC_RELEASE_PROTOCOL,
+      associationId,
+      releaseId: release.releaseId,
+      manifestPath: manifestRef.path,
+      releaseDigest: release.manifest.releaseDigest,
+      sourceVersion: expectedSourceVersion,
+      sourceSequence,
+      sourceCommittedAt,
+      state,
+      seasonId,
+      privacyEpoch,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: false});
+  });
+  return release.releaseId;
+}
