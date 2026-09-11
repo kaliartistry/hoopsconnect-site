@@ -75,6 +75,10 @@ class _PasswordRecoveryScreenState
       if (mounted) setState(() => _sent = true);
     } catch (error) {
       if (!mounted) return;
+      if (passwordResetShouldAppearSuccessful(error)) {
+        setState(() => _sent = true);
+        return;
+      }
       setState(() {
         _error =
             friendlyAuthErrorMessage(error) ??

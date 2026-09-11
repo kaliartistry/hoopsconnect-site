@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/public_league_snapshot.dart';
 import '../../providers/public_league_provider.dart';
@@ -19,7 +20,7 @@ class PublicLeagueScreen extends ConsumerWidget {
           foregroundColor: Colors.white,
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).maybePop(),
+              onPressed: () => context.go('/login'),
               style: TextButton.styleFrom(foregroundColor: Colors.white),
               child: const Text('Sign in'),
             ),

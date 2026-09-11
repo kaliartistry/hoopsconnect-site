@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../providers/auth_providers.dart';
 import '../../../providers/post_providers.dart';
+import '../../../providers/role_preview_provider.dart';
 
 /// Embeddable post detail panel for the desktop 2-column board layout.
 /// Shows the same content as [AckDetailScreen] but without a Scaffold/AppBar.
@@ -15,7 +16,8 @@ class PostDetailPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final postAsync = ref.watch(postDetailProvider(postId));
-    final currentUser = ref.watch(currentUserProvider).value;
+    final currentUser = ref.watch(effectiveUserProvider);
+    final realUser = ref.watch(currentUserProvider).valueOrNull;
     final assocId = ref.watch(currentAssociationIdProvider);
 
     return postAsync.when(
@@ -24,8 +26,9 @@ class PostDetailPanel extends ConsumerWidget {
           return const Center(child: Text('Post not found'));
         }
 
-        final userAcked =
-            currentUser != null && post.hasUserAcked(currentUser.id);
+        final userAcked = realUser != null && post.hasUserAcked(realUser.id);
+        final canAcknowledge =
+            currentUser?.hasCapability('posts.acknowledge') ?? false;
         final isOverdue = post.isAckOverdue();
 
         return ListView(
@@ -150,17 +153,24 @@ class PostDetailPanel extends ConsumerWidget {
             if (post.requiresAck) const SizedBox(height: 24),
 
             // Acknowledge button
-            if (post.requiresAck && !userAcked && currentUser != null) ...[
+            if (post.requiresAck &&
+                !userAcked &&
+                realUser != null &&
+                canAcknowledge) ...[
               SizedBox(
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton.icon(
                   onPressed: () {
-                    if (assocId != null) {
-                      ref.read(postRepositoryProvider).acknowledge(
-                            assocId,
-                            post.id,
-                          );
+                    final actingUser = ref
+                        .read(currentUserProvider)
+                        .valueOrNull;
+                    if (assocId != null &&
+                        actingUser?.hasCapability('posts.acknowledge') ==
+                            true) {
+                      ref
+                          .read(postRepositoryProvider)
+                          .acknowledge(assocId, post.id);
                     }
                   },
                   style: ElevatedButton.styleFrom(

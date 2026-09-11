@@ -21,9 +21,8 @@ class AdminPanelScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUser = ref.watch(currentUserProvider).value;
-    final requestedPreviewRole = ref.watch(rolePreviewProvider);
     final canUseRolePreview = currentUser?.canManageUsers ?? false;
-    final previewRole = canUseRolePreview ? requestedPreviewRole : null;
+    final previewRole = ref.watch(activeRolePreviewProvider);
     bool displayAllows(String capability) => previewRole == null
         ? currentUser?.hasCapability(capability) ?? false
         : previewRoleShowsCapability(previewRole, capability);

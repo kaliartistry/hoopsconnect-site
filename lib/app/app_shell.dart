@@ -123,10 +123,7 @@ class AppShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final actualUser = ref.watch(currentUserProvider).valueOrNull;
-    final requestedPreviewRole = ref.watch(rolePreviewProvider);
-    final previewRole = actualUser?.canManageUsers == true
-        ? requestedPreviewRole
-        : null;
+    final previewRole = ref.watch(activeRolePreviewProvider);
     final isPreviewActive = previewRole != null;
     bool displayAllows(String capability) => previewRole == null
         ? actualUser?.hasCapability(capability) ?? false

@@ -76,6 +76,37 @@ String? resolvePendingRequestedLocation({
   return safeUri.toString() == currentLocation.toString() ? null : safe;
 }
 
+String? resolveLoadingExit({
+  required AccountAccessStatus accessStatus,
+  required bool isLoggedIn,
+  required String? pendingLocation,
+  required UserModel? user,
+}) {
+  if (accessStatus == AccountAccessStatus.loading) return null;
+
+  final safe = AppRouteContract.safeRequestedLocation(pendingLocation);
+  final safePath = safe == null ? null : Uri.parse(safe).path;
+  final lifecycleDestination =
+      safePath != null && AppRouteContract.isLifecycleRoute(safePath);
+
+  if (!isLoggedIn || accessStatus == AccountAccessStatus.signedOut) {
+    return safe == null ? '/login' : AppRouteContract.loginFor(Uri.parse(safe));
+  }
+  if (accessStatus == AccountAccessStatus.pendingProvisioning) {
+    return lifecycleDestination ? safe : '/join';
+  }
+  if (accessStatus == AccountAccessStatus.blocked) {
+    return lifecycleDestination ? safe : '/access-blocked';
+  }
+  if (user == null) return '/access-blocked';
+  return resolvePendingRequestedLocation(
+        pendingLocation: safe,
+        currentLocation: Uri.parse('/loading'),
+        user: user,
+      ) ??
+      AppRouteContract.landingFor(user);
+}
+
 String? resolveAppRedirect({
   required Uri location,
   required String matchedLocation,
@@ -159,12 +190,25 @@ final routerProvider = Provider<GoRouter>((ref) {
         ref.read(pendingRequestedLocationProvider.notifier).state =
             loginRequested;
       }
-      if (!isLoggedIn &&
-          accessStatus != AccountAccessStatus.loading &&
+      if ((accessStatus == AccountAccessStatus.loading || !isLoggedIn) &&
           !isPublic &&
-          state.matchedLocation != '/login') {
+          state.matchedLocation != '/login' &&
+          state.matchedLocation != '/loading') {
         ref.read(pendingRequestedLocationProvider.notifier).state = state.uri
             .toString();
+      }
+
+      if (state.matchedLocation == '/loading' &&
+          accessStatus != AccountAccessStatus.loading) {
+        final pending = ref.read(pendingRequestedLocationProvider);
+        final destination = resolveLoadingExit(
+          accessStatus: accessStatus,
+          isLoggedIn: isLoggedIn,
+          pendingLocation: pending,
+          user: currentUser.valueOrNull,
+        );
+        ref.read(pendingRequestedLocationProvider.notifier).state = null;
+        if (destination != null) return destination;
       }
 
       final activeUser = currentUser.valueOrNull;

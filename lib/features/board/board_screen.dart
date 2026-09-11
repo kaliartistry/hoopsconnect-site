@@ -43,7 +43,8 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.urgent),
             onPressed: () async {
               final assocId = ref.read(currentAssociationIdProvider);
-              if (assocId != null) {
+              final actingUser = ref.read(currentUserProvider).valueOrNull;
+              if (assocId != null && actingUser?.canEditAnyPost == true) {
                 await ref
                     .read(postRepositoryProvider)
                     .deletePost(assocId, postId);
@@ -61,8 +62,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
   Widget build(BuildContext context) {
     final selectedDivisionName = ref.watch(selectedDivisionNameProvider);
     final postsAsync = ref.watch(postsStreamProvider(selectedDivisionName));
-    final currentUser = ref.watch(effectiveUserProvider); // permissions
-    final realUser = ref.watch(currentUserProvider).value; // identity for acks
+    // Preview capabilities control presentation only. Every repository action
+    // below rechecks the real membership-backed user.
+    final currentUser = ref.watch(effectiveUserProvider);
     final assocId = ref.watch(currentAssociationIdProvider);
     final desktop = isDesktop(context);
 
@@ -122,9 +124,20 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
     Widget postList = postsAsync.when(
       data: (posts) {
-        final visiblePosts = _selectedFilter == 'announcements'
-            ? posts.where((post) => post.type == PostType.announcement).toList()
+        final roleVisiblePosts = currentUser?.isFan == true
+            ? posts
+                  .where(
+                    (post) =>
+                        post.visibility == PostVisibility.public &&
+                        !post.requiresAck,
+                  )
+                  .toList()
             : posts;
+        final visiblePosts = _selectedFilter == 'announcements'
+            ? roleVisiblePosts
+                  .where((post) => post.type == PostType.announcement)
+                  .toList()
+            : roleVisiblePosts;
 
         if (visiblePosts.isEmpty) {
           return EmptyState(
@@ -155,6 +168,8 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
             itemBuilder: (context, i) {
               final post = visiblePosts[i];
               final canEdit = currentUser?.canEditAnyPost ?? false;
+              final canAcknowledge =
+                  currentUser?.hasCapability('posts.acknowledge') ?? false;
               final isSelected = desktop && _selectedPostId == post.id;
               return Container(
                 decoration: isSelected
@@ -180,16 +195,19 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                   onDelete: canEdit
                       ? () => _confirmDeletePost(context, ref, post.id)
                       : null,
-                  onAcknowledge: () {
-                    if (realUser != null) {
-                      ref
-                          .read(postRepositoryProvider)
-                          .acknowledge(
-                            assocId,
-                            post.id,
-                          );
-                    }
-                  },
+                  onAcknowledge: !canAcknowledge
+                      ? null
+                      : () {
+                          final actingUser = ref
+                              .read(currentUserProvider)
+                              .valueOrNull;
+                          if (actingUser != null &&
+                              actingUser.hasCapability('posts.acknowledge')) {
+                            ref
+                                .read(postRepositoryProvider)
+                                .acknowledge(assocId, post.id);
+                          }
+                        },
                 ),
               );
             },

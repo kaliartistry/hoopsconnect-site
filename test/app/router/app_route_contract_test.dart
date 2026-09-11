@@ -229,6 +229,108 @@ void main() {
         );
       },
     );
+
+    test('loading exits cover every resolved account state and cold start', () {
+      final fan = users[UserRole.fan]!;
+      final cases =
+          <
+            ({
+              String name,
+              AccountAccessStatus status,
+              bool signedIn,
+              String? pending,
+              UserModel? user,
+              String expected,
+            })
+          >[
+            (
+              name: 'signed out protected deep link',
+              status: AccountAccessStatus.signedOut,
+              signedIn: false,
+              pending: '/calendar?division=women',
+              user: null,
+              expected: '/login?from=%2Fcalendar%3Fdivision%3Dwomen',
+            ),
+            (
+              name: 'pending provisioning protected deep link',
+              status: AccountAccessStatus.pendingProvisioning,
+              signedIn: true,
+              pending: '/calendar',
+              user: null,
+              expected: '/join',
+            ),
+            (
+              name: 'pending provisioning lifecycle cold start',
+              status: AccountAccessStatus.pendingProvisioning,
+              signedIn: true,
+              pending: AccountLifecycleRoutePaths.requestDeletion,
+              user: null,
+              expected: AccountLifecycleRoutePaths.requestDeletion,
+            ),
+            (
+              name: 'blocked protected deep link',
+              status: AccountAccessStatus.blocked,
+              signedIn: true,
+              pending: '/calendar',
+              user: null,
+              expected: '/access-blocked',
+            ),
+            (
+              name: 'blocked lifecycle cold start',
+              status: AccountAccessStatus.blocked,
+              signedIn: true,
+              pending: AccountLifecycleRoutePaths.reconcileDeviceWork,
+              user: null,
+              expected: AccountLifecycleRoutePaths.reconcileDeviceWork,
+            ),
+            (
+              name: 'active permitted deep link',
+              status: AccountAccessStatus.active,
+              signedIn: true,
+              pending: '/calendar?division=women',
+              user: fan,
+              expected: '/calendar?division=women',
+            ),
+            (
+              name: 'active unauthorized old landing',
+              status: AccountAccessStatus.active,
+              signedIn: true,
+              pending: '/board',
+              user: fan,
+              expected: '/standings',
+            ),
+            (
+              name: 'active no pending route',
+              status: AccountAccessStatus.active,
+              signedIn: true,
+              pending: null,
+              user: fan,
+              expected: '/standings',
+            ),
+          ];
+
+      for (final value in cases) {
+        expect(
+          resolveLoadingExit(
+            accessStatus: value.status,
+            isLoggedIn: value.signedIn,
+            pendingLocation: value.pending,
+            user: value.user,
+          ),
+          value.expected,
+          reason: value.name,
+        );
+      }
+      expect(
+        resolveLoadingExit(
+          accessStatus: AccountAccessStatus.loading,
+          isLoggedIn: false,
+          pendingLocation: '/calendar',
+          user: null,
+        ),
+        isNull,
+      );
+    });
   });
 }
 

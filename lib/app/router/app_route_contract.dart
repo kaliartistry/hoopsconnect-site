@@ -254,6 +254,12 @@ abstract final class AppRouteContract {
     return null;
   }
 
+  static bool isLifecycleRoute(String path) {
+    return path == AccountLifecycleRoutePaths.requestDeletion ||
+        path == AccountLifecycleRoutePaths.deletionStatus ||
+        path == AccountLifecycleRoutePaths.reconcileDeviceWork;
+  }
+
   static bool permits(String path, UserModel? user) {
     final rule = ruleFor(path);
     return rule != null && rule.permits(user);
@@ -292,17 +298,24 @@ abstract final class AppRouteContract {
 /// These values may hide or reveal navigation for a preview, but they are never
 /// passed to route guards, repositories, rules, or Functions.
 bool previewRoleShowsCapability(UserRole role, String capability) {
-  final capabilities = switch (role) {
+  return previewCapabilitiesForRole(role).contains(capability);
+}
+
+Set<String> previewCapabilitiesForRole(UserRole role) {
+  return switch (role) {
     UserRole.superAdmin => const {
       'association.read',
       'association.manage',
+      'members.read',
       'members.manage',
       'invites.manage',
       'schedule.manage',
       'teams.manage',
+      'teams.represent',
       'posts.create',
       'posts.manage',
       'posts.internal.read',
+      'posts.acknowledge',
       'stats.enter',
       'stats.approve',
       'stats.export',
@@ -326,8 +339,10 @@ bool previewRoleShowsCapability(UserRole role, String capability) {
     },
     UserRole.rep => const {
       'association.read',
+      'teams.represent',
       'posts.create',
       'posts.internal.read',
+      'posts.acknowledge',
     },
     UserRole.media || UserRole.press => const {
       'association.read',
@@ -337,5 +352,4 @@ bool previewRoleShowsCapability(UserRole role, String capability) {
     },
     UserRole.fan => const {'association.read'},
   };
-  return capabilities.contains(capability);
 }

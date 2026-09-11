@@ -193,24 +193,34 @@ class PostCard extends StatelessWidget {
                   ),
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '${post.authorName} · ${post.teamName ?? "Association"} · ${_timeAgo(post.createdAt)}',
-                      style: const TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 11,
-                      ),
-                    ),
-                    if (post.requiresAck)
-                      Text(
-                        '${post.ackCount}/${post.expectedAckCount} confirmed',
+                    Expanded(
+                      child: Text(
+                        '${post.authorName} · ${post.teamName ?? "Association"} · ${_timeAgo(post.createdAt)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: AppColors.ack,
+                          color: AppColors.textMuted,
                           fontSize: 11,
-                          fontWeight: FontWeight.w500,
                         ),
                       ),
+                    ),
+                    if (post.requiresAck) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          '${post.ackCount}/${post.expectedAckCount} confirmed',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(
+                            color: AppColors.ack,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

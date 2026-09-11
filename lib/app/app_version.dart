@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class AppVersionInfo {
   const AppVersionInfo({required this.version, required this.buildNumber});
@@ -13,27 +14,21 @@ abstract interface class AppVersionLoader {
   Future<AppVersionInfo> load();
 }
 
-/// Temporary dependency-free adapter.
-///
-/// The integration owner replaces this with the package_info_plus adapter when
-/// adding the manifest/lock dependency. Build pipelines may supply these two
-/// defines meanwhile; missing values are reported honestly, never guessed.
-class BuildEnvironmentAppVersionLoader implements AppVersionLoader {
-  const BuildEnvironmentAppVersionLoader();
+class PackageInfoAppVersionLoader implements AppVersionLoader {
+  const PackageInfoAppVersionLoader();
 
   @override
   Future<AppVersionInfo> load() async {
-    const version = String.fromEnvironment('FLUTTER_BUILD_NAME');
-    const build = String.fromEnvironment('FLUTTER_BUILD_NUMBER');
-    if (version.isEmpty) {
-      throw StateError('Installed package metadata is unavailable.');
-    }
-    return const AppVersionInfo(version: version, buildNumber: build);
+    final package = await PackageInfo.fromPlatform();
+    return AppVersionInfo(
+      version: package.version,
+      buildNumber: package.buildNumber,
+    );
   }
 }
 
 final appVersionLoaderProvider = Provider<AppVersionLoader>((ref) {
-  return const BuildEnvironmentAppVersionLoader();
+  return const PackageInfoAppVersionLoader();
 });
 
 final appVersionInfoProvider = FutureProvider<AppVersionInfo>((ref) {

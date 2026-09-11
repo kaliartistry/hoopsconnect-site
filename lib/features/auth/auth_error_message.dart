@@ -48,6 +48,11 @@ String? friendlyAuthErrorMessage(Object error) {
   return 'We could not complete that sign-in. Try again, choose another sign-in method, or contact the association.';
 }
 
+/// Password recovery never reveals whether an address has an account.
+bool passwordResetShouldAppearSuccessful(Object error) {
+  return error.toString().toLowerCase().contains('user-not-found');
+}
+
 bool _containsAny(String value, List<String> needles) {
   return needles.any(value.contains);
 }

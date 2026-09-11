@@ -97,6 +97,24 @@ void main() {
     expect(find.text('We could not send the reset link'), findsNothing);
   });
 
+  testWidgets('unknown email is indistinguishable from accepted recovery', (
+    tester,
+  ) async {
+    final actions = _FakeRecoveryActions()
+      ..error = Exception('[firebase_auth/user-not-found]');
+    await pumpRecovery(tester, actions: actions);
+    await tester.enterText(
+      find.byKey(const Key('recovery-email-field')),
+      'unknown@example.com',
+    );
+    await tester.tap(find.byKey(const Key('recovery-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Check your email'), findsOneWidget);
+    expect(find.textContaining('If an email account matches'), findsOneWidget);
+    expect(find.text('We could not send the reset link'), findsNothing);
+  });
+
   testWidgets('invalid email is rejected before transport', (tester) async {
     final actions = _FakeRecoveryActions();
     await pumpRecovery(tester, actions: actions);

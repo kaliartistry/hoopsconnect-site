@@ -60,7 +60,6 @@ historical `press` wire value retains the same route behavior as `media`.
 - The integration owner must review the `app_router.dart` dormancy hash
   transition. Preserve every candidate-exclusion and import-graph assertion;
   update only the exact reviewed router baseline pin.
-- Add `package_info_plus` and a concrete `AppVersionLoader` adapter at
-  integration. The current dependency-free loader reports unavailable metadata
-  unless the build supplies explicit `FLUTTER_BUILD_NAME` and
-  `FLUTTER_BUILD_NUMBER` defines; it never guesses a version.
+- About and Settings read the installed version/build through the
+  `package_info_plus` implementation of `AppVersionLoader`; tests replace the
+  loader through its provider rather than hardcoding a displayed version.
