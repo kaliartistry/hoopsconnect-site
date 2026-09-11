@@ -1469,3 +1469,70 @@ test('season callables require authoritative association management capability',
   );
   assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2030').get()).exists, false);
 });
+
+test('season lifecycle fails closed for v2 authority until seasons.manage exists', async () => {
+  await seedLeagueOperations();
+  const uid = await createLeagueOperator('season-v2@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
+  ]);
+  await adminDb.doc(`memberships/${uid}`).update({authorizationSchemaVersion: 2});
+  await adminDb.doc(`associations/jba/leagueActorAuthorities/${uid}`).update({
+    authorizationSchemaVersion: 2,
+  });
+  await adminDb.doc('associations/jba/leagueWorkflowControl/current').update({authorityMode: 'v2'});
+  const prepare = leagueCallable('seasonPrepare');
+  await assert.rejects(
+    prepare({
+      schemaVersion: 1,
+      operationId: 'season_prepare_v2_closed_01',
+      seasonId: 'nbl-2031',
+      name: 'NBL 2031',
+      startDate: '2031-01-01',
+      endDate: '2031-09-30',
+    }),
+    (error) => error.code === 'functions/failed-precondition' &&
+      /v2 season-management capability/.test(error.message),
+  );
+  assert.equal((await adminDb.doc('associations/jba/seasons/nbl-2031').get()).exists, false);
+});
+
+test('season activation rejects malformed current and target version state', async () => {
+  await seedLeagueOperations();
+  await createLeagueOperator('season-malformed@example.com', 'superAdmin', [
+    'association.read', 'association.manage',
+  ]);
+  const prepare = leagueCallable('seasonPrepare');
+  const activate = leagueCallable('seasonActivate');
+  await prepare({
+    schemaVersion: 1,
+    operationId: 'season_prepare_malformed_01',
+    seasonId: 'nbl-2032',
+    name: 'NBL 2032',
+    startDate: '2032-01-01',
+    endDate: '2032-09-30',
+  });
+  await adminDb.doc('associations/jba/seasons/s2026').update({isActive: 'yes'});
+  await assert.rejects(
+    activate({
+      schemaVersion: 1,
+      operationId: 'season_activate_bad_current_01',
+      seasonId: 'nbl-2032',
+      expectedSeasonVersion: 1,
+      expectedCurrentSeasonId: 's2026',
+    }),
+    (error) => error.code === 'functions/failed-precondition',
+  );
+  await adminDb.doc('associations/jba/seasons/s2026').update({isActive: true});
+  await adminDb.doc('associations/jba/seasons/nbl-2032').update({version: -1});
+  await assert.rejects(
+    activate({
+      schemaVersion: 1,
+      operationId: 'season_activate_bad_target_01',
+      seasonId: 'nbl-2032',
+      expectedSeasonVersion: 1,
+      expectedCurrentSeasonId: 's2026',
+    }),
+    (error) => error.code === 'functions/failed-precondition',
+  );
+  assert.equal((await adminDb.doc('associations/jba').get()).get('currentSeasonId'), 's2026');
+});

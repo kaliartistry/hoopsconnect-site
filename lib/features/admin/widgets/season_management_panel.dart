@@ -40,6 +40,8 @@ class _SeasonManagementDialogState
   String? _error;
   bool _canRetry = false;
   Future<void> Function()? _retry;
+  bool _canDiscard = false;
+  Future<void> Function()? _discard;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +102,8 @@ class _SeasonManagementDialogState
                   error: error,
                   canRetry: _canRetry,
                   onRetry: _retry,
+                  canDiscard: _canDiscard,
+                  onDiscard: _discard,
                   onPrepare: enabled && user != null && associationId != null
                       ? () => _showPrepareDialog(
                           actorId: user.id,
@@ -386,11 +390,28 @@ class _SeasonManagementDialogState
       _error = null;
       _canRetry = false;
       _retry = null;
+      _canDiscard = false;
+      _discard = null;
     });
     try {
       await operation();
       if (!mounted) return;
       setState(() => _message = success);
+    } on SeasonPendingRequestConflict catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _canRetry = true;
+        _retry = () => _run(
+          seasonId,
+          () => ref
+              .read(seasonRepositoryProvider)
+              .retryPendingOperation(error.recovery),
+          success: 'The earlier season request was safely reconciled.',
+        );
+        _canDiscard = true;
+        _discard = () => _confirmDiscardPending(error.recovery);
+      });
     } on SeasonWorkflowException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -411,6 +432,41 @@ class _SeasonManagementDialogState
       if (mounted) setState(() => _busySeasonId = null);
     }
   }
+
+  Future<void> _confirmDiscardPending(SeasonPendingRecovery recovery) async {
+    final approved = await _confirmation(
+      title: 'Discard the saved retry?',
+      body:
+          'This removes only this device’s saved retry. It does not undo a season change that may already have reached the server. The latest season list will still be used before another change.',
+      action: 'Discard saved retry',
+      destructive: true,
+    );
+    if (!approved || !mounted) return;
+    setState(() => _busySeasonId = recovery.seasonId);
+    try {
+      await ref
+          .read(seasonRepositoryProvider)
+          .discardPendingOperation(recovery);
+      if (!mounted) return;
+      setState(() {
+        _message =
+            'The saved retry was discarded. Review the latest season state before trying again.';
+        _error = null;
+        _canRetry = false;
+        _retry = null;
+        _canDiscard = false;
+        _discard = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'The saved retry could not be discarded on this device.';
+        _canRetry = false;
+      });
+    } finally {
+      if (mounted) setState(() => _busySeasonId = null);
+    }
+  }
 }
 
 class SeasonManagementView extends StatelessWidget {
@@ -423,6 +479,8 @@ class SeasonManagementView extends StatelessWidget {
   final String? error;
   final bool canRetry;
   final VoidCallback? onRetry;
+  final bool canDiscard;
+  final VoidCallback? onDiscard;
   final VoidCallback? onPrepare;
   final ValueChanged<SeasonModel>? onActivate;
   final ValueChanged<SeasonModel>? onArchive;
@@ -439,6 +497,8 @@ class SeasonManagementView extends StatelessWidget {
     required this.error,
     required this.canRetry,
     required this.onRetry,
+    required this.canDiscard,
+    required this.onDiscard,
     required this.onPrepare,
     required this.onActivate,
     required this.onArchive,
@@ -471,10 +531,25 @@ class SeasonManagementView extends StatelessWidget {
             icon: Icons.error_outline,
             text: error!,
             error: true,
-            action: canRetry && onRetry != null
-                ? TextButton(
-                    onPressed: onRetry,
-                    child: const Text('Retry safely'),
+            action:
+                (canRetry && onRetry != null) ||
+                    (canDiscard && onDiscard != null)
+                ? Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      if (canRetry && onRetry != null)
+                        TextButton(
+                          onPressed: busySeasonId == null ? onRetry : null,
+                          child: const Text('Retry safely'),
+                        ),
+                      if (canDiscard && onDiscard != null)
+                        TextButton(
+                          onPressed: busySeasonId == null ? onDiscard : null,
+                          child: const Text('Discard saved retry'),
+                        ),
+                    ],
                   )
                 : null,
           ),
@@ -523,7 +598,7 @@ class SeasonManagementView extends StatelessWidget {
                     season: season,
                     currentSeasonId: currentSeasonId,
                     busy: busySeasonId == season.id,
-                    workflowEnabled: workflowEnabled,
+                    workflowEnabled: workflowEnabled && busySeasonId == null,
                     onActivate: onActivate,
                     onArchive: onArchive,
                     onRestore: onRestore,
@@ -539,7 +614,7 @@ class SeasonManagementView extends StatelessWidget {
                   season: season,
                   currentSeasonId: currentSeasonId,
                   busy: busySeasonId == season.id,
-                  workflowEnabled: workflowEnabled,
+                  workflowEnabled: workflowEnabled && busySeasonId == null,
                   onActivate: onActivate,
                   onArchive: onArchive,
                   onRestore: onRestore,
@@ -724,13 +799,36 @@ class _Notice extends StatelessWidget {
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(
-        children: [
-          Icon(icon, color: color),
-          const SizedBox(width: 10),
-          Expanded(child: Text(text)),
-          ?action,
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final content = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: color),
+              const SizedBox(width: 10),
+              Expanded(child: Text(text)),
+            ],
+          );
+          if (action == null) return content;
+          if (constraints.maxWidth < 520 ||
+              MediaQuery.textScalerOf(context).scale(16) > 24) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                content,
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerRight, child: action!),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: content),
+              action!,
+            ],
+          );
+        },
       ),
     );
   }

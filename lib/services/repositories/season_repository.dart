@@ -176,10 +176,24 @@ class SeasonRepository {
     final operationKey = '$actorId|$associationId|$action|$seasonId';
     final requestFingerprint = jsonEncode(_canonical(request));
     final saved = await _operationStore.load(operationKey);
+    if (saved != null) {
+      _validatePendingOperation(
+        saved,
+        expectedKey: operationKey,
+        expectedSeasonId: seasonId,
+      );
+    }
     if (saved != null && saved.requestFingerprint != requestFingerprint) {
-      throw const SeasonWorkflowException(
+      throw SeasonPendingRequestConflict(
         'An earlier request may still have completed. Retry that request before changing its details.',
-        retryable: false,
+        recovery: SeasonPendingRecovery(
+          actorId: actorId,
+          associationId: associationId,
+          action: action,
+          seasonId: seasonId,
+          operationId: saved.operationId,
+          request: saved.request,
+        ),
       );
     }
     final operation =
@@ -188,23 +202,85 @@ class SeasonRepository {
           key: operationKey,
           operationId: _newOperationId(action),
           requestFingerprint: requestFingerprint,
+          request: request,
         );
     if (saved == null) await _operationStore.save(operation);
 
+    return _execute(operation: operation, action: action, seasonId: seasonId);
+  }
+
+  Future<SeasonOperationReceipt> retryPendingOperation(
+    SeasonPendingRecovery recovery,
+  ) async {
+    final operationKey =
+        '${recovery.actorId}|${recovery.associationId}|${recovery.action}|${recovery.seasonId}';
+    final saved = await _operationStore.load(operationKey);
+    if (saved == null) {
+      throw const SeasonWorkflowException(
+        'The saved season request is no longer available. Reload before continuing.',
+        retryable: false,
+      );
+    }
+    _validatePendingOperation(
+      saved,
+      expectedKey: operationKey,
+      expectedSeasonId: recovery.seasonId,
+    );
+    if (saved.operationId != recovery.operationId ||
+        saved.requestFingerprint != jsonEncode(_canonical(recovery.request))) {
+      throw const SeasonWorkflowException(
+        'The saved season request changed unexpectedly. Contact support before trying again.',
+        retryable: false,
+      );
+    }
+    return _execute(
+      operation: saved,
+      action: recovery.action,
+      seasonId: recovery.seasonId,
+    );
+  }
+
+  Future<void> discardPendingOperation(SeasonPendingRecovery recovery) async {
+    final operationKey =
+        '${recovery.actorId}|${recovery.associationId}|${recovery.action}|${recovery.seasonId}';
+    final saved = await _operationStore.load(operationKey);
+    if (saved == null) return;
+    _validatePendingOperation(
+      saved,
+      expectedKey: operationKey,
+      expectedSeasonId: recovery.seasonId,
+    );
+    if (saved.operationId != recovery.operationId ||
+        saved.requestFingerprint != jsonEncode(_canonical(recovery.request))) {
+      throw const SeasonWorkflowException(
+        'The saved season request changed unexpectedly. Reload before continuing.',
+        retryable: false,
+      );
+    }
+    await _operationStore.clear(operationKey);
+  }
+
+  Future<SeasonOperationReceipt> _execute({
+    required SeasonPendingOperation operation,
+    required String action,
+    required String seasonId,
+  }) async {
     final payload = <String, Object?>{
-      ...request,
+      ...operation.request,
       'operationId': operation.operationId,
     };
+
     try {
       final result = await _invoke('season${_callableSuffix(action)}', payload);
       final receipt = SeasonOperationReceipt.fromMap(result);
       if (receipt.operationId != operation.operationId ||
-          receipt.seasonId != seasonId) {
+          receipt.seasonId != seasonId ||
+          receipt.status != _expectedReceiptStatus(action)) {
         throw const FormatException(
           'Season operation receipt does not match the saved request.',
         );
       }
-      await _operationStore.clear(operationKey);
+      await _operationStore.clear(operation.key);
       return receipt;
     } on FirebaseFunctionsException catch (error) {
       final retryable = const {
@@ -215,7 +291,7 @@ class SeasonRepository {
         'unavailable',
         'unknown',
       }.contains(error.code);
-      if (!retryable) await _operationStore.clear(operationKey);
+      if (!retryable) await _operationStore.clear(operation.key);
       throw SeasonWorkflowException(
         error.message ?? 'The season operation could not be completed.',
         retryable: retryable,
@@ -227,6 +303,22 @@ class SeasonRepository {
         'The result is uncertain. Check your connection, then retry safely.',
         retryable: true,
         cause: error,
+      );
+    }
+  }
+
+  void _validatePendingOperation(
+    SeasonPendingOperation operation, {
+    required String expectedKey,
+    required String expectedSeasonId,
+  }) {
+    final fingerprint = jsonEncode(_canonical(operation.request));
+    if (operation.key != expectedKey ||
+        operation.requestFingerprint != fingerprint ||
+        operation.request['seasonId'] != expectedSeasonId) {
+      throw const SeasonWorkflowException(
+        'A saved season request is damaged. Contact support before trying again.',
+        retryable: false,
       );
     }
   }
@@ -255,6 +347,14 @@ class SeasonRepository {
     'activate' => 'Activate',
     'archive' => 'Archive',
     'restore' => 'Restore',
+    _ => throw StateError('Unknown season action'),
+  };
+
+  static String _expectedReceiptStatus(String action) => switch (action) {
+    'prepare' => 'prepared',
+    'activate' => 'active',
+    'archive' => 'archived',
+    'restore' => 'restored',
     _ => throw StateError('Unknown season action'),
   };
 
@@ -326,28 +426,64 @@ class SeasonWorkflowException implements Exception {
   String toString() => message;
 }
 
+class SeasonPendingRequestConflict extends SeasonWorkflowException {
+  final SeasonPendingRecovery recovery;
+
+  const SeasonPendingRequestConflict(super.message, {required this.recovery})
+    : super(retryable: false);
+}
+
+class SeasonPendingRecovery {
+  final String actorId;
+  final String associationId;
+  final String action;
+  final String seasonId;
+  final String operationId;
+  final Map<String, Object?> request;
+
+  const SeasonPendingRecovery({
+    required this.actorId,
+    required this.associationId,
+    required this.action,
+    required this.seasonId,
+    required this.operationId,
+    required this.request,
+  });
+}
+
 class SeasonPendingOperation {
   final String key;
   final String operationId;
   final String requestFingerprint;
+  final Map<String, Object?> request;
 
   const SeasonPendingOperation({
     required this.key,
     required this.operationId,
     required this.requestFingerprint,
+    required this.request,
   });
 
   Map<String, Object?> toMap() => {
     'key': key,
     'operationId': operationId,
     'requestFingerprint': requestFingerprint,
+    'request': request,
   };
 
   factory SeasonPendingOperation.fromMap(Map<String, dynamic> map) {
+    final request = map['request'];
+    if (map['key'] is! String ||
+        map['operationId'] is! String ||
+        map['requestFingerprint'] is! String ||
+        request is! Map) {
+      throw const FormatException('Malformed saved season request.');
+    }
     return SeasonPendingOperation(
       key: map['key'] as String,
       operationId: map['operationId'] as String,
       requestFingerprint: map['requestFingerprint'] as String,
+      request: Map<String, Object?>.from(request),
     );
   }
 }

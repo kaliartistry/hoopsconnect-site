@@ -97,18 +97,117 @@ void main() {
         prepare('NBL 2027'),
         throwsA(isA<SeasonWorkflowException>()),
       );
-      await expectLater(
-        prepare('NBL 2027!'),
-        throwsA(
-          isA<SeasonWorkflowException>().having(
-            (error) => error.retryable,
-            'retryable',
-            false,
-          ),
-        ),
-      );
+      final conflict = await _captureConflict(prepare('NBL 2027!'));
+      expect(conflict.retryable, isFalse);
+      expect(conflict.recovery.request['name'], 'NBL 2027');
     },
   );
+
+  test(
+    'post-restart recovery replays the exact saved request before changed state',
+    () async {
+      final store = _MemoryStore();
+      final firstRequests = <Map<String, Object?>>[];
+      final first = SeasonRepository(
+        operationStore: store,
+        random: Random(11),
+        callable: (_, request) async {
+          firstRequests.add(Map.of(request));
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'response lost',
+          );
+        },
+      );
+      const original = SeasonModel(
+        id: 'nbl-2027',
+        associationId: 'jba',
+        name: 'NBL 2027',
+        startDate: '2027-01-01',
+        endDate: '2027-09-01',
+        status: SeasonStatus.prepared,
+        version: 1,
+      );
+      await expectLater(
+        first.activateSeason(
+          actorId: 'admin',
+          associationId: 'jba',
+          season: original,
+          currentSeasonId: 'nbl-2026',
+        ),
+        throwsA(isA<SeasonWorkflowException>()),
+      );
+
+      final replayRequests = <Map<String, Object?>>[];
+      final restarted = SeasonRepository(
+        operationStore: store,
+        callable: (name, request) async {
+          expect(name, 'seasonActivate');
+          replayRequests.add(Map.of(request));
+          return {
+            'operationId': request['operationId'],
+            'seasonId': 'nbl-2027',
+            'status': 'active',
+            'seasonVersion': 2,
+            'previousSeasonId': 'nbl-2026',
+            'currentSeasonId': 'nbl-2027',
+          };
+        },
+      );
+      const refreshed = SeasonModel(
+        id: 'nbl-2027',
+        associationId: 'jba',
+        name: 'NBL 2027',
+        startDate: '2027-01-01',
+        endDate: '2027-09-01',
+        status: SeasonStatus.prepared,
+        version: 2,
+      );
+      final conflict = await _captureConflict(
+        restarted.activateSeason(
+          actorId: 'admin',
+          associationId: 'jba',
+          season: refreshed,
+          currentSeasonId: 'nbl-2025',
+        ),
+      );
+      expect(conflict.recovery.request['expectedSeasonVersion'], 1);
+      expect(conflict.recovery.request['expectedCurrentSeasonId'], 'nbl-2026');
+
+      final receipt = await restarted.retryPendingOperation(conflict.recovery);
+      expect(receipt.currentSeasonId, 'nbl-2027');
+      expect(replayRequests.single['expectedSeasonVersion'], 1);
+      expect(replayRequests.single['expectedCurrentSeasonId'], 'nbl-2026');
+      expect(
+        replayRequests.single['operationId'],
+        firstRequests.single['operationId'],
+      );
+      expect(store.values, isEmpty);
+    },
+  );
+
+  test('explicit discard clears only the matching saved operation', () async {
+    final store = _MemoryStore();
+    final repository = SeasonRepository(
+      operationStore: store,
+      callable: (_, _) async => throw StateError('offline'),
+    );
+    Future<SeasonOperationReceipt> prepare(String name) =>
+        repository.prepareSeason(
+          actorId: 'admin',
+          associationId: 'jba',
+          name: name,
+          startDate: DateTime(2027, 1, 1),
+          endDate: DateTime(2027, 9, 1),
+        );
+    await expectLater(
+      prepare('NBL 2027'),
+      throwsA(isA<SeasonWorkflowException>()),
+    );
+    final conflict = await _captureConflict(prepare('NBL 2027!'));
+    await repository.discardPendingOperation(conflict.recovery);
+    expect(store.values, isEmpty);
+  });
 
   test('activation carries exact current and candidate versions', () async {
     final requests = <Map<String, Object?>>[];
@@ -227,6 +326,17 @@ void main() {
       expect(store.values, isEmpty);
     },
   );
+}
+
+Future<SeasonPendingRequestConflict> _captureConflict(
+  Future<SeasonOperationReceipt> operation,
+) async {
+  try {
+    await operation;
+  } on SeasonPendingRequestConflict catch (error) {
+    return error;
+  }
+  throw StateError('Expected a saved-request conflict.');
 }
 
 class _MemoryStore implements SeasonOperationStore {

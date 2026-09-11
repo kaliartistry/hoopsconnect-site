@@ -13,7 +13,11 @@ import 'package:hoops_connect/services/repositories/season_repository.dart';
 
 void main() {
   testWidgets('season cards render at phone and wide sizes', (tester) async {
-    for (final size in const [Size(390, 844), Size(1440, 1000)]) {
+    for (final size in const [
+      Size(375, 812),
+      Size(768, 1024),
+      Size(1440, 1000),
+    ]) {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = size;
       await tester.pumpWidget(_viewApp());
@@ -76,8 +80,7 @@ void main() {
     );
   });
 
-  testWidgets('pending and retry states are explicit', (tester) async {
-    var retries = 0;
+  testWidgets('pending operation disables every mutation', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -89,9 +92,11 @@ void main() {
               loading: false,
               busySeasonId: 'nbl-2027',
               message: null,
-              error: 'The result is uncertain.',
-              canRetry: true,
-              onRetry: () => retries++,
+              error: null,
+              canRetry: false,
+              onRetry: null,
+              canDiscard: false,
+              onDiscard: null,
               onPrepare: () {},
               onActivate: (_) {},
               onArchive: (_) {},
@@ -103,9 +108,66 @@ void main() {
     );
     await tester.pump();
     expect(find.byKey(const Key('season-operation-pending')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('prepare-season')))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Archive'),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Restore'),
+          )
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('retry and explicit discard recovery states are usable', (
+    tester,
+  ) async {
+    var retries = 0;
+    var discards = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: SeasonManagementView(
+              seasons: _seasons,
+              currentSeasonId: 'nbl-2026',
+              workflowEnabled: true,
+              loading: false,
+              busySeasonId: null,
+              message: null,
+              error: 'The result is uncertain.',
+              canRetry: true,
+              onRetry: () => retries++,
+              canDiscard: true,
+              onDiscard: () => discards++,
+              onPrepare: () {},
+              onActivate: (_) {},
+              onArchive: (_) {},
+              onRestore: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
     expect(find.text('The result is uncertain.'), findsOneWidget);
     await tester.tap(find.text('Retry safely'));
     expect(retries, 1);
+    await tester.tap(find.text('Discard saved retry'));
+    expect(discards, 1);
   });
 
   testWidgets('cancelling archive confirmation performs no callable write', (
@@ -164,6 +226,8 @@ Widget _viewApp({bool dark = false, bool enabled = true}) {
           error: null,
           canRetry: false,
           onRetry: null,
+          canDiscard: false,
+          onDiscard: null,
           onPrepare: enabled ? () {} : null,
           onActivate: enabled ? (_) {} : null,
           onArchive: enabled ? (_) {} : null,

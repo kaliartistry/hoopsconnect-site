@@ -104,7 +104,15 @@ class LeagueWorkflowCapability {
   bool get rosterEnabled => commonReady && rosters;
   bool get divisionDeletionEnabled => commonReady && divisionDeletion;
   bool get schedulingEnabled => commonReady && scheduling;
-  bool get seasonLifecycleEnabled => commonReady && seasonLifecycle;
+  // Season callables intentionally support only the legacy association.manage
+  // authority until a scoped V2 seasons.manage capability is adopted. Keep the
+  // client gate identical to the server gate so V2 operators are never shown
+  // actions that the server must reject.
+  bool get seasonLifecycleEnabled =>
+      commonReady &&
+      seasonLifecycle &&
+      authorityMode == 'legacyV1' &&
+      clientAuthorizationSchemaVersion == 1;
 }
 
 final _idPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');

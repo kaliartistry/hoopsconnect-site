@@ -51,6 +51,14 @@ function seasonStatus(value: unknown): SeasonState {
   return value;
 }
 
+function storedSeasonVersion(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 ||
+      (value as number) >= Number.MAX_SAFE_INTEGER) {
+    throw new HttpsError("failed-precondition", "The stored season version is malformed.");
+  }
+  return value as number;
+}
+
 function requireSeasonLifecycleAuthority(authority: Authority, workflow: WorkflowControl): void {
   if (workflow.authorityMode !== "legacyV1" || authority.schemaVersion !== 1) {
     throw new HttpsError(
@@ -232,17 +240,25 @@ export async function seasonActivateHandler(request: CallableRequest<unknown>) {
           dateOnly(target.get("endDate"), "stored endDate", true)) {
       throw new HttpsError("failed-precondition", "Only an eligible prepared season can be activated.");
     }
-    const targetVersion = counter(target.get("version"), "stored season version", false);
+    const targetVersion = storedSeasonVersion(target.get("version"));
     if (targetVersion !== expectedSeasonVersion) {
       throw new HttpsError("aborted", "The prepared season changed. Reload before activating it.");
     }
     const currentStatus = current.exists ? current.get("status") : undefined;
-    const legacyCurrent = current.exists && currentStatus === undefined && current.get("isActive") === true;
-    if (!current.exists || (currentStatus !== "active" && !legacyCurrent) || current.get("isActive") === false) {
+    const currentIsActive = current.exists ? current.get("isActive") : undefined;
+    const legacyCurrent = current.exists && currentStatus === undefined && currentIsActive === true;
+    const activeWithoutLegacyFlag = current.exists && currentStatus === "active" &&
+      (currentIsActive === undefined || currentIsActive === true);
+    const currentAssociationId = current.exists ? current.get("associationId") : undefined;
+    const storedCurrentSeasonId = current.exists ? current.get("seasonId") : undefined;
+    if (!current.exists || (!activeWithoutLegacyFlag && !legacyCurrent) ||
+        (currentAssociationId !== undefined && currentAssociationId !== operationContext.authority.associationId) ||
+        (storedCurrentSeasonId !== undefined && storedCurrentSeasonId !== expectedCurrentSeasonId)) {
       throw new HttpsError("failed-precondition", "The current season record is not eligible for a safe handoff.");
     }
     const currentVersion = current.get("version");
-    if (currentVersion !== undefined && (!Number.isSafeInteger(currentVersion) || currentVersion < 0)) {
+    if (currentVersion !== undefined && (!Number.isSafeInteger(currentVersion) || currentVersion < 0 ||
+        currentVersion >= Number.MAX_SAFE_INTEGER)) {
       throw new HttpsError("failed-precondition", "The current season version is malformed.");
     }
     transaction.update(currentRef, {
@@ -345,7 +361,7 @@ async function archiveOrRestore(request: CallableRequest<unknown>, action: "arch
         target.get("associationId") !== operationContext.authority.associationId || target.get("seasonId") !== seasonId) {
       throw new HttpsError("not-found", "Season not found.");
     }
-    const targetVersion = counter(target.get("version"), "stored season version", false);
+    const targetVersion = storedSeasonVersion(target.get("version"));
     if (targetVersion !== expectedSeasonVersion) {
       throw new HttpsError("aborted", "The season changed. Reload before continuing.");
     }

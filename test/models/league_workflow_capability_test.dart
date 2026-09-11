@@ -68,6 +68,19 @@ void main() {
         clientAuthorizationSchemaVersion: 1,
       );
       expect(missingSeasonGate.seasonLifecycleEnabled, isFalse);
+
+      final v2PendingScopedAuthority = LeagueWorkflowCapability.fromMap(
+        {...fixture(), 'authorityMode': 'v2'},
+        expectedAssociationId: 'jba',
+        clientAuthorizationSchemaVersion: 2,
+      );
+      expect(v2PendingScopedAuthority.commonReady, isTrue);
+      expect(v2PendingScopedAuthority.schedulingEnabled, isTrue);
+      expect(
+        v2PendingScopedAuthority.seasonLifecycleEnabled,
+        isFalse,
+        reason: 'The server rejects V2 until seasons.manage is adopted.',
+      );
     },
   );
 
