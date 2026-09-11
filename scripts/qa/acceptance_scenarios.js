@@ -22,6 +22,11 @@ const REQUIRED_JOURNEY_IDS = Object.freeze([
   'staging-release',
 ]);
 const EXPECTED_ALLOWED_HOSTS = Object.freeze(['127.0.0.1', 'localhost', '::1']);
+const EXPECTED_STAGE0_SUCCESS_MARKERS = Object.freeze([
+  'HOOPSCONNECT_QA_FIXTURES_OK',
+  'HOOPSCONNECT_WEB_BOOT_OK fresh=true update=true newDocument=true staleWorkerRemoved=true',
+  'HOOPSCONNECT_QA_DELIVERY_GUARD_OK codebases=default,public',
+]);
 const REQUIRED_FORBIDDEN_ACTIONS = Object.freeze([
   'production data write',
   'deployment',
@@ -161,7 +166,11 @@ function validateCatalog(catalog = readCatalog()) {
   assert(/^[a-f0-9]{64}$/.test(catalog.sourceAudit?.sha256 || ''), 'Source audit hash is invalid.');
   assert(/^[a-f0-9]{40}$/.test(catalog.stage0?.checkpoint || ''), 'Stage 0 checkpoint must be a full SHA.');
   assertSafeAutomationCommand(catalog.stage0?.command, 'Stage 0 command');
-  assertNonEmptyStrings(catalog.stage0?.successMarkers, 'Stage 0 success markers');
+  assertExactValues(
+    catalog.stage0?.successMarkers,
+    EXPECTED_STAGE0_SUCCESS_MARKERS,
+    'Stage 0 success markers',
+  );
   assertExactValues(catalog.safety?.allowedHosts, EXPECTED_ALLOWED_HOSTS, 'Allowed hosts');
   assertNonEmptyStrings(catalog.safety?.forbiddenActions, 'Forbidden actions');
   for (const action of REQUIRED_FORBIDDEN_ACTIONS) {
@@ -199,6 +208,7 @@ function validateCatalog(catalog = readCatalog()) {
       Array.isArray(finding.scenarioIds) && finding.scenarioIds.length > 0,
       `${finding.id} needs at least one scenario.`,
     );
+    assertUnique(finding.scenarioIds, `${finding.id} scenario links`);
     for (const scenarioId of finding.scenarioIds) {
       const scenario = scenarioById.get(scenarioId);
       assert(scenario, `${finding.id} references missing scenario ${scenarioId}.`);
@@ -538,6 +548,7 @@ module.exports = {
   ALLOWED_STAGES,
   CATALOG_PATH,
   EXPECTED_ALLOWED_HOSTS,
+  EXPECTED_STAGE0_SUCCESS_MARKERS,
   REQUIRED_FINDING_IDS,
   REQUIRED_FORBIDDEN_ACTIONS,
   REQUIRED_JOURNEY_IDS,

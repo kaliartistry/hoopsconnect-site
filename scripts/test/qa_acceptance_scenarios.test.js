@@ -126,6 +126,17 @@ test('catalog rejects host, forbidden-action, command, driver, platform and stag
     /Stage 0 command is not an allowlisted/,
   );
   expectCatalogFailure(
+    (value) => { value.stage0.successMarkers[0] = 'ANYTHING_OK'; },
+    /Stage 0 success markers must contain exactly/,
+  );
+  expectCatalogFailure(
+    (value) => {
+      const finding = value.findings.find((item) => item.id === 'F-03');
+      finding.scenarioIds.push(finding.scenarioIds[0]);
+    },
+    /F-03 scenario links must be unique/,
+  );
+  expectCatalogFailure(
     (value) => { value.scenarios[0].automation = [['firebase', 'deploy']]; },
     /automation command is not an allowlisted/,
   );

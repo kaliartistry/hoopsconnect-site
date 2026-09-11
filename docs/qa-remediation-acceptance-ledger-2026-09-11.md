@@ -204,7 +204,8 @@ Validation rejects evidence whose checkpoint is not current `HEAD`, a dirty
 worktree, an invalid UTC date, or a role, platform, data state, responsible
 workstream or severity outside the selected scenario. The catalog itself also
 fails closed on any non-loopback host, missing forbidden action, non-allowlisted
-automation command, driver, platform or stage.
+automation command, driver, platform or stage, substituted Stage 0 marker, or
+duplicate finding-to-scenario link.
 
 ## Release boundary
 
