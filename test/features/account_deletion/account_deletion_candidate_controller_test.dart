@@ -1162,6 +1162,58 @@ void main() {
       },
     );
 
+    test(
+      'account switch while status is in flight cannot apply its response',
+      () async {
+        final statusCompleter = Completer<AccountDeletionStatusSnapshot>();
+        final gateway = _Gateway(
+          statuses: const [],
+          statusCompleter: statusCompleter,
+        );
+        final cleanup = _DeviceCleanup(
+          AccountDeletionLocalWorkSummary.clear(_deviceBinding),
+        );
+        final savedReceipt = _receipt(
+          state: AccountDeletionReceiptState.accepted,
+        );
+        final store = _ReceiptStore(seed: savedReceipt);
+        final guard = _SessionGuard(_operationBinding);
+        final controller = _controller(
+          gateway: gateway,
+          reauthenticator: _Reauthenticator(_passwordVerified()),
+          cleanup: cleanup,
+          receiptStore: store,
+          sessionGuard: guard,
+        );
+
+        final initializing = controller.initialize();
+        await _waitUntil(() => gateway.statusCalls == 1);
+        guard.currentOperationBinding = _otherOperationBinding;
+        await controller.refreshStatus();
+        final stateAfterSwitch = controller.state;
+        final writesAfterSwitch = store.writeAttempts;
+
+        statusCompleter.complete(
+          _status(
+            phase: DeletionStatusPhase.complete,
+            providerOutcome: ProviderCheckpointState.manualActionGuidance,
+          ),
+        );
+        await initializing;
+
+        expect(controller.state.phase, stateAfterSwitch.phase);
+        expect(controller.state.errorCode, stateAfterSwitch.errorCode);
+        expect(controller.state.status, same(stateAfterSwitch.status));
+        expect(controller.state.receipt, same(stateAfterSwitch.receipt));
+        expect(controller.state.phase, AccountDeletionJourneyPhase.unavailable);
+        expect(controller.state.errorCode, 'AD_ACCOUNT_SESSION_CHANGED');
+        expect(store.receipt, same(savedReceipt));
+        expect(store.writeAttempts, writesAfterSwitch);
+        expect(gateway.statusCalls, 1);
+        expect(cleanup.clearCalls, 0);
+      },
+    );
+
     test('non-synthetic dependencies cannot activate the candidate', () {
       expect(
         () => AccountDeletionCandidateController(
@@ -1377,6 +1429,7 @@ final class _Gateway implements CandidateAccountDeletionGateway {
     this.requestError,
     this.prepareCompleter,
     this.requestCompleter,
+    this.statusCompleter,
     this.synthetic = true,
   }) : impact = impact ?? _impact(),
        statuses = [...statuses];
@@ -1386,6 +1439,7 @@ final class _Gateway implements CandidateAccountDeletionGateway {
   Object? requestError;
   final Completer<CandidateAccountDeletionImpact>? prepareCompleter;
   final Completer<AcceptedAccountDeletionRequest>? requestCompleter;
+  final Completer<AccountDeletionStatusSnapshot>? statusCompleter;
   final bool synthetic;
   int prepareCalls = 0;
   int requestCalls = 0;
@@ -1428,6 +1482,7 @@ final class _Gateway implements CandidateAccountDeletionGateway {
     statusCalls++;
     expect(requestId, 'request_fixed');
     expect(statusSecret, _statusSecret);
+    if (statusCompleter != null) return statusCompleter!.future;
     final next = statuses.removeAt(0);
     if (next is AccountDeletionStatusSnapshot) return next;
     throw next;
