@@ -2,6 +2,7 @@ import '../../models/association_branding_model.dart';
 import '../../models/game_stats_model.dart';
 import '../../models/leaderboard_model.dart';
 import '../../models/player_season_stats_model.dart';
+import '../../models/public_league_snapshot.dart';
 import '../../models/standings_model.dart';
 import '../../services/game_summary_generator.dart';
 
@@ -13,6 +14,8 @@ class BrandedSharePayload {
   final String detail;
   final String shareText;
   final String fileName;
+  final String sourceLabel;
+  final String? versionLabel;
 
   const BrandedSharePayload({
     required this.title,
@@ -21,6 +24,8 @@ class BrandedSharePayload {
     required this.detail,
     required this.shareText,
     required this.fileName,
+    this.sourceLabel = 'League result',
+    this.versionLabel,
   });
 
   factory BrandedSharePayload.gameSummary({
@@ -48,6 +53,55 @@ class BrandedSharePayload {
       detail: detail,
       shareText: lines.join('\n'),
       fileName: '${_slug(branding.shortName)}-game-result.png',
+      sourceLabel: 'Approved internal result',
+    );
+  }
+
+  factory BrandedSharePayload.publicGame({
+    required PublicLeagueSnapshot snapshot,
+    required PublicGame game,
+    required AssociationBrandingModel branding,
+    Uri? canonicalUri,
+  }) {
+    if (!snapshot.canCreatePublishedArtifacts || !game.hasVersionedResult) {
+      throw StateError(
+        'A versioned, published final result is required for sharing.',
+      );
+    }
+    final homeName = game.homeTeamName ?? 'Home';
+    final awayName = game.awayTeamName ?? 'Away';
+    final homeScore = game.homeScore!;
+    final awayScore = game.awayScore!;
+    final headline = homeScore == awayScore
+        ? '$homeName and $awayName finish tied $homeScore-$awayScore'
+        : homeScore > awayScore
+        ? '$homeName defeats $awayName $homeScore-$awayScore'
+        : '$awayName defeats $homeName $awayScore-$homeScore';
+    final detail = game.recap ?? '${snapshot.seasonName} published result';
+    final sponsorLine = _sponsorLine(branding);
+    final lines = <String>[
+      headline,
+      if (game.recap != null) '',
+      if (game.recap != null) game.recap!,
+      '',
+      ?sponsorLine,
+      snapshot.leagueName,
+      'Publication: ${snapshot.version.snapshotVersion}',
+      'Result: ${game.resultVersion}',
+      if (canonicalUri != null) canonicalUri.toString(),
+      'Shared from HoopsConnect',
+    ];
+
+    return BrandedSharePayload(
+      title: '${snapshot.leagueShortName} published game result',
+      eyebrow: 'FINAL',
+      headline: headline,
+      detail: detail,
+      shareText: lines.join('\n'),
+      fileName:
+          '${_slug(snapshot.leagueShortName)}-${_slug(game.gameId)}-${snapshot.version.shortLabel}.png',
+      sourceLabel: 'Published league result',
+      versionLabel: 'Publication ${snapshot.version.shortLabel}',
     );
   }
 
@@ -98,6 +152,54 @@ class BrandedSharePayload {
     );
   }
 
+  factory BrandedSharePayload.publicLeaderboard({
+    required PublicLeagueSnapshot snapshot,
+    required PublicLeaderboard leaderboard,
+    required AssociationBrandingModel branding,
+    Uri? canonicalUri,
+  }) {
+    _requirePublishedSnapshot(snapshot);
+    _requirePublicIdentityEpoch(snapshot);
+    if (leaderboard.rankings.isEmpty) {
+      throw ArgumentError.value(
+        leaderboard.rankings,
+        'leaderboard.rankings',
+        'A leaderboard share requires at least one public ranking.',
+      );
+    }
+    final label = leaderboard.categoryLabel;
+    final topRankings = leaderboard.rankings.take(3).toList(growable: false);
+    final leader = topRankings.first;
+    final detail = topRankings.indexed
+        .map(
+          (item) =>
+              '#${item.$1 + 1} ${item.$2.displayName} · ${item.$2.teamName} · ${_publicMetric(item.$2.value)}',
+        )
+        .join('\n');
+    final lines = <String>[
+      '$label Leaders',
+      '',
+      ...leaderboard.rankings.indexed.map(
+        (item) =>
+            '${item.$1 + 1}. ${item.$2.displayName} (${item.$2.teamName}) - ${_publicMetric(item.$2.value)}',
+      ),
+      '',
+      ..._publishedFooter(snapshot, branding, canonicalUri),
+    ];
+    return BrandedSharePayload(
+      title: '${snapshot.leagueShortName} $label leaders',
+      eyebrow: 'SEASON LEADERS',
+      headline:
+          '${leader.displayName} leads with ${_publicMetric(leader.value)} $label',
+      detail: detail,
+      shareText: lines.join('\n'),
+      fileName:
+          '${_slug(snapshot.leagueShortName)}-${_slug(leaderboard.category)}-${snapshot.version.shortLabel}.png',
+      sourceLabel: 'Published league statistics',
+      versionLabel: 'Publication ${snapshot.version.shortLabel}',
+    );
+  }
+
   factory BrandedSharePayload.playerStats({
     required PlayerSeasonStatsModel stats,
     required AssociationBrandingModel branding,
@@ -133,6 +235,43 @@ class BrandedSharePayload {
       shareText: lines.join('\n'),
       fileName:
           '${_slug(branding.shortName)}-${_slug(stats.playerName)}-stats.png',
+    );
+  }
+
+  factory BrandedSharePayload.publicPlayer({
+    required PublicLeagueSnapshot snapshot,
+    required PublicPlayerDetail player,
+    required AssociationBrandingModel branding,
+    Uri? canonicalUri,
+  }) {
+    _requirePublishedSnapshot(snapshot);
+    _requirePublicIdentityEpoch(snapshot);
+    final statLine = player.categories
+        .map(
+          (entry) =>
+              '${_publicMetric(entry.value.value)} ${_categoryLabel(entry.category)} (${snapshot.divisionName(entry.divisionId)})',
+        )
+        .toList(growable: false);
+    final gamesPlayed = player.categories.first.value.gamesPlayed;
+    final lines = <String>[
+      player.displayName,
+      '${player.teamName} · ${_publicGamesPlayed(gamesPlayed)}',
+      '',
+      statLine.join(' · '),
+      '',
+      ..._publishedFooter(snapshot, branding, canonicalUri),
+    ];
+    return BrandedSharePayload(
+      title: '${snapshot.leagueShortName} player stats',
+      eyebrow: 'PLAYER SPOTLIGHT',
+      headline: player.displayName,
+      detail:
+          '${player.teamName} · ${_publicGamesPlayed(gamesPlayed)}\n${statLine.join(' · ')}',
+      shareText: lines.join('\n'),
+      fileName:
+          '${_slug(snapshot.leagueShortName)}-${_slug(player.playerId)}-${snapshot.version.shortLabel}.png',
+      sourceLabel: 'Published league statistics',
+      versionLabel: 'Publication ${snapshot.version.shortLabel}',
     );
   }
 
@@ -182,7 +321,105 @@ class BrandedSharePayload {
       fileName: '${_slug(branding.shortName)}-${_slug(scope)}-standings.png',
     );
   }
+
+  factory BrandedSharePayload.publicStandings({
+    required PublicLeagueSnapshot snapshot,
+    required List<PublicStanding> standings,
+    required AssociationBrandingModel branding,
+    String? divisionName,
+    Uri? canonicalUri,
+  }) {
+    _requirePublishedSnapshot(snapshot);
+    if (standings.isEmpty) {
+      throw ArgumentError.value(
+        standings,
+        'standings',
+        'A standings share requires at least one public row.',
+      );
+    }
+    final leaders = standings.take(3).toList(growable: false);
+    final detail = leaders
+        .map(
+          (row) =>
+              '${_publicRankLabel(row)} ${row.teamName} · ${_publicRecord(row)}',
+        )
+        .join('\n');
+    final scope = divisionName?.trim().isNotEmpty == true
+        ? divisionName!.trim()
+        : snapshot.leagueShortName;
+    final lines = <String>[
+      '$scope Standings',
+      '',
+      ...standings.map(
+        (row) =>
+            '${_publicRankLabel(row)} ${row.teamName} ${_publicRecord(row)} (${_publicMetric(row.pct, decimals: 3)})',
+      ),
+      '',
+      ..._publishedFooter(snapshot, branding, canonicalUri),
+    ];
+    final first = standings.first;
+    final headline = first.rankStatus == PublicRankStatus.unresolved
+        ? '$scope standings are published with unresolved ranks'
+        : '${first.teamName} leads $scope';
+    return BrandedSharePayload(
+      title: '$scope standings',
+      eyebrow: 'LEAGUE STANDINGS',
+      headline: headline,
+      detail: detail,
+      shareText: lines.join('\n'),
+      fileName:
+          '${_slug(snapshot.leagueShortName)}-${_slug(scope)}-${snapshot.version.shortLabel}.png',
+      sourceLabel: 'Published league statistics',
+      versionLabel: 'Publication ${snapshot.version.shortLabel}',
+    );
+  }
 }
+
+void _requirePublishedSnapshot(PublicLeagueSnapshot snapshot) {
+  if (!snapshot.canCreatePublishedArtifacts) {
+    throw StateError(
+      'A versioned, published snapshot is required for sharing.',
+    );
+  }
+}
+
+void _requirePublicIdentityEpoch(PublicLeagueSnapshot snapshot) {
+  if (snapshot.version.privacyEpoch == null) {
+    throw StateError(
+      'A privacy-epoch-bound public snapshot is required for player sharing.',
+    );
+  }
+}
+
+List<String> _publishedFooter(
+  PublicLeagueSnapshot snapshot,
+  AssociationBrandingModel branding,
+  Uri? canonicalUri,
+) => [
+  ?_sponsorLine(branding),
+  snapshot.leagueName,
+  'Publication: ${snapshot.version.snapshotVersion}',
+  ?canonicalUri?.toString(),
+  'Shared from HoopsConnect',
+];
+
+String _publicRankLabel(PublicStanding standing) =>
+    switch (standing.rankStatus) {
+      PublicRankStatus.ranked => '${standing.rank ?? '?'}.',
+      PublicRankStatus.tied => 'T${standing.rank ?? '?'}.',
+      PublicRankStatus.unresolved => '?.',
+    };
+
+String _publicMetric(double? value, {int decimals = 1}) =>
+    value?.toStringAsFixed(decimals) ?? 'Unknown';
+
+String _publicRecord(PublicStanding standing) =>
+    standing.wins == null || standing.losses == null
+    ? 'Record unknown'
+    : '${standing.wins}-${standing.losses}';
+
+String _publicGamesPlayed(int? value) =>
+    value == null ? 'Games played unknown' : '$value GP';
 
 String? _sponsorLine(AssociationBrandingModel branding) {
   final sponsor = branding.sponsor;

@@ -120,7 +120,7 @@ class PostRepository {
   /// Wireframe §02 A1 — admin bulk-remind action.
   Future<void> requestManualAckReminder(String assocId, String postId) {
     return _db.doc(FirestorePaths.post(assocId, postId)).update({
-      'lastManualReminderAt': Timestamp.now(),
+      'lastManualReminderAt': FieldValue.serverTimestamp(),
       'ackRemindersSent': FieldValue.increment(1),
     });
   }

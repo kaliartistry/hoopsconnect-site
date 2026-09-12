@@ -38,16 +38,16 @@ class GameLogEntry {
   }
 
   Map<String, dynamic> toMap() => {
-        'eventId': eventId,
-        'date': Timestamp.fromDate(date),
-        'vs': vs,
-        'pts': pts,
-        'reb': reb,
-        'ast': ast,
-        'stl': stl,
-        'blk': blk,
-        'result': result,
-      };
+    'eventId': eventId,
+    'date': Timestamp.fromDate(date),
+    'vs': vs,
+    'pts': pts,
+    'reb': reb,
+    'ast': ast,
+    'stl': stl,
+    'blk': blk,
+    'result': result,
+  };
 }
 
 class PlayerSeasonStatsModel {
@@ -62,6 +62,10 @@ class PlayerSeasonStatsModel {
   final Map<String, int> totals;
   final Map<String, double> averages;
   final List<GameLogEntry> gameLog;
+  final String? registrationId;
+  final String? jerseyNumber;
+  final String? position;
+  final bool hasAggregateData;
 
   const PlayerSeasonStatsModel({
     required this.id,
@@ -75,15 +79,27 @@ class PlayerSeasonStatsModel {
     this.totals = const {},
     this.averages = const {},
     this.gameLog = const [],
+    this.registrationId,
+    this.jerseyNumber,
+    this.position,
+    this.hasAggregateData = true,
   });
 
   factory PlayerSeasonStatsModel.fromFirestore(
-      DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data()!;
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    return PlayerSeasonStatsModel.fromMap(id: doc.id, data: doc.data()!);
+  }
+
+  factory PlayerSeasonStatsModel.fromMap({
+    required String id,
+    required Map<String, dynamic> data,
+  }) {
     final logRaw = data['gameLog'] as List<dynamic>? ?? [];
+    final jerseyRaw = data['jerseyNumber'] ?? data['jersey'];
 
     return PlayerSeasonStatsModel(
-      id: doc.id,
+      id: id,
       playerId: data['playerId'] as String,
       playerName: data['playerName'] as String,
       teamId: data['teamId'] as String,
@@ -98,6 +114,14 @@ class PlayerSeasonStatsModel {
       gameLog: logRaw
           .map((e) => GameLogEntry.fromMap(e as Map<String, dynamic>))
           .toList(),
+      registrationId: data['registrationId'] as String?,
+      jerseyNumber: jerseyRaw?.toString(),
+      position: data['position'] as String?,
+      hasAggregateData:
+          data.containsKey('gamesPlayed') ||
+          data.containsKey('totals') ||
+          data.containsKey('averages') ||
+          data.containsKey('gameLog'),
     );
   }
 
@@ -109,10 +133,15 @@ class PlayerSeasonStatsModel {
       'teamName': teamName,
       'seasonId': seasonId,
       'divisionId': divisionId,
-      'gamesPlayed': gamesPlayed,
-      'totals': totals,
-      'averages': averages,
-      'gameLog': gameLog.map((e) => e.toMap()).toList(),
+      if (hasAggregateData) ...{
+        'gamesPlayed': gamesPlayed,
+        'totals': totals,
+        'averages': averages,
+        'gameLog': gameLog.map((e) => e.toMap()).toList(),
+      },
+      if (registrationId != null) 'registrationId': registrationId,
+      if (jerseyNumber != null) 'jerseyNumber': jerseyNumber,
+      if (position != null) 'position': position,
     };
   }
 

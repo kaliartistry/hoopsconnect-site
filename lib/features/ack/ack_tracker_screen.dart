@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
+import '../../core/utils/error_mapper.dart';
 import '../../providers/ack_providers.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/post_providers.dart';
@@ -27,11 +28,18 @@ class AckTrackerScreen extends ConsumerWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.check_circle_outline, size: 48, color: AppColors.textMuted),
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 48,
+                    color: AppColors.textMuted,
+                  ),
                   SizedBox(height: 12),
                   Text(
                     'No posts requiring acknowledgment',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 16),
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 16,
+                    ),
                   ),
                 ],
               ),
@@ -47,7 +55,7 @@ class AckTrackerScreen extends ConsumerWidget {
         loading: () => const Center(
           child: CircularProgressIndicator(color: AppColors.primary),
         ),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => Center(child: Text(ErrorMapper.map(e))),
       ),
     );
   }
@@ -65,7 +73,33 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
   bool _expanded = false;
   bool _sendingReminder = false;
 
-  Future<void> _remindAllPending() async {
+  Future<void> _confirmAndRemindAllPending(int pendingCount) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Request acknowledgment reminders?'),
+        content: Text(
+          'Record a reminder request for $pendingCount pending '
+          '${pendingCount == 1 ? 'representative' : 'representatives'}. '
+          'Actual delivery depends on the configured notification service.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Request reminders'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _remindAllPending(pendingCount);
+  }
+
+  Future<void> _remindAllPending(int pendingCount) async {
     final assocId = ref.read(currentAssociationIdProvider);
     if (assocId == null) return;
     setState(() => _sendingReminder = true);
@@ -75,19 +109,39 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
           .requestManualAckReminder(assocId, widget.post.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Reminder queued — pending reps will be pinged.'),
+          SnackBar(
+            content: Text(
+              'Reminder request recorded for $pendingCount pending '
+              '${pendingCount == 1 ? 'representative' : 'representatives'}.',
+            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Reminder failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(ErrorMapper.map(e))));
       }
     } finally {
       if (mounted) setState(() => _sendingReminder = false);
+    }
+  }
+
+  Future<void> _launchContact(Uri uri, String action) async {
+    try {
+      final launched = await launchUrl(uri);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open $action on this device.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open $action on this device.')),
+        );
+      }
     }
   }
 
@@ -95,7 +149,8 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
   Widget build(BuildContext context) {
     final post = widget.post;
     final isOverdue = post.isAckOverdue();
-    final allAcked = post.ackCount >= post.expectedAckCount && post.expectedAckCount > 0;
+    final allAcked =
+        post.ackCount >= post.expectedAckCount && post.expectedAckCount > 0;
 
     // Separate acked from pending
     final ackedUserIds = post.ackStatus.keys.toSet();
@@ -106,84 +161,96 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         border: Border.all(
           color: allAcked
               ? AppColors.success
               : isOverdue
-                  ? AppColors.urgent
-                  : AppColors.border,
+              ? AppColors.urgent
+              : AppColors.border,
         ),
         borderRadius: BorderRadius.circular(AppSizes.radiusMd),
       ),
       child: Column(
         children: [
           // Header
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(AppSizes.radiusMd),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          post.title,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      Icon(
-                        _expanded ? Icons.expand_less : Icons.expand_more,
-                        color: AppColors.textMuted,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  // Progress bar
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: post.ackProgress,
-                            minHeight: 6,
-                            backgroundColor: AppColors.border,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              allAcked ? AppColors.success : AppColors.ack,
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            label:
+                '${post.title}, ${post.ackCount} of ${post.expectedAckCount} acknowledged',
+            child: InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            post.title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
+                        Icon(
+                          _expanded ? Icons.expand_less : Icons.expand_more,
+                          color: AppColors.textMuted,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // Progress bar
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: post.ackProgress,
+                              minHeight: 6,
+                              backgroundColor: AppColors.border,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                allAcked ? AppColors.success : AppColors.ack,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${post.ackCount}/${post.expectedAckCount}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: allAcked
+                                ? AppColors.success
+                                : AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (post.ackDeadline != null) ...[
+                      const SizedBox(height: 6),
                       Text(
-                        '${post.ackCount}/${post.expectedAckCount}',
+                        'Deadline: ${LeagueTime.formatJamaicaDate(post.ackDeadline!, pattern: 'MMM d')} at ${LeagueTime.formatJamaicaTime(post.ackDeadline!)}',
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: allAcked ? AppColors.success : AppColors.textSecondary,
+                          fontSize: 11,
+                          color: isOverdue
+                              ? AppColors.urgent
+                              : AppColors.textMuted,
+                          fontWeight: isOverdue
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         ),
                       ),
                     ],
-                  ),
-                  if (post.ackDeadline != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Deadline: ${DateFormat('MMM d, h:mm a').format(post.ackDeadline!)}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isOverdue ? AppColors.urgent : AppColors.textMuted,
-                        fontWeight: isOverdue ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                    ),
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -212,7 +279,11 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Row(
                           children: [
-                            const Icon(Icons.check_circle, size: 16, color: AppColors.success),
+                            const Icon(
+                              Icons.check_circle,
+                              size: 16,
+                              color: AppColors.success,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -221,8 +292,11 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
                               ),
                             ),
                             Text(
-                              DateFormat('MMM d, h:mm a').format(e.value.ackedAt),
-                              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                              '${LeagueTime.formatJamaicaDate(e.value.ackedAt, pattern: 'MMM d')} · ${LeagueTime.formatJamaicaTime(e.value.ackedAt)}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           ],
                         ),
@@ -250,7 +324,9 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
                             Icon(
                               Icons.pending_outlined,
                               size: 16,
-                              color: isOverdue ? AppColors.urgent : AppColors.ack,
+                              color: isOverdue
+                                  ? AppColors.urgent
+                                  : AppColors.ack,
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -263,25 +339,37 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
                               IconButton(
                                 icon: const Icon(Icons.sms_outlined, size: 16),
                                 tooltip: 'Send SMS',
-                                onPressed: () => launchUrl(
-                                  Uri.parse(
-                                    'sms:${e.value.phone}'
-                                    '?body=${Uri.encodeComponent('Reminder — please ack: ${post.title}')}',
+                                onPressed: () => _launchContact(
+                                  Uri(
+                                    scheme: 'sms',
+                                    path: e.value.phone,
+                                    queryParameters: {
+                                      'body':
+                                          'Reminder: please acknowledge ${post.title}',
+                                    },
                                   ),
+                                  'messages',
                                 ),
                                 padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
                                 color: AppColors.info,
                               ),
                               const SizedBox(width: 4),
                               IconButton(
                                 icon: const Icon(Icons.phone, size: 16),
                                 tooltip: 'Call',
-                                onPressed: () => launchUrl(
-                                  Uri.parse('tel:${e.value.phone}'),
+                                onPressed: () => _launchContact(
+                                  Uri(scheme: 'tel', path: e.value.phone),
+                                  'phone',
                                 ),
                                 padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
                                 color: AppColors.primary,
                               ),
                             ],
@@ -293,18 +381,26 @@ class _AckPostCardState extends ConsumerState<_AckPostCard> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: _sendingReminder ? null : _remindAllPending,
+                        onPressed: _sendingReminder
+                            ? null
+                            : () => _confirmAndRemindAllPending(
+                                pendingEntries.length,
+                              ),
                         icon: _sendingReminder
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
-                            : const Icon(Icons.notifications_active_outlined,
-                                size: 16),
+                            : const Icon(
+                                Icons.notifications_active_outlined,
+                                size: 16,
+                              ),
                         label: Text(
                           _sendingReminder
-                              ? 'Sending…'
+                              ? 'Recording request…'
                               : 'Remind all pending (${pendingEntries.length})',
                         ),
                         style: OutlinedButton.styleFrom(

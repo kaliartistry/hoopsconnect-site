@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/time/league_time.dart';
 
 class DateScroller extends StatefulWidget {
   final DateTime selectedDate;
@@ -28,9 +29,8 @@ class _DateScrollerState extends State<DateScroller> {
   @override
   void initState() {
     super.initState();
-    final today = DateTime.now();
-    final startDate = DateTime(today.year, today.month, today.day)
-        .subtract(Duration(days: _daysBefore));
+    final today = LeagueTime.jamaicaDate(DateTime.now());
+    final startDate = today.subtract(const Duration(days: _daysBefore));
     _dates = List.generate(
       _daysBefore + 1 + _daysAfter,
       (i) => startDate.add(Duration(days: i)),
@@ -43,7 +43,7 @@ class _DateScrollerState extends State<DateScroller> {
   }
 
   int _indexOfDate(DateTime date) {
-    final norm = DateTime(date.year, date.month, date.day);
+    final norm = DateTime.utc(date.year, date.month, date.day);
     for (int i = 0; i < _dates.length; i++) {
       if (_dates[i].year == norm.year &&
           _dates[i].month == norm.month &&
@@ -88,7 +88,7 @@ class _DateScrollerState extends State<DateScroller> {
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
+    final today = LeagueTime.jamaicaDate(DateTime.now());
 
     return SizedBox(
       height: 72,
@@ -114,15 +114,15 @@ class _DateScrollerState extends State<DateScroller> {
                 color: isSelected
                     ? AppColors.primary
                     : isToday
-                        ? AppColors.primaryLight
-                        : Colors.white,
+                    ? AppColors.primaryLight
+                    : Colors.white,
                 borderRadius: BorderRadius.circular(AppSizes.radiusMd),
                 border: Border.all(
                   color: isSelected
                       ? AppColors.primary
                       : isToday
-                          ? AppColors.primary.withValues(alpha: 0.3)
-                          : AppColors.border,
+                      ? AppColors.primary.withValues(alpha: 0.3)
+                      : AppColors.border,
                 ),
               ),
               child: Column(
@@ -147,8 +147,8 @@ class _DateScrollerState extends State<DateScroller> {
                       color: isSelected
                           ? Colors.white
                           : isToday
-                              ? AppColors.primary
-                              : AppColors.textPrimary,
+                          ? AppColors.primary
+                          : AppColors.textPrimary,
                     ),
                   ),
                 ],

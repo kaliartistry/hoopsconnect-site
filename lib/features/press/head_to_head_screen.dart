@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/constants/app_constants.dart';
-import '../../models/player_season_stats_model.dart';
-import '../../models/team_model.dart';
-import '../../models/team_season_stats_model.dart';
-import '../../providers/season_providers.dart';
-import '../../providers/stats_providers.dart';
-import '../../providers/team_providers.dart';
+import '../../models/public_league_snapshot.dart';
+import '../../providers/public_league_provider.dart';
 
 enum _CompareMode { teams, players }
 
-enum _TeamViewMode { seasonAverages, headToHead }
-
+/// Media comparison backed exclusively by the current public release.
+///
+/// This screen intentionally has no import of team, roster, season, or private
+/// statistics providers. Retraction and privacy-epoch enforcement therefore
+/// stay identical to the guest-facing public experience.
 class HeadToHeadScreen extends ConsumerStatefulWidget {
   final String? initialTeamAId;
 
@@ -23,13 +23,8 @@ class HeadToHeadScreen extends ConsumerStatefulWidget {
 
 class _HeadToHeadScreenState extends ConsumerState<HeadToHeadScreen> {
   _CompareMode _mode = _CompareMode.teams;
-  _TeamViewMode _teamViewMode = _TeamViewMode.seasonAverages;
-
-  // Team mode
   String? _teamAId;
   String? _teamBId;
-
-  // Player mode
   String? _playerAId;
   String? _playerBId;
 
@@ -41,685 +36,394 @@ class _HeadToHeadScreenState extends ConsumerState<HeadToHeadScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final teamsAsync = ref.watch(teamsStreamProvider);
-    final seasonId = ref.watch(activeSeasonIdProvider).value;
-
+    final snapshotAsync = ref.watch(publicLeagueSnapshotProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Head to Head')),
-      body: Column(
-        children: [
-          // Toggle: Teams | Players
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: SegmentedButton<_CompareMode>(
-              segments: const [
-                ButtonSegment(
-                  value: _CompareMode.teams,
-                  label: Text('Teams'),
-                  icon: Icon(Icons.groups_outlined),
-                ),
-                ButtonSegment(
-                  value: _CompareMode.players,
-                  label: Text('Players'),
-                  icon: Icon(Icons.person_outline),
-                ),
-              ],
-              selected: {_mode},
-              onSelectionChanged: (sel) => setState(() => _mode = sel.first),
-              style: ButtonStyle(
-                backgroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return AppColors.primary;
-                  }
-                  return AppColors.surface;
-                }),
-                foregroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return Colors.white;
-                  }
-                  return AppColors.textPrimary;
-                }),
-              ),
-            ),
-          ),
-
-          Expanded(
-            child: teamsAsync.when(
-              data: (teams) {
-                if (_mode == _CompareMode.teams) {
-                  return _buildTeamComparison(teams, seasonId);
-                } else {
-                  return _buildPlayerComparison(teams, seasonId);
-                }
-              },
-              loading: () => const Center(
-                child: CircularProgressIndicator(color: AppColors.primary),
-              ),
-              error: (e, _) => Center(child: Text('Error: $e')),
-            ),
-          ),
-        ],
+      body: snapshotAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (_, _) => _ReleaseUnavailable(
+          message:
+              'The published comparison data could not be loaded. No private stats were used.',
+          onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+        ),
+        data: (snapshot) {
+          if (snapshot == null || !snapshot.version.isPublished) {
+            return _ReleaseUnavailable(
+              message:
+                  'There is no active public release for comparisons. No private stats were used.',
+              onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+            );
+          }
+          return _buildPublished(snapshot);
+        },
       ),
     );
   }
 
-  // ─── TEAM COMPARISON ───────────────────────────────────────────────
+  Widget _buildPublished(PublicLeagueSnapshot snapshot) {
+    final teams = snapshot.teams.toList(growable: false)
+      ..sort((a, b) => a.name.compareTo(b.name));
+    final players = _publicPlayers(snapshot);
 
-  Widget _buildTeamComparison(List<TeamModel> teams, String? seasonId) {
+    if (_teamAId != null && !teams.any((team) => team.teamId == _teamAId)) {
+      _teamAId = null;
+    }
+    if (_teamBId != null && !teams.any((team) => team.teamId == _teamBId)) {
+      _teamBId = null;
+    }
+    if (_playerAId != null && !players.containsKey(_playerAId)) {
+      _playerAId = null;
+    }
+    if (_playerBId != null && !players.containsKey(_playerBId)) {
+      _playerBId = null;
+    }
+
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(AppSizes.paddingMd),
       children: [
-        // Selectors
-        Row(
-          children: [
-            Expanded(child: _teamDropdown(teams, _teamAId, (v) => setState(() => _teamAId = v), 'Team A')),
-            const SizedBox(width: 12),
-            const Text('vs', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textSecondary)),
-            const SizedBox(width: 12),
-            Expanded(child: _teamDropdown(teams, _teamBId, (v) => setState(() => _teamBId = v), 'Team B')),
-          ],
+        Text(
+          '${snapshot.seasonName} published data',
+          style: Theme.of(context).textTheme.titleMedium,
         ),
-        const SizedBox(height: 12),
-
-        // Season Averages / Head-to-Head toggle
-        if (_teamAId != null && _teamBId != null) ...[
-          SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<_TeamViewMode>(
-              segments: const [
-                ButtonSegment(
-                  value: _TeamViewMode.seasonAverages,
-                  label: Text('Season Averages'),
-                ),
-                ButtonSegment(
-                  value: _TeamViewMode.headToHead,
-                  label: Text('Head-to-Head'),
-                ),
-              ],
-              selected: {_teamViewMode},
-              onSelectionChanged: (sel) =>
-                  setState(() => _teamViewMode = sel.first),
-              style: ButtonStyle(
-                backgroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return AppColors.primary;
-                  }
-                  return AppColors.surface;
-                }),
-                foregroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return Colors.white;
-                  }
-                  return AppColors.textPrimary;
-                }),
-              ),
+        const SizedBox(height: 4),
+        Text(
+          'Publication ${snapshot.version.shortLabel}. Comparisons update or disappear with the public release.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        SegmentedButton<_CompareMode>(
+          segments: const [
+            ButtonSegment(
+              value: _CompareMode.teams,
+              label: Text('Teams'),
+              icon: Icon(Icons.groups_outlined),
             ),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        if (_teamAId != null && _teamBId != null && seasonId != null)
-          _TeamComparisonBody(
-            teamAId: _teamAId!,
-            teamBId: _teamBId!,
-            seasonId: seasonId,
-            viewMode: _teamViewMode,
-          )
+            ButtonSegment(
+              value: _CompareMode.players,
+              label: Text('Players'),
+              icon: Icon(Icons.person_outline),
+            ),
+          ],
+          selected: {_mode},
+          onSelectionChanged: (selection) {
+            setState(() => _mode = selection.first);
+          },
+        ),
+        const SizedBox(height: 20),
+        if (_mode == _CompareMode.teams)
+          _teamComparison(snapshot, teams)
         else
-          const _SelectBothHint(label: 'Select two teams to compare'),
+          _playerComparison(snapshot, players),
       ],
     );
   }
 
-  Widget _teamDropdown(List<TeamModel> teams, String? value, ValueChanged<String?> onChanged, String hint) {
+  Widget _teamComparison(
+    PublicLeagueSnapshot snapshot,
+    List<PublicTeam> teams,
+  ) {
+    if (teams.length < 2) {
+      return const _Hint('Two public teams are required for comparison.');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _selector(
+          label: 'Team A',
+          value: _teamAId,
+          entries: {for (final team in teams) team.teamId: team.name},
+          onChanged: (value) => setState(() => _teamAId = value),
+        ),
+        const SizedBox(height: 12),
+        _selector(
+          label: 'Team B',
+          value: _teamBId,
+          entries: {for (final team in teams) team.teamId: team.name},
+          onChanged: (value) => setState(() => _teamBId = value),
+        ),
+        const SizedBox(height: 20),
+        if (_teamAId == null || _teamBId == null)
+          const _Hint('Select two teams to compare.')
+        else if (_teamAId == _teamBId)
+          const _Hint('Choose two different teams.')
+        else
+          _TeamComparison(
+            snapshot: snapshot,
+            teamAId: _teamAId!,
+            teamBId: _teamBId!,
+          ),
+      ],
+    );
+  }
+
+  Widget _playerComparison(
+    PublicLeagueSnapshot snapshot,
+    Map<String, PublicPlayerDetail> players,
+  ) {
+    if (snapshot.version.privacyEpoch == null) {
+      return const _Hint(
+        'Player comparisons are unavailable until the public privacy policy is versioned.',
+      );
+    }
+    if (players.length < 2) {
+      return const _Hint(
+        'Two public player records are required for comparison.',
+      );
+    }
+    final entries = {
+      for (final entry in players.entries)
+        entry.key: '${entry.value.displayName} · ${entry.value.teamName}',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _selector(
+          label: 'Player A',
+          value: _playerAId,
+          entries: entries,
+          onChanged: (value) => setState(() => _playerAId = value),
+        ),
+        const SizedBox(height: 12),
+        _selector(
+          label: 'Player B',
+          value: _playerBId,
+          entries: entries,
+          onChanged: (value) => setState(() => _playerBId = value),
+        ),
+        const SizedBox(height: 20),
+        if (_playerAId == null || _playerBId == null)
+          const _Hint('Select two players to compare.')
+        else if (_playerAId == _playerBId)
+          const _Hint('Choose two different players.')
+        else
+          _PlayerComparison(
+            playerA: players[_playerAId!]!,
+            playerB: players[_playerBId!]!,
+          ),
+      ],
+    );
+  }
+
+  Widget _selector({
+    required String label,
+    required String? value,
+    required Map<String, String> entries,
+    required ValueChanged<String?> onChanged,
+  }) {
     return DropdownButtonFormField<String>(
       initialValue: value,
-      hint: Text(hint, style: const TextStyle(fontSize: 13)),
       isExpanded: true,
-      decoration: InputDecoration(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppSizes.radiusSm)),
-      ),
-      items: teams.map((t) => DropdownMenuItem(value: t.id, child: Text(t.name, style: const TextStyle(fontSize: 13)))).toList(),
+      decoration: InputDecoration(labelText: label),
+      items: entries.entries
+          .map(
+            (entry) => DropdownMenuItem<String>(
+              value: entry.key,
+              child: Text(entry.value, overflow: TextOverflow.ellipsis),
+            ),
+          )
+          .toList(growable: false),
       onChanged: onChanged,
     );
   }
-
-  // ─── PLAYER COMPARISON ─────────────────────────────────────────────
-
-  Widget _buildPlayerComparison(List<TeamModel> teams, String? seasonId) {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      children: [
-        // Player A selector
-        _PlayerSelector(
-          teams: teams,
-          seasonId: seasonId,
-          selectedPlayerId: _playerAId,
-          label: 'Player A',
-          onSelected: (id) => setState(() => _playerAId = id),
-        ),
-        const SizedBox(height: 8),
-        const Center(child: Text('vs', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textSecondary))),
-        const SizedBox(height: 8),
-        // Player B selector
-        _PlayerSelector(
-          teams: teams,
-          seasonId: seasonId,
-          selectedPlayerId: _playerBId,
-          label: 'Player B',
-          onSelected: (id) => setState(() => _playerBId = id),
-        ),
-        const SizedBox(height: 20),
-
-        if (_playerAId != null && _playerBId != null && seasonId != null)
-          _PlayerComparisonBody(
-            playerAId: _playerAId!,
-            playerBId: _playerBId!,
-            seasonId: seasonId,
-          )
-        else
-          const _SelectBothHint(label: 'Select two players to compare'),
-      ],
-    );
-  }
 }
 
-// ─── TEAM COMPARISON BODY (watches providers) ──────────────────────────
-
-class _TeamComparisonBody extends ConsumerWidget {
+class _TeamComparison extends StatelessWidget {
+  final PublicLeagueSnapshot snapshot;
   final String teamAId;
   final String teamBId;
-  final String seasonId;
-  final _TeamViewMode viewMode;
 
-  const _TeamComparisonBody({
+  const _TeamComparison({
+    required this.snapshot,
     required this.teamAId,
     required this.teamBId,
-    required this.seasonId,
-    this.viewMode = _TeamViewMode.seasonAverages,
   });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final aAsync = ref.watch(teamSeasonStatsProvider((teamId: teamAId, seasonId: seasonId)));
-    final bAsync = ref.watch(teamSeasonStatsProvider((teamId: teamBId, seasonId: seasonId)));
-
-    return aAsync.when(
-      data: (a) => bAsync.when(
-        data: (b) {
-          if (a == null || b == null) {
-            return const Center(child: Text('Stats not available for one or both teams.'));
-          }
-          return _buildContent(context, a, b);
-        },
-        loading: () => const _LoadingIndicator(),
-        error: (e, _) => Text('Error: $e'),
-      ),
-      loading: () => const _LoadingIndicator(),
-      error: (e, _) => Text('Error: $e'),
-    );
-  }
-
-  Widget _buildContent(BuildContext context, TeamSeasonStats a, TeamSeasonStats b) {
-    // Win / Loss records
-    final aWins = a.gameLog.where((g) => g.result == 'W').length;
-    final aLosses = a.gameLog.where((g) => g.result == 'L').length;
-    final bWins = b.gameLog.where((g) => g.result == 'W').length;
-    final bLosses = b.gameLog.where((g) => g.result == 'L').length;
-
-    // Head-to-head matchups from game logs (prefer opponentTeamId, fall back to name)
-    final h2hGamesA = a.gameLog.where((g) =>
-        g.opponentTeamId == teamBId ||
-        (g.opponentTeamId == null && g.opponentName == b.teamName)).toList();
-
-    final h2hWinsA = h2hGamesA.where((g) => g.result == 'W').length;
-    final h2hWinsB = h2hGamesA.where((g) => g.result == 'L').length;
-
-    // Last matchups
-    final lastMatchups = h2hGamesA.toList()..sort((x, y) => y.date.compareTo(x.date));
-    final last3 = lastMatchups.take(3).toList();
-
-    return Column(
-      children: [
-        // Team name headers
-        Row(
-          children: [
-            Expanded(child: _teamHeader(a.teamName, AppColors.primary)),
-            const SizedBox(width: 8),
-            Expanded(child: _teamHeader(b.teamName, AppColors.info)),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        if (viewMode == _TeamViewMode.seasonAverages) ...[
-          // Season record
-          _statRow('Record', '$aWins-$aLosses', '$bWins-$bLosses'),
-          const Divider(height: 1),
-
-          // Averages
-          _statRow('PPG', a.averages.ppg.toStringAsFixed(1), b.averages.ppg.toStringAsFixed(1)),
-          _statRow('RPG', a.averages.rpg.toStringAsFixed(1), b.averages.rpg.toStringAsFixed(1)),
-          _statRow('APG', a.averages.apg.toStringAsFixed(1), b.averages.apg.toStringAsFixed(1)),
-          _statRow('SPG', a.averages.spg.toStringAsFixed(1), b.averages.spg.toStringAsFixed(1)),
-          _statRow('BPG', a.averages.bpg.toStringAsFixed(1), b.averages.bpg.toStringAsFixed(1)),
-          _statRow('TPG', a.averages.topg.toStringAsFixed(1), b.averages.topg.toStringAsFixed(1)),
-          _statRow('FPG', a.averages.fpg.toStringAsFixed(1), b.averages.fpg.toStringAsFixed(1)),
-        ] else ...[
-          // Head-to-head record
-          _statRow('H2H Record', '$h2hWinsA W', '$h2hWinsB W'),
-          const SizedBox(height: 16),
-
-          // Recent matchups
-          if (last3.isNotEmpty) ...[
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Recent Matchups',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
-              ),
-            ),
-            const SizedBox(height: 8),
-            ...last3.map((g) => _matchupRow(a.teamName, g)),
-          ] else
-            const Text(
-              'No head-to-head matchups this season',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-        ],
-      ],
-    );
-  }
-
-  Widget _teamHeader(String name, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(AppSizes.radiusSm),
-      ),
-      child: Text(
-        name,
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-      ),
-    );
-  }
-
-  Widget _statRow(String label, String valA, String valB) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(valA, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.primary)),
-          ),
-          SizedBox(
-            width: 80,
-            child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-          ),
-          Expanded(
-            child: Text(valB, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.info)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _matchupRow(String teamAName, TeamGameLog game) {
-    final isWin = game.result == 'W';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(AppSizes.radiusSm),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '$teamAName vs ${game.opponentName}',
-              style: const TextStyle(fontSize: 12, color: AppColors.textPrimary),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: isWin ? AppColors.success : AppColors.urgent,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              '${game.pts} pts (${game.result})',
-              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── PLAYER SELECTOR (team then player) ────────────────────────────────
-
-class _PlayerSelector extends ConsumerStatefulWidget {
-  final List<TeamModel> teams;
-  final String? seasonId;
-  final String? selectedPlayerId;
-  final String label;
-  final ValueChanged<String?> onSelected;
-
-  const _PlayerSelector({
-    required this.teams,
-    required this.seasonId,
-    required this.selectedPlayerId,
-    required this.label,
-    required this.onSelected,
-  });
-
-  @override
-  ConsumerState<_PlayerSelector> createState() => _PlayerSelectorState();
-}
-
-class _PlayerSelectorState extends ConsumerState<_PlayerSelector> {
-  String? _teamId;
 
   @override
   Widget build(BuildContext context) {
-    final rosterAsync = _teamId != null
-        ? ref.watch(teamRosterProvider(_teamId!))
-        : null;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(widget.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            // Team dropdown
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                initialValue: _teamId,
-                hint: const Text('Team', style: TextStyle(fontSize: 13)),
-                isExpanded: true,
-                decoration: InputDecoration(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppSizes.radiusSm)),
-                ),
-                items: widget.teams.map((t) => DropdownMenuItem(value: t.id, child: Text(t.name, style: const TextStyle(fontSize: 12)))).toList(),
-                onChanged: (v) {
-                  setState(() {
-                    _teamId = v;
-                  });
-                  widget.onSelected(null);
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Player dropdown
-            Expanded(
-              child: rosterAsync == null
-                  ? DropdownButtonFormField<String>(
-                      initialValue: null,
-                      hint: const Text('Select team first', style: TextStyle(fontSize: 13)),
-                      items: const [],
-                      onChanged: null,
-                      decoration: InputDecoration(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppSizes.radiusSm)),
-                      ),
-                    )
-                  : rosterAsync.when(
-                      data: (roster) => DropdownButtonFormField<String>(
-                        initialValue: widget.selectedPlayerId,
-                        hint: const Text('Player', style: TextStyle(fontSize: 13)),
-                        isExpanded: true,
-                        decoration: InputDecoration(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppSizes.radiusSm)),
-                        ),
-                        items: roster
-                            .map((p) => DropdownMenuItem(
-                                  value: p.playerId,
-                                  child: Text(p.playerName, style: const TextStyle(fontSize: 12)),
-                                ))
-                            .toList(),
-                        onChanged: widget.onSelected,
-                      ),
-                      loading: () => const SizedBox(
-                        height: 48,
-                        child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                      ),
-                      error: (e, _) => Text('Error: $e', style: const TextStyle(fontSize: 11)),
-                    ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-// ─── PLAYER COMPARISON BODY ────────────────────────────────────────────
-
-class _PlayerComparisonBody extends ConsumerWidget {
-  final String playerAId;
-  final String playerBId;
-  final String seasonId;
-
-  const _PlayerComparisonBody({
-    required this.playerAId,
-    required this.playerBId,
-    required this.seasonId,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final aAsync = ref.watch(playerSeasonStatsProvider((playerId: playerAId, seasonId: seasonId)));
-    final bAsync = ref.watch(playerSeasonStatsProvider((playerId: playerBId, seasonId: seasonId)));
-
-    return aAsync.when(
-      data: (a) => bAsync.when(
-        data: (b) {
-          if (a == null || b == null) {
-            return const Center(child: Text('Stats not available for one or both players.'));
-          }
-          return _buildContent(context, a, b);
-        },
-        loading: () => const _LoadingIndicator(),
-        error: (e, _) => Text('Error: $e'),
-      ),
-      loading: () => const _LoadingIndicator(),
-      error: (e, _) => Text('Error: $e'),
-    );
-  }
-
-  Widget _buildContent(BuildContext context, PlayerSeasonStatsModel a, PlayerSeasonStatsModel b) {
-    // Recent 5 games
-    final aRecent = a.gameLog.toList()
-      ..sort((x, y) => y.date.compareTo(x.date));
-    final bRecent = b.gameLog.toList()
-      ..sort((x, y) => y.date.compareTo(x.date));
-
-    return Column(
-      children: [
-        // Player name headers
-        Row(
-          children: [
-            Expanded(child: _playerHeader(a)),
-            const SizedBox(width: 8),
-            Expanded(child: _playerHeader(b)),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Season averages
-        _statRow('GP', '${a.gamesPlayed}', '${b.gamesPlayed}'),
-        _statRow('PPG', a.ppg.toStringAsFixed(1), b.ppg.toStringAsFixed(1)),
-        _statRow('RPG', a.rpg.toStringAsFixed(1), b.rpg.toStringAsFixed(1)),
-        _statRow('APG', a.apg.toStringAsFixed(1), b.apg.toStringAsFixed(1)),
-        _statRow('SPG', a.spg.toStringAsFixed(1), b.spg.toStringAsFixed(1)),
-        _statRow('BPG', a.bpg.toStringAsFixed(1), b.bpg.toStringAsFixed(1)),
-        const SizedBox(height: 16),
-
-        // Recent 5 games
-        const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Recent Games', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: _recentGames(aRecent.take(5).toList(), AppColors.primary)),
-            const SizedBox(width: 8),
-            Expanded(child: _recentGames(bRecent.take(5).toList(), AppColors.info)),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _playerHeader(PlayerSeasonStatsModel p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-      decoration: BoxDecoration(
-        color: AppColors.primaryLight,
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-        borderRadius: BorderRadius.circular(AppSizes.radiusSm),
-      ),
-      child: Column(
-        children: [
-          Text(
-            p.playerName,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            p.teamName ?? '',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statRow(String label, String valA, String valB) {
-    final numA = double.tryParse(valA) ?? 0;
-    final numB = double.tryParse(valB) ?? 0;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              valA,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: numA >= numB ? AppColors.primary : AppColors.textSecondary,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 60,
-            child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-          ),
-          Expanded(
-            child: Text(
-              valB,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: numB >= numA ? AppColors.info : AppColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _recentGames(List<GameLogEntry> games, Color accent) {
-    if (games.isEmpty) {
-      return const Text('No games yet', style: TextStyle(fontSize: 11, color: AppColors.textMuted));
+    final teamA = snapshot.teamDetail(teamAId)!;
+    final teamB = snapshot.teamDetail(teamBId)!;
+    final games = snapshot.schedule
+        .where(
+          (game) =>
+              game.isFinal &&
+              ((game.homeTeamId == teamAId && game.awayTeamId == teamBId) ||
+                  (game.homeTeamId == teamBId && game.awayTeamId == teamAId)),
+        )
+        .toList(growable: false);
+    var winsA = 0;
+    var winsB = 0;
+    for (final game in games) {
+      if (game.homeScore == game.awayScore) continue;
+      final homeWon = game.homeScore! > game.awayScore!;
+      if ((homeWon && game.homeTeamId == teamAId) ||
+          (!homeWon && game.awayTeamId == teamAId)) {
+        winsA++;
+      } else {
+        winsB++;
+      }
     }
-    return Column(
-      children: games.map((g) {
-        final isWin = g.result == 'W';
-        return Container(
-          margin: const EdgeInsets.only(bottom: 4),
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 18,
-                height: 18,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: isWin ? AppColors.success : AppColors.urgent,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: Text(g.result, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  '${g.pts}p ${g.reb}r ${g.ast}a',
-                  style: const TextStyle(fontSize: 10, color: AppColors.textPrimary),
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
+    return _ComparisonCard(
+      first: teamA.team.name,
+      second: teamB.team.name,
+      rows: [
+        ('Record', _record(teamA.standing), _record(teamB.standing)),
+        ('Head-to-head wins', '$winsA', '$winsB'),
+        ('Head-to-head games', '${games.length}', '${games.length}'),
+      ],
     );
+  }
+
+  static String _record(PublicStanding? standing) {
+    if (standing?.wins == null || standing?.losses == null) return 'Unknown';
+    return '${standing!.wins}-${standing.losses}';
   }
 }
 
-// ─── SHARED WIDGETS ────────────────────────────────────────────────────
+class _PlayerComparison extends StatelessWidget {
+  final PublicPlayerDetail playerA;
+  final PublicPlayerDetail playerB;
 
-class _LoadingIndicator extends StatelessWidget {
-  const _LoadingIndicator();
+  const _PlayerComparison({required this.playerA, required this.playerB});
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 32),
-      child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+    final valuesA = {
+      for (final entry in playerA.categories)
+        entry.category.toLowerCase(): entry.value.value,
+    };
+    final valuesB = {
+      for (final entry in playerB.categories)
+        entry.category.toLowerCase(): entry.value.value,
+    };
+    final categories = <String>{...valuesA.keys, ...valuesB.keys}.toList()
+      ..sort();
+    return _ComparisonCard(
+      first: playerA.displayName,
+      second: playerB.displayName,
+      rows: categories
+          .map(
+            (category) => (
+              category.toUpperCase(),
+              _metric(valuesA[category]),
+              _metric(valuesB[category]),
+            ),
+          )
+          .toList(growable: false),
     );
   }
+
+  static String _metric(double? value) =>
+      value == null ? 'Unknown' : value.toStringAsFixed(1);
 }
 
-class _SelectBothHint extends StatelessWidget {
-  final String label;
-  const _SelectBothHint({required this.label});
+class _ComparisonCard extends StatelessWidget {
+  final String first;
+  final String second;
+  final List<(String, String, String)> rows;
+
+  const _ComparisonCard({
+    required this.first,
+    required this.second,
+    required this.rows,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48),
-      child: Column(
-        children: [
-          const Icon(Icons.compare_arrows, size: 48, color: AppColors.textMuted),
-          const SizedBox(height: 12),
-          Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
-        ],
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(first, textAlign: TextAlign.center)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('vs'),
+                ),
+                Expanded(child: Text(second, textAlign: TextAlign.center)),
+              ],
+            ),
+            const Divider(height: 24),
+            if (rows.isEmpty)
+              const Text('No matching public metrics are available.')
+            else
+              for (final row in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(row.$2, textAlign: TextAlign.center),
+                      ),
+                      SizedBox(
+                        width: 130,
+                        child: Text(row.$1, textAlign: TextAlign.center),
+                      ),
+                      Expanded(
+                        child: Text(row.$3, textAlign: TextAlign.center),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
       ),
     );
   }
+}
+
+Map<String, PublicPlayerDetail> _publicPlayers(PublicLeagueSnapshot snapshot) {
+  final ids = <String>{};
+  for (final board in snapshot.leaderboards) {
+    for (final leader in board.rankings) {
+      if (leader.playerId != null) ids.add(leader.playerId!);
+    }
+  }
+  final players = <String, PublicPlayerDetail>{};
+  for (final id in ids) {
+    final detail = snapshot.playerDetail(id);
+    if (detail != null) players[id] = detail;
+  }
+  return players;
+}
+
+class _ReleaseUnavailable extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ReleaseUnavailable({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 44),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Hint extends StatelessWidget {
+  final String message;
+
+  const _Hint(this.message);
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Text(message, textAlign: TextAlign.center),
+    ),
+  );
 }

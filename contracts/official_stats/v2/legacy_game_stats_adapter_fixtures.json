@@ -1,0 +1,104 @@
+{
+  "adapterVersion": "legacy-game-stats-to-official-v2-candidate-v1",
+  "canonicalEncodingVersion": "official-stat-canonical-json-v1",
+  "candidateSchemaVersion": 1,
+  "fixtureSchemaVersion": 1,
+  "sourceIdentityEncodingVersion": "utf8-hex-v1",
+  "unicodeNormalizationImplementationVersion": "unicode-17.0-unorm-dart-0.3.2-hangul-boundary-patch1",
+  "unicodeNormalizationVersion": "official-stat-unicode-nfc-v2",
+  "cases": [
+    {
+      "id": "approved_legacy_record_remains_unverified",
+      "source": {
+        "documentId": "game_1",
+        "sourcePath": "associations/jba/gameStats/game_1",
+        "sourcePayloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "scope": {
+        "associationId": "jba",
+        "competitionId": "nbl",
+        "seasonId": "season_2026",
+        "divisionId": "division_1",
+        "phaseId": "regular",
+        "gameId": "game_1"
+      },
+      "rulesProfile": {
+        "rulesProfileId": "rules_profile_fixture_v1",
+        "rulesetVersion": {
+          "associationId": "jba",
+          "versionId": "rules_fixture_v1",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "legacyDocument": {
+        "eventId": "game_1",
+        "seasonId": "season_2026",
+        "divisionId": "division_1",
+        "homeTeamId": "legacy_home",
+        "awayTeamId": "legacy_away",
+        "homeTeamName": "Kingston Lions",
+        "awayTeamName": "Montego Bay Waves",
+        "homeScore": 80,
+        "awayScore": 70,
+        "status": "approved",
+        "entryMode": "postGame",
+        "approvedBy": "legacy_admin",
+        "homeQuarterScores": {
+          "1": 20,
+          "2": 20,
+          "3": 20,
+          "4": 20
+        },
+        "awayQuarterScores": {
+          "1": 18,
+          "2": 17,
+          "3": 16,
+          "4": 19
+        },
+        "playerLines": {
+          "legacy_player_2": {
+            "name": "Béa Grant",
+            "teamId": "legacy_away",
+            "pts": 0,
+            "oreb": 0,
+            "dreb": 0,
+            "reb": 0,
+            "ast": 0,
+            "stl": 0,
+            "blk": 0,
+            "fls": 0,
+            "min": 0,
+            "legacyExtension": "retained-by-source-hash"
+          },
+          "legacy_player_1": {
+            "name": "Andre Brown",
+            "teamId": "legacy_home",
+            "pts": 25,
+            "oreb": 2,
+            "dreb": 5,
+            "ast": 4,
+            "stl": 1,
+            "blk": 0,
+            "fls": 3,
+            "min": 31
+          }
+        }
+      },
+      "expected": {
+        "candidateHash": "bcc6be9352f1bfce0f85ccad7971eddaacd3f3944247f640edad97ef7cbc67d0",
+        "canonicalByteLength": 8201,
+        "evidenceClassification": "unverified",
+        "issueCodes": [
+          "legacyApprovalIsNotCertification"
+        ],
+        "playerOrder": [
+          "legacy_player_1",
+          "legacy_player_2"
+        ],
+        "rootUnmappedSourcePaths": [
+          "$.approvedBy"
+        ]
+      }
+    }
+  ]
+}

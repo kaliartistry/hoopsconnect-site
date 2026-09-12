@@ -8,15 +8,18 @@ const test = require('node:test');
 
 const repositoryRoot = path.resolve(__dirname, '../..');
 const baselineGitBlobHashes = Object.freeze({
-  'functions/src/index.ts': '78ebe0c51a1550132da8201b0f2e7b783260cb38',
-  'firestore.rules': '9dc99cf1f7c597dd556898424b2911154abe3fc3',
+  // Reviewed callable-only season lifecycle transition; AD02 stays absent.
+  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
+  'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'firebase.json': 'bffa6ccd0f69f3f39d9be8cdc49941adab02f3dc',
-  'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
+  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
+  // Reviewed public deep-link transition: URL strategy only; AD02 stays absent.
+  'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': 'abb289e0f8765d2c996798f5acd80eaff03b7151',
+  // Reviewed public detail-route mount; AD02 candidate imports stay excluded.
+  'lib/app/router/app_router.dart': '8fd2f939210a7ce488747276e179e76d74ea2edb',
   'lib/services/notification_service.dart': 'd17c7c10ca2620d97adf56fae0408cec0647fba8',
-  'lib/services/repositories/auth_repository.dart': 'b209f1c031acbfc3582b96985f7d561c93d8ad36',
+  'lib/services/repositories/auth_repository.dart': '533f850d12b4b7d50428149f5c2af0c816717c0f',
   'lib/core/constants/firestore_paths.dart': '59571aec275caa239e4fc3bb6ffa259c1c12dcb7',
 });
 const candidateSources = [

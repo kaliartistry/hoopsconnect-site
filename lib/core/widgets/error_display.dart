@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/connectivity_providers.dart';
 import '../constants/app_constants.dart';
+import '../theme/app_theme.dart';
+import '../utils/error_mapper.dart';
 
 /// Reusable error widget with icon, user-friendly message, and retry button.
 ///
@@ -12,19 +14,25 @@ class ErrorDisplay extends ConsumerWidget {
   final Object error;
   final VoidCallback? onRetry;
 
-  const ErrorDisplay({
-    super.key,
-    required this.error,
-    this.onRetry,
-  });
+  const ErrorDisplay({super.key, required this.error, this.onRetry});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isOnline = ref.watch(isOnlineProvider).valueOrNull ?? true;
-    final isNetworkError = _isNetworkRelated(error);
-
-    // Show offline-specific UI when offline or the error is network-related.
-    final showOffline = !isOnline || isNetworkError;
+    final showOffline = !isOnline || _isNetworkRelated(error);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final semantic = context.semanticColors;
+    final containerColor = showOffline
+        ? semantic.warningContainer
+        : colorScheme.errorContainer;
+    final foregroundColor = showOffline
+        ? semantic.onWarningContainer
+        : colorScheme.onErrorContainer;
+    final title = showOffline ? "You're offline" : 'Something went wrong';
+    final message = showOffline
+        ? 'Check your internet connection and try again'
+        : ErrorMapper.map(error);
 
     return Center(
       child: Padding(
@@ -32,36 +40,43 @@ class ErrorDisplay extends ConsumerWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: showOffline ? AppColors.ackBg : AppColors.urgentBg,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                showOffline ? Icons.cloud_off : Icons.error_outline,
-                size: 40,
-                color: showOffline ? AppColors.ack : AppColors.urgent,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              showOffline ? "You're offline" : 'Something went wrong',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              showOffline
-                  ? 'Check your internet connection and try again'
-                  : _mapError(error),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppColors.textSecondary,
+            Semantics(
+              container: true,
+              liveRegion: true,
+              label: '$title. $message',
+              child: ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: containerColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        showOffline ? Icons.cloud_off : Icons.error_outline,
+                        size: 40,
+                        color: foregroundColor,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             if (onRetry != null) ...[
@@ -78,36 +93,17 @@ class ErrorDisplay extends ConsumerWidget {
     );
   }
 
-  /// Returns `true` if the error looks network-related based on its message.
   static bool _isNetworkRelated(Object error) {
-    final msg = error.toString();
-    return msg.contains('SocketException') ||
-        msg.contains('network') ||
-        msg.contains('NetworkError') ||
-        msg.contains('Failed host lookup') ||
-        msg.contains('Connection refused') ||
-        msg.contains('HandshakeException') ||
-        msg.contains('unavailable') ||
-        msg.contains('UNAVAILABLE') ||
-        msg.contains('TimeoutException') ||
-        msg.contains('deadline-exceeded');
-  }
-
-  static String _mapError(Object error) {
-    final msg = error.toString();
-
-    // Firebase permission errors
-    if (msg.contains('permission-denied') || msg.contains('PERMISSION_DENIED')) {
-      return "You don't have permission to access this";
-    }
-    if (msg.contains('not-found') || msg.contains('NOT_FOUND')) {
-      return 'The requested item was not found';
-    }
-    if (msg.contains('unauthenticated') || msg.contains('UNAUTHENTICATED')) {
-      return 'Please sign in to continue';
-    }
-
-    // Fallback — don't show raw error text to the user
-    return 'An unexpected error occurred. Please try again';
+    final message = error.toString();
+    return message.contains('SocketException') ||
+        message.contains('network') ||
+        message.contains('NetworkError') ||
+        message.contains('Failed host lookup') ||
+        message.contains('Connection refused') ||
+        message.contains('HandshakeException') ||
+        message.contains('unavailable') ||
+        message.contains('UNAVAILABLE') ||
+        message.contains('TimeoutException') ||
+        message.contains('deadline-exceeded');
   }
 }

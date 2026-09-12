@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../app/app_version.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/theme_providers.dart';
-
-const _appVersion = '1.0.3';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -44,6 +44,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           }
 
           final themeMode = ref.watch(themeModeProvider);
+          final version = ref.watch(appVersionInfoProvider);
           final cardColor =
               Theme.of(context).cardTheme.color ?? Theme.of(context).cardColor;
           final borderColor = Theme.of(
@@ -149,6 +150,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 32),
 
+              _buildSectionHeader('Account Access'),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  border: Border.all(color: borderColor),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                ),
+                child: Column(
+                  children: [
+                    ListTile(
+                      key: const Key('settings-password-recovery'),
+                      leading: const Icon(Icons.password_outlined),
+                      title: const Text('Password and sign-in help'),
+                      subtitle: const Text(
+                        'Reset an email password or choose your Google or Apple sign-in',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push(
+                        Uri(
+                          path: AppRouteContract.passwordRecovery,
+                          queryParameters: {'email': user.email},
+                        ).toString(),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    ListTile(
+                      key: const Key('settings-delete-account'),
+                      leading: const Icon(Icons.person_remove_outlined),
+                      title: const Text('Delete account'),
+                      subtitle: const Text(
+                        'Review consequences and work saved on this device',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push(
+                        AccountLifecycleRoutePaths.requestDeletion,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
+
               // App Info section
               _buildSectionHeader('App Info'),
               const SizedBox(height: 8),
@@ -199,12 +243,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       onTap: () => context.push('/legal/privacy'),
                     ),
                     const Divider(height: 1, indent: 16, endIndent: 16),
-                    const ListTile(
-                      leading: Icon(Icons.tag, color: AppColors.textSecondary),
-                      title: Text('Version'),
+                    ListTile(
+                      leading: const Icon(
+                        Icons.tag,
+                        color: AppColors.textSecondary,
+                      ),
+                      title: const Text('Version'),
                       trailing: Text(
-                        _appVersion,
-                        style: TextStyle(color: AppColors.textMuted),
+                        version.when(
+                          data: (value) => value.label,
+                          loading: () => 'Loading…',
+                          error: (_, _) => 'Unavailable',
+                        ),
+                        key: const Key('settings-version'),
+                        style: const TextStyle(color: AppColors.textMuted),
                       ),
                     ),
                   ],

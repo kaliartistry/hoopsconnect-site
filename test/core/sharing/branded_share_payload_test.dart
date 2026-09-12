@@ -4,6 +4,7 @@ import 'package:hoops_connect/models/association_branding_model.dart';
 import 'package:hoops_connect/models/game_stats_model.dart';
 import 'package:hoops_connect/models/leaderboard_model.dart';
 import 'package:hoops_connect/models/player_season_stats_model.dart';
+import 'package:hoops_connect/models/public_league_snapshot.dart';
 import 'package:hoops_connect/models/standings_model.dart';
 
 void main() {
@@ -49,6 +50,62 @@ void main() {
 
     expect(payload.shareText, contains('Presented by KFC'));
     expect(payload.shareText, contains('Jamaica Basketball Association'));
+  });
+
+  test('public game share is bound to its snapshot and result versions', () {
+    final snapshot = PublicLeagueSnapshot(
+      leagueName: 'Jamaica Basketball Association',
+      leagueShortName: 'JBA',
+      seasonId: 'season-1',
+      seasonName: '2026 NBL',
+      version: PublicSnapshotVersion(
+        schemaVersion: 1,
+        contractVersion: 'legacy-public-snapshot-v1.1',
+        snapshotVersion:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        verificationStatus: 'legacyApproved',
+        state: PublicReleaseState.published,
+        privacyEpoch: 3,
+        generatedAt: DateTime.utc(2026, 9, 10),
+      ),
+      schedule: [
+        PublicGame(
+          gameId: 'game-1',
+          title: 'Home vs Away',
+          startTime: DateTime.utc(2026, 9, 10),
+          homeTeamName: 'Home',
+          awayTeamName: 'Away',
+          homeScore: 82,
+          awayScore: 79,
+          status: PublicGameStatus.finalResult,
+        ).withComputedResultVersion(),
+      ],
+      standings: const [],
+      leaderboards: const [],
+    );
+
+    final payload = BrandedSharePayload.publicGame(
+      snapshot: snapshot,
+      game: snapshot.schedule.single,
+      branding: AssociationBrandingModel.jba(),
+      canonicalUri: Uri.parse('https://example.test/public/game/game-1'),
+    );
+
+    expect(payload.sourceLabel, 'Published league result');
+    expect(payload.versionLabel, 'Publication aaaaaaaaaaaa');
+    expect(
+      payload.shareText,
+      contains('Publication: ${snapshot.version.snapshotVersion}'),
+    );
+    expect(
+      payload.shareText,
+      contains('Result: ${snapshot.schedule.single.resultVersion}'),
+    );
+    expect(
+      payload.shareText,
+      contains('https://example.test/public/game/game-1'),
+    );
+    expect(payload.fileName, contains('aaaaaaaaaaaa'));
   });
 
   test('leaderboard highlights the top three and shares the full ranking', () {
@@ -208,4 +265,105 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('public stat shares keep one publication and honest unknowns', () {
+    final snapshot = _publicStatsSnapshot();
+    final branding = AssociationBrandingModel.jba();
+    final leaderboard = BrandedSharePayload.publicLeaderboard(
+      snapshot: snapshot,
+      leaderboard: snapshot.leaderboards.single,
+      branding: branding,
+    );
+    final player = BrandedSharePayload.publicPlayer(
+      snapshot: snapshot,
+      player: snapshot.playerDetail('player-1')!,
+      branding: branding,
+    );
+    final standings = BrandedSharePayload.publicStandings(
+      snapshot: snapshot,
+      standings: snapshot.standings,
+      branding: branding,
+    );
+
+    for (final payload in [leaderboard, player, standings]) {
+      expect(payload.versionLabel, 'Publication aaaaaaaaaaaa');
+      expect(
+        payload.shareText,
+        contains('Publication: ${snapshot.version.snapshotVersion}'),
+      );
+      expect(payload.fileName, contains('aaaaaaaaaaaa'));
+    }
+    expect(leaderboard.shareText, contains('Unknown'));
+    expect(player.detail, contains('Games played unknown'));
+    expect(standings.shareText, contains('Record unknown'));
+  });
+
+  test('public player shares require a privacy epoch', () {
+    final snapshot = _publicStatsSnapshot(privacyEpoch: null);
+    final branding = AssociationBrandingModel.jba();
+
+    expect(
+      () => BrandedSharePayload.publicLeaderboard(
+        snapshot: snapshot,
+        leaderboard: snapshot.leaderboards.single,
+        branding: branding,
+      ),
+      throwsStateError,
+    );
+    expect(
+      () => BrandedSharePayload.publicPlayer(
+        snapshot: snapshot,
+        player: snapshot.playerDetail('player-1')!,
+        branding: branding,
+      ),
+      throwsStateError,
+    );
+  });
 }
+
+PublicLeagueSnapshot _publicStatsSnapshot({int? privacyEpoch = 3}) =>
+    PublicLeagueSnapshot(
+      leagueName: 'Jamaica Basketball Association',
+      leagueShortName: 'JBA',
+      seasonId: 'season-1',
+      seasonName: '2026 NBL',
+      version: PublicSnapshotVersion(
+        schemaVersion: 1,
+        contractVersion: 'legacy-public-snapshot-v1.1',
+        snapshotVersion:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        verificationStatus: 'legacyApproved',
+        state: PublicReleaseState.published,
+        privacyEpoch: privacyEpoch,
+        generatedAt: DateTime.utc(2026, 9, 10),
+      ),
+      schedule: const [],
+      standings: const [
+        PublicStanding(
+          teamId: 'home',
+          teamName: 'Public Home',
+          rank: 1,
+          rankStatus: PublicRankStatus.ranked,
+          wins: null,
+          losses: null,
+          pct: null,
+          pointsFor: null,
+          pointsAgainst: null,
+        ),
+      ],
+      leaderboards: const [
+        PublicLeaderboard(
+          category: 'ppg',
+          rankings: [
+            PublicLeader(
+              playerId: 'player-1',
+              displayName: 'Public Player',
+              teamId: 'home',
+              teamName: 'Public Home',
+              value: null,
+              gamesPlayed: null,
+            ),
+          ],
+        ),
+      ],
+    );

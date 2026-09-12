@@ -1,3 +1,4 @@
+export 'courtside_recovery.dart';
 export 'deletion_recovery_models.dart';
 export 'journal_error.dart';
 export 'journal_limits.dart';

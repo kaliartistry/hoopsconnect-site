@@ -9,17 +9,28 @@ import 'season_providers.dart';
 final teamRepositoryProvider = Provider((ref) => TeamRepository());
 
 /// Stream all teams for the current association.
-final teamsStreamProvider =
-    StreamProvider<List<TeamModel>>((ref) {
+final teamsStreamProvider = StreamProvider<List<TeamModel>>((ref) {
   final assocId = ref.watch(currentAssociationIdProvider);
   if (assocId == null) return Stream.value([]);
 
   return ref.watch(teamRepositoryProvider).watchTeams(assocId);
 });
 
+final teamsBySeasonProvider = Provider.family<List<TeamModel>, String>((
+  ref,
+  seasonId,
+) {
+  final teams = ref.watch(teamsStreamProvider).valueOrNull ?? const [];
+  return teams
+      .where((team) => team.seasonId == seasonId)
+      .toList(growable: false);
+});
+
 /// Watch a specific team by ID.
-final teamDetailProvider =
-    StreamProvider.family<TeamModel?, String>((ref, teamId) {
+final teamDetailProvider = StreamProvider.family<TeamModel?, String>((
+  ref,
+  teamId,
+) {
   final assocId = ref.watch(currentAssociationIdProvider);
   if (assocId == null) return Stream.value(null);
 
@@ -29,9 +40,9 @@ final teamDetailProvider =
 /// Watch player roster (season stats) for a team.
 final teamRosterProvider =
     StreamProvider.family<List<PlayerSeasonStatsModel>, String>((ref, teamId) {
-  final assocId = ref.watch(currentAssociationIdProvider);
-  final seasonId = ref.watch(activeSeasonIdProvider).value;
-  if (assocId == null || seasonId == null) return Stream.value([]);
+      final assocId = ref.watch(currentAssociationIdProvider);
+      final seasonId = ref.watch(activeSeasonIdProvider).value;
+      if (assocId == null || seasonId == null) return Stream.value([]);
 
-  return StatsRepository().watchTeamRoster(assocId, teamId, seasonId);
-});
+      return StatsRepository().watchTeamRoster(assocId, teamId, seasonId);
+    });

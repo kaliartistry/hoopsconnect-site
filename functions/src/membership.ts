@@ -232,6 +232,20 @@ async function getAuthorityInTransaction(
   return authorityFromSnapshot(snapshot, requiredCapability);
 }
 
+async function requireDivisionAcceptsNewReferences(
+  transaction: Transaction,
+  associationId: string,
+  divisionId: string | null,
+): Promise<void> {
+  if (divisionId === null) return;
+  const division = await transaction.get(admin.firestore().doc(
+    `associations/${associationId}/divisions/${divisionId}`,
+  ));
+  if (!division.exists || division.get("status") !== "active" || division.get("deletionPending")) {
+    throw new HttpsError("failed-precondition", "The invite division is unavailable for new assignments.");
+  }
+}
+
 function validMembershipAuthority(snapshot: DocumentSnapshot): Authority | null {
   if (!snapshot.exists) return null;
   const data = snapshot.data() ?? {};
@@ -426,14 +440,33 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
     if (!associationSnap.exists) {
       throw new HttpsError("failed-precondition", "Invite association no longer exists.");
     }
-    let resolvedDivisionId = invite.divisionId;
+    const currentSeasonId = associationSnap.get("currentSeasonId");
+    if (typeof currentSeasonId !== "string" || !/^[A-Za-z0-9_-]+$/.test(currentSeasonId) ||
+        invite.seasonId !== currentSeasonId) {
+      throw new HttpsError("failed-precondition", "Invite season is no longer current for this association.");
+    }
+    const resolvedDivisionId = invite.divisionId;
     if (invite.teamId) {
       const teamSnap = await transaction.get(db.doc(`associations/${invite.associationId}/teams/${invite.teamId}`));
       if (!teamSnap.exists) {
         throw new HttpsError("failed-precondition", "Invite team no longer exists.");
       }
-      resolvedDivisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
+      const teamStatus = teamSnap.get("status");
+      const teamDivisionId = teamSnap.get("divisionId");
+      if (teamSnap.get("seasonId") !== currentSeasonId ||
+          (teamStatus !== undefined && teamStatus !== "active") || teamSnap.get("active") === false ||
+          typeof teamDivisionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(teamDivisionId) ||
+          invite.divisionId !== teamDivisionId) {
+        throw new HttpsError("failed-precondition", "Invite team is no longer active or no longer matches the invite scope.");
+      }
+    } else if (invite.divisionId !== null) {
+      throw new HttpsError("failed-precondition", "Invite division no longer matches its team scope.");
     }
+    await requireDivisionAcceptsNewReferences(
+      transaction,
+      invite.associationId,
+      resolvedDivisionId,
+    );
 
     const serverNow = FieldValue.serverTimestamp();
     const result = {role: invite.role, associationId: invite.associationId, teamId: invite.teamId};
@@ -458,7 +491,7 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
       status: "active",
       teamId: invite.teamId,
       divisionId: resolvedDivisionId,
-      seasonId: invite.seasonId ?? associationSnap.get("currentSeasonId") ?? null,
+      seasonId: invite.seasonId,
       competitionId: null,
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
       source: "privilegedInvite",
@@ -549,14 +582,28 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
     if (!associationSnap.exists) {
       throw new HttpsError("failed-precondition", "Your association no longer exists.");
     }
+    const currentSeasonId = associationSnap.get("currentSeasonId");
+    if (typeof currentSeasonId !== "string" || !/^[A-Za-z0-9_-]+$/.test(currentSeasonId)) {
+      throw new HttpsError("failed-precondition", "Your association does not have a valid current season.");
+    }
     let divisionId: string | null = null;
     if (teamId) {
       const teamSnap = await transaction.get(db.doc(`associations/${authority.associationId}/teams/${teamId}`));
       if (!teamSnap.exists) {
         throw new HttpsError("invalid-argument", "Team does not exist in your association.");
       }
+      const teamStatus = teamSnap.get("status");
+      if (teamSnap.get("seasonId") !== currentSeasonId ||
+          (teamStatus !== undefined && teamStatus !== "active") || teamSnap.get("active") === false) {
+        throw new HttpsError("failed-precondition", "Team is not active in your association's current season.");
+      }
       divisionId = typeof teamSnap.get("divisionId") === "string" ? teamSnap.get("divisionId") : null;
     }
+    await requireDivisionAcceptsNewReferences(
+      transaction,
+      authority.associationId,
+      divisionId,
+    );
     const serverNow = FieldValue.serverTimestamp();
     const semanticResult = {
       inviteId,
@@ -571,7 +618,7 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
       inviteId,
       credentialVersion: INVITE_CREDENTIAL_VERSION,
       associationId: authority.associationId,
-      seasonId: associationSnap.get("currentSeasonId") ?? null,
+      seasonId: currentSeasonId,
       competitionId: null,
       teamId,
       divisionId,

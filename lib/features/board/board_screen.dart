@@ -12,6 +12,7 @@ import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/role_preview_provider.dart';
 import '../../providers/post_providers.dart';
+import 'board_post_visibility.dart';
 import 'widgets/post_card.dart';
 import 'widgets/post_detail_panel.dart';
 
@@ -43,7 +44,8 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.urgent),
             onPressed: () async {
               final assocId = ref.read(currentAssociationIdProvider);
-              if (assocId != null) {
+              final actingUser = ref.read(currentUserProvider).valueOrNull;
+              if (assocId != null && actingUser?.canEditAnyPost == true) {
                 await ref
                     .read(postRepositoryProvider)
                     .deletePost(assocId, postId);
@@ -59,12 +61,15 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedDivisionId = ref.watch(selectedDivisionIdProvider);
     final selectedDivisionName = ref.watch(selectedDivisionNameProvider);
-    final postsAsync = ref.watch(postsStreamProvider(selectedDivisionName));
-    final currentUser = ref.watch(effectiveUserProvider); // permissions
-    final realUser = ref.watch(currentUserProvider).value; // identity for acks
+    final postsAsync = ref.watch(postsStreamProvider(selectedDivisionId));
+    // Preview capabilities control presentation only. Every repository action
+    // below rechecks the real membership-backed user.
+    final currentUser = ref.watch(effectiveUserProvider);
     final assocId = ref.watch(currentAssociationIdProvider);
     final desktop = isDesktop(context);
+    var selectedPostIdForDisplay = _selectedPostId;
 
     // Local board filters are post-type filters. League scope is handled globally.
     final filters = <String?>[null, 'announcements'];
@@ -122,9 +127,35 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
     Widget postList = postsAsync.when(
       data: (posts) {
+        final roleVisiblePosts = posts
+            .where(
+              (post) => postIsVisibleInBoardPresentation(post, currentUser),
+            )
+            .toList();
         final visiblePosts = _selectedFilter == 'announcements'
-            ? posts.where((post) => post.type == PostType.announcement).toList()
-            : posts;
+            ? roleVisiblePosts
+                  .where((post) => post.type == PostType.announcement)
+                  .toList()
+            : roleVisiblePosts;
+
+        if (desktop) {
+          final selectionIsVisible = visiblePosts.any(
+            (post) => post.id == _selectedPostId,
+          );
+          selectedPostIdForDisplay = selectionIsVisible
+              ? _selectedPostId
+              : visiblePosts.isEmpty
+              ? null
+              : visiblePosts.first.id;
+          if (_selectedPostId != selectedPostIdForDisplay) {
+            final nextSelection = selectedPostIdForDisplay;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _selectedPostId != nextSelection) {
+                setState(() => _selectedPostId = nextSelection);
+              }
+            });
+          }
+        }
 
         if (visiblePosts.isEmpty) {
           return EmptyState(
@@ -136,18 +167,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
           );
         }
 
-        // Auto-select first post on desktop if nothing is selected
-        if (desktop && _selectedPostId == null && visiblePosts.isNotEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              setState(() => _selectedPostId = visiblePosts.first.id);
-            }
-          });
-        }
-
         return RefreshIndicator(
           onRefresh: () async {
-            ref.invalidate(postsStreamProvider(selectedDivisionName));
+            ref.invalidate(postsStreamProvider(selectedDivisionId));
           },
           child: ListView.builder(
             padding: const EdgeInsets.all(12),
@@ -155,7 +177,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
             itemBuilder: (context, i) {
               final post = visiblePosts[i];
               final canEdit = currentUser?.canEditAnyPost ?? false;
-              final isSelected = desktop && _selectedPostId == post.id;
+              final canAcknowledge =
+                  currentUser?.hasCapability('posts.acknowledge') ?? false;
+              final isSelected = desktop && selectedPostIdForDisplay == post.id;
               return Container(
                 decoration: isSelected
                     ? BoxDecoration(
@@ -180,16 +204,19 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                   onDelete: canEdit
                       ? () => _confirmDeletePost(context, ref, post.id)
                       : null,
-                  onAcknowledge: () {
-                    if (realUser != null) {
-                      ref
-                          .read(postRepositoryProvider)
-                          .acknowledge(
-                            assocId,
-                            post.id,
-                          );
-                    }
-                  },
+                  onAcknowledge: !canAcknowledge
+                      ? null
+                      : () async {
+                          final actingUser = ref
+                              .read(currentUserProvider)
+                              .valueOrNull;
+                          if (actingUser != null &&
+                              actingUser.hasCapability('posts.acknowledge')) {
+                            await ref
+                                .read(postRepositoryProvider)
+                                .acknowledge(assocId, post.id);
+                          }
+                        },
                 ),
               );
             },
@@ -199,8 +226,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       loading: () => const SkeletonCardList(),
       error: (e, _) => ErrorDisplay(
         error: e,
-        onRetry: () =>
-            ref.invalidate(postsStreamProvider(selectedDivisionName)),
+        onRetry: () => ref.invalidate(postsStreamProvider(selectedDivisionId)),
       ),
     );
 
@@ -221,10 +247,10 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
             const VerticalDivider(thickness: 1, width: 1),
             // Right: post detail
             Expanded(
-              child: _selectedPostId != null
+              child: selectedPostIdForDisplay != null
                   ? PostDetailPanel(
-                      key: ValueKey(_selectedPostId),
-                      postId: _selectedPostId!,
+                      key: ValueKey(selectedPostIdForDisplay),
+                      postId: selectedPostIdForDisplay!,
                     )
                   : const EmptyState(
                       icon: Icons.article_outlined,

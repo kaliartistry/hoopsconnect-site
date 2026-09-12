@@ -83,6 +83,36 @@ service cloud.firestore {
       return !exists(path) || get(path).data.authorityMode in ['disabled', 'shadow'];
     }
 
+    function divisionAcceptsNewReferences(assocId, divisionId) {
+      let path = /databases/$(database)/documents/associations/$(assocId)/divisions/$(divisionId);
+      return exists(path)
+        && get(path).data.status != 'archived'
+        && !('deletionPending' in get(path).data);
+    }
+
+    function postDivisionReferenceAccepted(assocId) {
+      return !('divisionFilter' in request.resource.data)
+        || request.resource.data.divisionFilter == null
+        || (request.resource.data.divisionFilter is string
+          && divisionAcceptsNewReferences(
+            assocId,
+            request.resource.data.divisionFilter
+          ));
+    }
+
+    function postDivisionReferenceUnchangedOrAccepted(assocId) {
+      return (
+          !('divisionFilter' in resource.data)
+            && !('divisionFilter' in request.resource.data)
+        )
+        || (
+          'divisionFilter' in resource.data
+            && 'divisionFilter' in request.resource.data
+            && request.resource.data.divisionFilter == resource.data.divisionFilter
+        )
+        || postDivisionReferenceAccepted(assocId);
+    }
+
     // ── Private identity and authorization data ────────────────────
     match /users/{userId} {
       allow get: if isAuthenticated() && (
@@ -130,25 +160,58 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /leagueOperationReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
     // ── Association-scoped private application data ────────────────
     match /associations/{assocId} {
       allow read: if canReadAssociation(assocId);
-      allow write: if canManageAssociation(assocId);
+      allow create, delete: if false;
+      // The active-season pointer is a server-owned coordination boundary.
+      // Administrators may still update branding and other association fields,
+      // but lifecycle transitions must use the fixed-purpose callable.
+      allow update: if canManageAssociation(assocId)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['currentSeasonId']);
 
       match /seasons/{seasonId} {
         allow read: if canReadAssociation(assocId);
-        allow write: if canManageAssociation(assocId);
+        allow create, update, delete: if false;
       }
 
       match /divisions/{divisionId} {
         allow read: if canReadAssociation(assocId);
-        allow write: if canManageAssociation(assocId);
+        allow create: if canManageAssociation(assocId)
+          && request.resource.data.keys().hasOnly([
+            'name', 'seasonId', 'description', 'status', 'version'
+          ])
+          && request.resource.data.version == 1;
+        allow update: if canManageAssociation(assocId)
+          && !('deletionPending' in resource.data)
+          && resource.data.version is int
+          && request.resource.data.version == resource.data.version + 1
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'seasonId', 'description', 'status', 'archivedAt', 'updatedAt', 'version'
+          ]);
+        // Permanent deletion is callable-only. This also denies historical
+        // administrator clients that still expose a direct delete action.
+        allow delete: if false;
       }
 
       match /teams/{teamId} {
         allow read: if canReadAssociation(assocId);
-        allow create, update, delete: if canManageTeams(assocId)
-          || canManageAssociation(assocId);
+        allow create: if (canManageTeams(assocId) || canManageAssociation(assocId))
+          && request.resource.data.divisionId is string
+          && divisionAcceptsNewReferences(assocId, request.resource.data.divisionId);
+        allow update: if (canManageTeams(assocId) || canManageAssociation(assocId))
+          && (
+            request.resource.data.divisionId == resource.data.divisionId
+            || (request.resource.data.divisionId is string
+              && divisionAcceptsNewReferences(assocId, request.resource.data.divisionId))
+          );
+        allow delete: if canManageTeams(assocId) || canManageAssociation(assocId);
       }
 
       match /posts/{postId} {
@@ -162,6 +225,7 @@ service cloud.firestore {
 
         allow create: if isSameAssociation(assocId)
           && hasCapability('posts.create')
+          && postDivisionReferenceAccepted(assocId)
           && request.resource.data.keys().hasAll([
             'authorId', 'authorName', 'authorRole', 'title', 'body', 'type',
             'createdAt', 'visibility', 'pinned', 'urgent', 'requiresAck',
@@ -180,28 +244,83 @@ service cloud.firestore {
               && request.resource.data.requiresAck == false)
           );
 
-        allow update: if canManagePosts(assocId)
-          || (isSameAssociation(assocId)
-            && hasCapability('posts.create')
-            && request.auth.uid == resource.data.authorId
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'title', 'body', 'imageUrl', 'divisionFilter', 'reactions'
-            ]))
-          || validOwnAcknowledgment(assocId);
+        allow update: if postDivisionReferenceUnchangedOrAccepted(assocId)
+          && (
+            canManagePosts(assocId)
+            || (isSameAssociation(assocId)
+              && hasCapability('posts.create')
+              && request.auth.uid == resource.data.authorId
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'title', 'body', 'imageUrl', 'divisionFilter', 'reactions'
+              ]))
+            || validOwnAcknowledgment(assocId)
+          );
         allow delete: if canManagePosts(assocId);
       }
 
       match /events/{eventId} {
         allow read: if canReadAssociation(assocId);
-        allow write: if canManageAssociation(assocId);
+        // Creation, edit, reschedule, cancellation, and deletion are all
+        // callable-only. Admin SDK writes from the trusted scheduler bypass
+        // rules; no client role or historical capability can bypass this.
+        allow create, update, delete: if false;
+      }
+
+      match /leagueWorkflowControl/{controlId} {
+        allow get: if canReadAssociation(assocId)
+          && resource.data.schemaVersion == 1;
+        allow list: if false;
+        allow write: if false;
+      }
+
+      match /leagueActorAuthorities/{actorId} {
+        allow read, write: if false;
+      }
+
+      match /leagueActorQuotas/{actorId} {
+        allow read, write: if false;
+      }
+
+      match /leagueIdentityAuthorities/{playerId} {
+        allow read, write: if false;
+      }
+
+      match /divisionDeletionOperations/{operationId} {
+        allow read, write: if false;
+      }
+
+      match /scheduleLocks/{lockId} {
+        allow read, write: if false;
+      }
+
+      match /schedulePairStarts/{lockId} {
+        allow read, write: if false;
+      }
+
+      match /rosterWorkspaces/{workspaceId} {
+        allow read, write: if false;
+      }
+
+      match /rosterRegistrations/{registrationId} {
+        allow read, write: if false;
+        match /{document=**} {
+          allow read, write: if false;
+        }
+      }
+
+      match /rosterProposals/{proposalId} {
+        allow read, write: if false;
+        match /{document=**} {
+          allow read, write: if false;
+        }
       }
 
       match /gameStats/{gameId} {
         allow read: if canReadAssociation(assocId);
         allow create: if legacyOfficialStatWritesEnabled(assocId)
-          && canEnterStats(assocId) && validateGameStatsCreate(assocId);
+          && canEnterStats(assocId) && validateGameStatsCreate(assocId, gameId);
         allow update: if legacyOfficialStatWritesEnabled(assocId)
-          && canEnterStats(assocId) && validateGameStatsUpdate(assocId);
+          && canEnterStats(assocId) && validateGameStatsUpdate(assocId, gameId);
         allow delete: if legacyOfficialStatWritesEnabled(assocId)
           && canApproveStats(assocId);
 
@@ -261,8 +380,9 @@ service cloud.firestore {
 
       match /playerSeasonStats/{statId} {
         allow read: if canReadAssociation(assocId);
-        allow create, update, delete: if canManageTeams(assocId)
-          || canManageAssociation(assocId);
+        // Derived aggregates are server-owned; roster administration must not
+        // fabricate zero-filled statistical output.
+        allow create, update, delete: if false;
       }
 
       match /leaderboard/{boardId} {
@@ -306,7 +426,7 @@ service cloud.firestore {
         && request.resource.data.ackStatus[uid].teamName == resource.data.expectedAcks[uid].teamName;
     }
 
-    function validateGameStatsUpdate(assocId) {
+    function validateGameStatsUpdate(assocId, gameId) {
       let data = request.resource.data;
       let statusValid = !('status' in request.resource.data.diff(resource.data).affectedKeys())
         || data.status in ['draft', 'notStarted', 'inProgress', 'submitted', 'approved', 'rejected'];
@@ -315,10 +435,11 @@ service cloud.firestore {
       let approvalValid = data.status != 'approved' || data.approvedBy == request.auth.uid;
       let rejectionValid = data.status != 'rejected' || data.rejectedBy == request.auth.uid;
       let scoresValid = data.homeScore >= 0 && data.awayScore >= 0;
-      return statusValid && approvalAllowed && approvalValid && rejectionValid && scoresValid;
+      return validExistingStatEventReference(assocId, gameId) && statusValid && approvalAllowed
+        && approvalValid && rejectionValid && scoresValid;
     }
 
-    function validateGameStatsCreate(assocId) {
+    function validateGameStatsCreate(assocId, gameId) {
       let data = request.resource.data;
       let statusValid = data.status in ['draft', 'notStarted', 'inProgress', 'submitted', 'approved', 'rejected'];
       let approvalAllowed = (data.status != 'approved' && data.status != 'rejected')
@@ -327,7 +448,30 @@ service cloud.firestore {
       let rejectionValid = data.status != 'rejected' || data.rejectedBy == request.auth.uid;
       let scoresValid = data.homeScore is number && data.awayScore is number
         && data.homeScore >= 0 && data.awayScore >= 0;
-      return statusValid && approvalAllowed && approvalValid && rejectionValid && scoresValid;
+      return validStatEventReference(assocId, gameId) && statusValid && approvalAllowed
+        && approvalValid && rejectionValid && scoresValid;
+    }
+
+    function validStatEventReference(assocId, gameId) {
+      let path = /databases/$(database)/documents/associations/$(assocId)/events/$(gameId);
+      return exists(path)
+        && get(path).data.type == 'game'
+        && get(path).data.divisionId is string
+        && divisionAcceptsNewReferences(assocId, get(path).data.divisionId);
+    }
+
+    // Corrections to an existing stat document do not create a new division
+    // reference. They remain permitted after archival, but the event link and
+    // division scope are immutable and must still resolve to a game.
+    function validExistingStatEventReference(assocId, gameId) {
+      let path = /databases/$(database)/documents/associations/$(assocId)/events/$(gameId);
+      return exists(path)
+        && get(path).data.type == 'game'
+        && get(path).data.divisionId is string
+        && request.resource.data.eventId == resource.data.eventId
+        && request.resource.data.divisionId == resource.data.divisionId
+        && resource.data.eventId == gameId
+        && resource.data.divisionId == get(path).data.divisionId;
     }
 
     match /{document=**} {

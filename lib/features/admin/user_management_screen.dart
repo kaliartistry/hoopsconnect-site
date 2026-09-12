@@ -140,9 +140,11 @@ class _UserCard extends ConsumerWidget {
   }
 
   String _roleLabel(UserRole role) {
-    return role == UserRole.superAdmin
-        ? 'SUPER ADMIN'
-        : role.name.toUpperCase();
+    return switch (role) {
+      UserRole.superAdmin => 'SUPER ADMIN',
+      UserRole.media || UserRole.press => 'MEDIA',
+      _ => role.name.toUpperCase(),
+    };
   }
 
   @override
@@ -226,7 +228,11 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
   @override
   void initState() {
     super.initState();
-    _currentRole = widget.user.role;
+    // Historical `press` memberships remain readable but the product exposes
+    // one Media label and never writes new `press` values.
+    _currentRole = widget.user.role == UserRole.press
+        ? UserRole.media
+        : widget.user.role;
   }
 
   Future<void> _confirmAndUpdateRole(UserRole newRole) async {
@@ -236,7 +242,7 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
         title: const Text('Change Role'),
         content: Text(
           'Change ${widget.user.displayName} from '
-          '${_currentRole.name.toUpperCase()} to ${newRole.name.toUpperCase()}?',
+          '${_roleLabel(_currentRole)} to ${_roleLabel(newRole)}?',
         ),
         actions: [
           TextButton(
@@ -263,7 +269,9 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${widget.user.displayName} is now ${newRole.name}'),
+            content: Text(
+              '${widget.user.displayName} is now ${_roleLabel(newRole)}',
+            ),
           ),
         );
       }
@@ -288,6 +296,17 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
       );
     }
 
+    const assignableRoles = [
+      UserRole.admin,
+      UserRole.statistician,
+      UserRole.rep,
+      UserRole.media,
+    ];
+    final menuRoles = <UserRole>[
+      if (!assignableRoles.contains(_currentRole)) _currentRole,
+      ...assignableRoles,
+    ];
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
@@ -299,14 +318,12 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
         underline: const SizedBox(),
         isDense: true,
         style: const TextStyle(fontSize: 12, color: AppColors.textPrimary),
-        items: UserRole.values.map((role) {
-          final label = role == UserRole.superAdmin
-              ? 'SUPER ADMIN'
-              : role.name.toUpperCase();
+        items: menuRoles.map((role) {
+          final label = _roleLabel(role);
           return DropdownMenuItem(
             value: role,
             child: Text(
-              label,
+              assignableRoles.contains(role) ? label : '$label (CURRENT)',
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
           );
@@ -318,5 +335,13 @@ class _RoleDropdownState extends ConsumerState<_RoleDropdown> {
         },
       ),
     );
+  }
+
+  String _roleLabel(UserRole role) {
+    return switch (role) {
+      UserRole.superAdmin => 'SUPER ADMIN',
+      UserRole.media || UserRole.press => 'MEDIA',
+      _ => role.name.toUpperCase(),
+    };
   }
 }

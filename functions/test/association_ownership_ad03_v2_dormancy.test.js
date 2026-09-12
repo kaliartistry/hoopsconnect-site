@@ -13,10 +13,11 @@ const candidateRules =
 const fixturePath = 'contracts/account_deletion/ad03/ownership_fixtures_v2.json';
 
 const pinnedMergedMainBlobs = Object.freeze({
-  'functions/src/index.ts': '78ebe0c51a1550132da8201b0f2e7b783260cb38',
-  'firestore.rules': '9dc99cf1f7c597dd556898424b2911154abe3fc3',
+  // Reviewed callable-only season lifecycle transition; AD03 stays absent.
+  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
+  'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'firebase.json': 'bffa6ccd0f69f3f39d9be8cdc49941adab02f3dc',
+  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
   'functions/src/domain/account_deletion_contract.ts':
     '39a76af7b7fc2b76389cbf31defa0aab60c6e5fe',
   'functions/src/domain/account_lifecycle_ad02_v2.ts':
@@ -29,11 +30,14 @@ const pinnedMergedMainBlobs = Object.freeze({
     '4b91340f8932e4998685f854e46e304d9d0375ab',
   'docs/planning/official-stat-account-deletion-addendum.md':
     '214910b936b9a876eff6dd72143ef982e2d15fb8',
+  // Reviewed dormant courtside-recovery contract; AD03 stays absent.
   'docs/planning/local-game-journal-v1.md':
-    '9fc65f3dfaf0d0a219b42d73a2cf91d2aa3d493f',
-  'lib/main.dart': '7529f77c53e114fd1006911126172c32921d8d02',
+    'd63191edfe1de6ec26da2e2029c6260d255e9bcf',
+  // Reviewed public deep-link transition: URL strategy only; AD03 stays absent.
+  'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
-  'lib/app/router/app_router.dart': 'abb289e0f8765d2c996798f5acd80eaff03b7151',
+  // Reviewed public detail-route mount; AD03 candidate imports stay excluded.
+  'lib/app/router/app_router.dart': '8fd2f939210a7ce488747276e179e76d74ea2edb',
 });
 
 function read(relativePath) {

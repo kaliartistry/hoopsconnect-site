@@ -3,12 +3,12 @@ import '../models/post_model.dart';
 import 'post_providers.dart';
 
 /// Posts that require acknowledgment (for admin ack tracker).
-final postsRequiringAckProvider = StreamProvider<List<PostModel>>((ref) {
-  // Filter from the "all posts" stream for posts requiring ack
+///
+/// Preserve loading and error states from the authoritative post stream so the
+/// tracker never presents a failed load as an empty, completed inbox.
+final postsRequiringAckProvider = Provider<AsyncValue<List<PostModel>>>((ref) {
   final allPosts = ref.watch(postsStreamProvider(null));
-  return allPosts.when(
-    data: (posts) => Stream.value(posts.where((p) => p.requiresAck).toList()),
-    loading: () => Stream.value([]),
-    error: (_, _) => Stream.value([]),
+  return allPosts.whenData(
+    (posts) => posts.where((post) => post.requiresAck).toList(),
   );
 });

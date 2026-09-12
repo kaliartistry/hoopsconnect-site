@@ -17,9 +17,10 @@ const fixturePath =
   'contracts/account_deletion/ad05/identity_suppression_fixtures_v1.json';
 
 const pinnedBaseBlobs = Object.freeze({
-  'functions/src/index.ts': '78ebe0c51a1550132da8201b0f2e7b783260cb38',
-  'firebase.json': 'bffa6ccd0f69f3f39d9be8cdc49941adab02f3dc',
-  'firestore.rules': '9dc99cf1f7c597dd556898424b2911154abe3fc3',
+  // Reviewed callable-only season lifecycle transition; AD05-B stays absent.
+  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
+  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
+  'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/domain/official_stats_contract.ts':
     'c6879439091b72088bcef2659490eaff72ddd5f0',
@@ -62,7 +63,7 @@ const pinnedBaseBlobs = Object.freeze({
   'docs/account-deletion-release-gates.md':
     '1549e48922d1e43dc7281496c810a8c603be5a46',
   'docs/account-deletion-ad02-v2-boundary-matrix.md':
-    'f7c8f65b34908bb238397ae7a1f24459a94d60a4',
+    '2b63223ba9d453e28ef1a99ca55422bcd11f224a',
   'docs/account-deletion-ad03-v2-custody-control.md':
     'b4bdbd05372ad8f0e850069b3f2e434b1df238a1',
   'docs/account-deletion-ad04-v1-lifecycle-cleanup.md':

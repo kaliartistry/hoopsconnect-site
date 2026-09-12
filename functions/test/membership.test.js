@@ -165,7 +165,12 @@ test('fan provisioning creates a consistent pair, repairs membership-only, and f
 
 test('invite issuance is high-entropy, hash-addressed, idempotent, and never persists the bearer', async () => {
   await seedMember('root', 'superAdmin');
-  await db.doc('associations/jba/teams/team-1').set({name: 'Team', divisionId: 'division-1'});
+  await db.doc('associations/jba/divisions/division-1').set({
+    name: 'Division 1', status: 'active', version: 1,
+  });
+  await db.doc('associations/jba/teams/team-1').set({
+    name: 'Team', divisionId: 'division-1', seasonId: 'season-1', status: 'active',
+  });
   const payload = {
     role: 'rep', teamId: 'team-1', daysValid: 7,
     operationId: 'create_operation_00000001',
@@ -199,6 +204,106 @@ test('invite issuance is high-entropy, hash-addressed, idempotent, and never per
     })),
     (error) => error.code === 'failed-precondition',
   );
+});
+
+test('representative invite team must remain active in the association current season', async () => {
+  await seedMember('root', 'superAdmin');
+  await db.doc('associations/jba/divisions/division-1').set({
+    name: 'Division 1', status: 'active', version: 1,
+  });
+  const createForTeam = (operationId) => createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'rep', teamId: 'team-hostile', daysValid: 7, operationId,
+  }));
+  await db.doc('associations/jba/teams/team-hostile').set({
+    name: 'Old Team', divisionId: 'division-1', seasonId: 'season-old', status: 'active',
+  });
+  await assert.rejects(
+    createForTeam('create_wrong_season_000001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  assert.equal((await db.collection('inviteCodes').get()).empty, true);
+
+  await db.doc('associations/jba/teams/team-hostile').set({
+    name: 'Archived Team', divisionId: 'division-1', seasonId: 'season-1', status: 'archived',
+  });
+  await assert.rejects(
+    createForTeam('create_archived_team_00001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  assert.equal((await db.collection('inviteCodes').get()).empty, true);
+
+  await db.doc('associations/jba/teams/team-hostile').set({
+    name: 'Current Team', divisionId: 'division-1', seasonId: 'season-1', status: 'active',
+  });
+  const issued = await createForTeam('create_current_team_000001');
+  const invite = await db.doc(`inviteCodes/${issued.inviteId}`).get();
+  assert.equal(invite.get('seasonId'), 'season-1');
+  assert.equal(invite.get('teamId'), 'team-hostile');
+});
+
+test('redemption revalidates invite season, active team state, and exact division binding', async () => {
+  await seedMember('root', 'superAdmin');
+  await db.doc('associations/jba/divisions/division-1').set({
+    name: 'Division 1', status: 'active', version: 1,
+  });
+  await db.doc('associations/jba/divisions/division-2').set({
+    name: 'Division 2', status: 'active', version: 1,
+  });
+  const teamRef = db.doc('associations/jba/teams/team-redeem');
+  const setCurrentTeam = () => teamRef.set({
+    name: 'Current Team', divisionId: 'division-1', seasonId: 'season-1', status: 'active',
+  });
+  const issue = (operationId) => createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'rep', teamId: 'team-redeem', daysValid: 7, operationId,
+  }));
+  const redeem = (code, uid, operationId) => redeemPrivilegedInviteHandler(request(
+    uid,
+    `${uid}@example.com`,
+    {code, displayName: uid, operationId},
+  ));
+  const assertUnconsumed = async (issued, uid) => {
+    const invite = await db.doc(`inviteCodes/${issued.inviteId}`).get();
+    assert.equal(invite.get('status'), 'active');
+    assert.equal(invite.get('usesRemaining'), 1);
+    assert.equal((await db.doc(`users/${uid}`).get()).exists, false);
+    assert.equal((await db.doc(`memberships/${uid}`).get()).exists, false);
+  };
+
+  await setCurrentTeam();
+  const rollover = await issue('create_redeem_rollover_0001');
+  await db.doc('associations/jba').update({currentSeasonId: 'season-2'});
+  await assert.rejects(
+    redeem(rollover.code, 'rollover-user', 'redeem_after_rollover_001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  await assertUnconsumed(rollover, 'rollover-user');
+
+  await db.doc('associations/jba').update({currentSeasonId: 'season-1'});
+  await setCurrentTeam();
+  const inactive = await issue('create_redeem_inactive_0001');
+  await teamRef.update({status: 'inactive'});
+  await assert.rejects(
+    redeem(inactive.code, 'inactive-user', 'redeem_after_inactive_001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  await assertUnconsumed(inactive, 'inactive-user');
+
+  await setCurrentTeam();
+  const moved = await issue('create_redeem_moved_000001');
+  await teamRef.update({divisionId: 'division-2'});
+  await assert.rejects(
+    redeem(moved.code, 'moved-user', 'redeem_after_moved_000001'),
+    (error) => error.code === 'failed-precondition',
+  );
+  await assertUnconsumed(moved, 'moved-user');
+
+  await setCurrentTeam();
+  const completed = await issue('create_redeem_exact_000001');
+  const first = await redeem(completed.code, 'exact-user', 'redeem_exact_replay_0001');
+  await db.doc('associations/jba').update({currentSeasonId: 'season-2'});
+  await teamRef.update({status: 'archived'});
+  const replay = await redeem(completed.code, 'exact-user', 'redeem_exact_replay_0001');
+  assert.deepEqual(replay, first);
 });
 
 test('inspection never echoes a bearer and redemption retries return the original success', async () => {
