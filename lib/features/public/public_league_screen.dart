@@ -207,6 +207,7 @@ class _GamesTabState extends ConsumerState<_GamesTab> {
             .toList(growable: false)
           ..sort((a, b) => b.startTime.compareTo(a.startTime));
     final visible = filtered.take(_visibleCount).toList(growable: false);
+    final highlights = _publicGameHighlights(filtered);
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -228,6 +229,11 @@ class _GamesTabState extends ConsumerState<_GamesTab> {
                   children: [
                     _buildControls(context, filtered),
                     const SizedBox(height: 18),
+                    _GameHighlights(
+                      latestResult: highlights.latestResult,
+                      nextGame: highlights.nextGame,
+                    ),
+                    const SizedBox(height: 24),
                     if (filtered.isEmpty)
                       const Padding(
                         padding: EdgeInsets.only(top: 24),
@@ -500,6 +506,255 @@ class _GamesTabState extends ConsumerState<_GamesTab> {
   }
 }
 
+class _GameHighlights extends StatelessWidget {
+  const _GameHighlights({required this.latestResult, required this.nextGame});
+
+  final PublicGame? latestResult;
+  final PublicGame? nextGame;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final latest = _GameHighlightCard(
+        key: const Key('public-latest-result-card'),
+        kind: _GameHighlightKind.latestResult,
+        game: latestResult,
+      );
+      final next = _GameHighlightCard(
+        key: const Key('public-next-game-card'),
+        kind: _GameHighlightKind.nextGame,
+        game: nextGame,
+      );
+      if (constraints.maxWidth < 720) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [latest, const SizedBox(height: 12), next],
+        );
+      }
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: latest),
+            const SizedBox(width: 16),
+            Expanded(child: next),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+enum _GameHighlightKind { latestResult, nextGame }
+
+class _GameHighlightCard extends StatelessWidget {
+  const _GameHighlightCard({super.key, required this.kind, required this.game});
+
+  final _GameHighlightKind kind;
+  final PublicGame? game;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isResult = kind == _GameHighlightKind.latestResult;
+    final label = isResult ? 'Latest result' : 'Next game';
+    final icon = isResult
+        ? Icons.sports_score_outlined
+        : Icons.calendar_today_outlined;
+    final accent = isResult ? theme.colorScheme.primary : AppColors.accent;
+    final currentGame = game;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: currentGame == null
+            ? null
+            : () => context.go(PublicRoutePaths.game(currentGame.gameId)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(height: 4, color: accent),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(icon, size: 20, color: accent),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          label.toUpperCase(),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: accent,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ),
+                      if (currentGame != null)
+                        const Icon(Icons.chevron_right, size: 20),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (currentGame == null)
+                    Text(
+                      isResult
+                          ? 'No final score has been published yet.'
+                          : 'No upcoming game has been published yet.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  else ...[
+                    Text(
+                      '${LeagueTime.formatJamaicaDate(currentGame.startTime, pattern: 'EEE, MMM d')} · ${LeagueTime.formatJamaicaTime(currentGame.startTime)}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _HighlightTeamRow(
+                      side: 'HOME',
+                      name: currentGame.homeTeamName ?? 'Home team unavailable',
+                      score: isResult ? currentGame.homeScore : null,
+                      winner: _homeWon(currentGame),
+                    ),
+                    const SizedBox(height: 8),
+                    _HighlightTeamRow(
+                      side: 'AWAY',
+                      name: currentGame.awayTeamName ?? 'Away team unavailable',
+                      score: isResult ? currentGame.awayScore : null,
+                      winner: _awayWon(currentGame),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.location_on_outlined,
+                          size: 16,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            currentGame.venue ?? 'Venue not published',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HighlightTeamRow extends StatelessWidget {
+  const _HighlightTeamRow({
+    required this.side,
+    required this.name,
+    required this.score,
+    required this.winner,
+  });
+
+  final String side;
+  final String name;
+  final int? score;
+  final bool winner;
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      fontWeight: winner ? FontWeight.w800 : FontWeight.w600,
+    );
+    return Row(
+      children: [
+        SizedBox(
+          width: 44,
+          child: Text(
+            side,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textStyle,
+          ),
+        ),
+        if (score != null) ...[
+          const SizedBox(width: 12),
+          Text('$score', style: textStyle?.copyWith(fontSize: 22)),
+        ],
+      ],
+    );
+  }
+}
+
+class _PublicGameHighlights {
+  const _PublicGameHighlights({this.latestResult, this.nextGame});
+
+  final PublicGame? latestResult;
+  final PublicGame? nextGame;
+}
+
+_PublicGameHighlights _publicGameHighlights(
+  List<PublicGame> games, {
+  DateTime? utcNow,
+}) {
+  final now = (utcNow ?? DateTime.now()).toUtc();
+  final finals =
+      games
+          .where(
+            (game) =>
+                game.status == PublicGameStatus.finalResult &&
+                !game.startTime.toUtc().isAfter(now),
+          )
+          .toList(growable: false)
+        ..sort((a, b) => b.startTime.compareTo(a.startTime));
+  final upcoming =
+      games
+          .where(
+            (game) =>
+                game.status == PublicGameStatus.scheduled &&
+                !game.startTime.toUtc().isBefore(now),
+          )
+          .toList(growable: false)
+        ..sort((a, b) => a.startTime.compareTo(b.startTime));
+  return _PublicGameHighlights(
+    latestResult: finals.isEmpty ? null : finals.first,
+    nextGame: upcoming.isEmpty ? null : upcoming.first,
+  );
+}
+
+bool _homeWon(PublicGame game) =>
+    game.homeScore != null &&
+    game.awayScore != null &&
+    game.homeScore! > game.awayScore!;
+
+bool _awayWon(PublicGame game) =>
+    game.homeScore != null &&
+    game.awayScore != null &&
+    game.awayScore! > game.homeScore!;
+
 class _GameDateHeading extends StatelessWidget {
   const _GameDateHeading({required this.date, required this.count});
 
@@ -629,6 +884,7 @@ class _GameCard extends StatelessWidget {
     final home = game.homeTeamName ?? 'Home team unavailable';
     final away = game.awayTeamName ?? 'Away team unavailable';
     return Card(
+      key: Key('public-game-card-${game.gameId}'),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppSizes.radiusMd),
         onTap: () => context.go(PublicRoutePaths.game(game.gameId)),

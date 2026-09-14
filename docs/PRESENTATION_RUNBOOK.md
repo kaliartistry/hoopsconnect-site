@@ -64,10 +64,12 @@ The matching empty-state accounts add `-empty` before `@`, for example
 Start on the login page and point out the signed-out score preview. Select the
 no-sign-in league option, then show:
 
-1. Games: start with the date-grouped Schedule, then switch to Calendar and
-   choose a game day. Published regulation and overtime finals plus the upcoming
-   schedule are available. Submitted, changes-requested, and in-progress states
-   stay inside the signed-in operations views.
+1. Games: point out the Latest result and Next game cards first. Open the next
+   game to show its public details, return to the date-grouped Schedule, then
+   switch to Calendar and choose a game day. Published regulation and overtime
+   finals plus the upcoming schedule are available. Submitted,
+   changes-requested, and in-progress states stay inside the signed-in
+   operations views.
 2. Game details: quarter scoring, box score, source/version label, and sharing.
 3. Standings: Premier and Development are grouped separately so ranks restart
    clearly inside each division.

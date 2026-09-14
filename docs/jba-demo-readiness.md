@@ -16,7 +16,8 @@ public launch, and live JBA data remain approval-gated.
   six games across useful lifecycle states, standings, five leaderboard
   categories, a public announcement, and an acknowledgment-required operations
   post.
-- Public visitors can inspect a date-grouped schedule, choose a day from the
+- Public visitors immediately see the latest published final score and next
+  scheduled game, can inspect a date-grouped schedule, choose a day from the
   calendar, and view results, standings, leaders, game box scores, team details,
   and privacy-cleared player details without signing in.
 - Super admins, admins, statisticians, representatives, media/press users, and

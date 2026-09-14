@@ -15,10 +15,10 @@ void main() {
     final router = await _pump(tester, _snapshot());
 
     expect(find.textContaining('Version aaaaaaaaaaaa'), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Away'), findsOneWidget);
+    expect(find.text('Home'), findsWidgets);
+    expect(find.text('Away'), findsWidgets);
 
-    await tester.tap(find.text('Home'));
+    await tester.tap(find.byKey(const Key('public-game-card-game-1')));
     await tester.pumpAndSettle();
 
     expect(
@@ -29,6 +29,75 @@ void main() {
     expect(find.text('Home Team won a close game.'), findsOneWidget);
     expect(find.text('Share published result'), findsOneWidget);
     expect(find.textContaining('Publication aaaaaaaaaaaa'), findsOneWidget);
+  });
+
+  testWidgets('guest sees the latest final score and next scheduled game', (
+    tester,
+  ) async {
+    final router = await _pump(
+      tester,
+      _snapshot(
+        schedule: [
+          PublicGame(
+            gameId: 'latest-game',
+            title: 'Latest Home vs Latest Away',
+            startTime: DateTime.utc(2000, 9, 10, 20),
+            venue: 'National Arena',
+            divisionId: 'premier',
+            homeTeamId: 'home',
+            homeTeamName: 'Latest Home',
+            awayTeamId: 'away',
+            awayTeamName: 'Latest Away',
+            homeScore: 88,
+            awayScore: 82,
+            status: PublicGameStatus.finalResult,
+          ).withComputedResultVersion(),
+          PublicGame(
+            gameId: 'next-game',
+            title: 'Next Home vs Next Away',
+            startTime: DateTime.utc(2099, 9, 11, 23),
+            venue: 'GC Foster College',
+            divisionId: 'premier',
+            homeTeamId: 'home',
+            homeTeamName: 'Next Home',
+            awayTeamId: 'away',
+            awayTeamName: 'Next Away',
+            status: PublicGameStatus.scheduled,
+          ),
+        ],
+      ),
+    );
+
+    expect(find.text('LATEST RESULT'), findsOneWidget);
+    expect(find.text('NEXT GAME'), findsOneWidget);
+    expect(find.text('Latest Home'), findsWidgets);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('public-latest-result-card')),
+        matching: find.text('88'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Latest Away'), findsWidgets);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('public-latest-result-card')),
+        matching: find.text('82'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Next Home'), findsWidgets);
+    expect(find.text('Next Away'), findsWidgets);
+    expect(find.text('GC Foster College'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('public-next-game-card')));
+    await tester.pumpAndSettle();
+
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      PublicRoutePaths.game('next-game'),
+    );
+    expect(find.text('Game details'), findsOneWidget);
   });
 
   testWidgets('standings expose games played and team detail destination', (
@@ -241,14 +310,38 @@ void main() {
       await tester.tap(find.byKey(const Key('public-game-day-2026-10-15')));
       await tester.pumpAndSettle();
       expect(find.text('October 2026'), findsOneWidget);
-      expect(find.text('October Home'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('public-games-calendar-results')),
+          matching: find.text('October Home'),
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const Key('public-game-day-2026-09-09')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Late Home'), findsOne);
-      expect(find.text('Morning Home'), findsNothing);
-      expect(find.text('October Home'), findsNothing);
+      final calendarResults = find.byKey(
+        const Key('public-games-calendar-results'),
+      );
+      expect(
+        find.descendant(of: calendarResults, matching: find.text('Late Home')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: calendarResults,
+          matching: find.text('Morning Home'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: calendarResults,
+          matching: find.text('October Home'),
+        ),
+        findsNothing,
+      );
       expect(find.text('September 2026'), findsOneWidget);
       expect(find.text('Wednesday, September 9, 2026'), findsOne);
     },
