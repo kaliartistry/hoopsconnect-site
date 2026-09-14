@@ -65,6 +65,11 @@ class QaEnvironment {
       current.authPort,
       automaticHostMapping: false,
     );
+    // A presentation restart creates a fresh in-memory Auth emulator. Keeping
+    // a browser session from an earlier run makes the web SDK try to refresh a
+    // stale token before the replacement emulator is ready. QA sessions are
+    // intentionally ephemeral, so do not persist them across reloads.
+    await FirebaseAuth.instance.setPersistence(Persistence.NONE);
     FirebaseFirestore.instance.useFirestoreEmulator(
       current.host,
       current.firestorePort,

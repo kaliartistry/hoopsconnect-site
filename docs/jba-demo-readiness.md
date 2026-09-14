@@ -1,119 +1,64 @@
-# JBA Demo Readiness
+# JBA presentation readiness
 
-Date: 2026-06-30
+Snapshot date: 2026-09-14
 
-Status: PASS for meeting/demo preparation. NEEDS-DECISION for live deployment, website integration, and public launch.
+Status: ready for a local, synthetic presentation. Production deployment,
+public launch, and live JBA data remain approval-gated.
 
-## Plain-English Positioning
+## Ready to present
 
-HoopsConnect already has the technical foundation for a PWA because the app supports Flutter web. We do not need to build a separate admin app from scratch. The next step is to deploy, test, and polish the existing web version so admins and statisticians can reliably use it on laptops and tablets.
+- One Flutter codebase supports signed-out public league pages plus role-based
+  iOS, Android, and web workflows.
+- The isolated presentation environment builds the release-mode web app,
+  starts Auth, Firestore, Functions, Storage, and Hosting emulators, and refuses
+  production credentials.
+- The deterministic fixture contains 14 role accounts, four teams, 24 players,
+  six games across useful lifecycle states, standings, five leaderboard
+  categories, a public announcement, and an acknowledgment-required operations
+  post.
+- Public visitors can inspect schedules, results, standings, leaders, game box
+  scores, team details, and privacy-cleared player details without signing in.
+- Super admins, admins, statisticians, representatives, media/press users, and
+  fans each receive capability-driven routes and controls.
+- The latest automated gate covers Flutter tests, Functions contracts and
+  integration tests, Firestore and Storage rules, local delivery blocking,
+  public web boot/update behavior, and repository safety.
+- Native Build 13 was previously made available to private iOS and Android test
+  tracks. That is tester availability, not a public store release.
 
-HoopsConnect should be the source of truth for league operations. The JBA website should display approved public information from HoopsConnect through a safe read-only data layer.
+The presenter instructions and recovery steps are in
+[`PRESENTATION_RUNBOOK.md`](PRESENTATION_RUNBOOK.md).
 
-## What Is Ready
+## Presentation boundary
 
-- Flutter web build exists and builds successfully.
-- PWA manifest, icons, and web app metadata exist.
-- Firebase Hosting is configured for `build/web`.
-- SPA deep-link rewrite is configured.
-- Role-based routing exists.
-- Admin/statistician workflows exist in the app.
-- Cloud Functions build succeeds locally.
-- Public self-signup now defaults to `fan`.
-- Firebase demo data is current for the meeting: 102 games, 102 approved game stats, 0 past pending games.
-- Player stats, team stats, standings, and leaderboards were rebuilt from approved game stats after backfill.
-- Documentation/runbooks have been created for PWA readiness, deployment, roles, usability, security, website integration, public data, and final status.
+The presentation uses synthetic data on the presenter's computer. It does not
+read or change production, send real notifications, expose a public URL, or
+prove physical-device behavior on every supported device.
 
-## What Is Not Ready
+Do not describe the following as active production capabilities:
 
-- No production deployment was performed.
-- Live hosted state was not verified.
-- DNS/custom portal domain was not configured.
-- Firebase Auth authorized domains and App Check for the portal domain were not verified.
-- No real browser/tablet QA was performed against seeded Firebase data.
-- Public website integration is not implemented.
-- Firestore/Storage rules need tightening before public launch.
-- No Firebase rules emulator tests were found.
-- No staging/production Firebase split is configured.
+- production Hosting or a custom portal domain;
+- public App Store or Google Play availability;
+- the dormant official-stat v2, courtside recovery, or account-deletion
+  candidates;
+- final JBA competition, ranking, roster, privacy, guardian, retention, backup,
+  monitoring, or incident-response policies;
+- live website integration.
 
-## What Can Be Shown
+## Decisions still required before launch
 
-- The product direction and PWA/admin portal plan.
-- Local build/test evidence.
-- Existing PWA manifest/hosting foundation.
-- Existing app screens and workflows if local Firebase/demo data/accounts are available.
-- The website integration plan: portal link first, public read-only data layer next.
-- Timeline and risk-based roadmap.
+1. JBA approves the competition/ranking rules, statistical qualification
+   thresholds, roster authority, and correction/review policy.
+2. JBA approves privacy, minor/guardian, account-deletion, retention, and public
+   identity rules.
+3. JBA names production, rollback, backup, and access-recovery owners.
+4. JBA approves the Firebase staging project, region, billing, backup/PITR,
+   monitoring, App Check, Secret Manager, and budget-alert configuration.
+5. The team rehearses the migration and rollback against staging, then approves
+   the production maintenance window.
+6. Browser, tablet, and physical iOS/Android acceptance is recorded against the
+   approved candidate before any public release.
 
-## What Should Not Be Promised
-
-- Do not promise the live deployment is already verified.
-- Do not promise public website integration is already complete.
-- Do not promise the website can safely read private app data directly.
-- Do not recommend iframe embedding of the private PWA.
-- Do not promise offline stat entry is ready.
-- Do not promise full production readiness.
-- Do not promise public launch until security rules are tightened.
-- Do not promise the current Git remote is definitely the canonical production repo.
-
-## Demo Account Requirements
-
-Create or verify:
-
-- Super admin account.
-- Admin account.
-- Statistician account.
-- Team rep account.
-- Media account.
-- Fan account.
-
-Each account should be tested through a normal browser login, not only role preview.
-
-## Demo Data Requirements
-
-Current verified demo data state:
-
-- Association `jba`.
-- Active season `nbl-2025-26`.
-- 12 teams across NBL Premier and Women's League.
-- 96 player season-stat/roster docs.
-- 102 games.
-- 102 approved game stats.
-- 0 past pending games as of June 30, 2026.
-- 3 standings docs: all, NBL Premier, Women's League.
-- 15 leaderboard docs.
-
-Still create or verify before the live meeting:
-
-- One submitted game awaiting admin approval.
-- One ack-required board post with expected reps.
-- One public board post.
-- Role-specific demo accounts.
-
-## PWA Explanation For JBA
-
-The PWA is the laptop/tablet version of the same HoopsConnect app. Admins and statisticians log in through a private web portal, use the same Firebase data, and get larger-screen workflows without a separate codebase. This keeps mobile and web aligned and avoids duplicate systems.
-
-## Website Integration Explanation For JBA
-
-The JBA website should remain the public face. HoopsConnect should hold the official league data. The website can show approved schedules, standings, leaderboards, box scores, teams, players, and announcements by reading a safe public API or static JSON export generated from HoopsConnect.
-
-Private admin/statistician screens should not be embedded into the public website.
-
-## Timeline Estimates
-
-- Demo cleanup: 0.5-1 day.
-- PWA MVP deployment: 1-3 days after Firebase/DNS/App Check access is available.
-- Tablet/laptop workflow polish: 1-2 weeks.
-- Public website read-only integration: 3-7 dev days depending on website platform/access.
-- Deeper CMS/plugin or bidirectional sync: 2-6 weeks.
-- Production hardening for real season use: 3-6 weeks.
-
-## Risks/Caveats
-
-- Rules need tightening before public launch.
-- Website platform is unknown.
-- Player privacy rules need JBA input.
-- Local Node version differs from Functions Node 22.
-- Functions dependencies report vulnerabilities from `npm install`; review before deploy.
-- Venue network reliability may decide whether offline stat entry becomes required.
+Those are governance, provider, cost, or external-release gates. They are not
+unfinished presentation code and must not be guessed or activated from this
+runbook.

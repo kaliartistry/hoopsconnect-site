@@ -65,6 +65,17 @@ function parseMajor(output, label) {
   return Number(match[1]);
 }
 
+function javaFallbacks(env = process.env, platform = process.platform) {
+  const fallbacks = [];
+  // Android Studio ships the CI-pinned Java 21 runtime on macOS. Prefer it to
+  // an ambient JAVA_HOME so a newer system JDK cannot make local QA fail.
+  if (platform === 'darwin') {
+    fallbacks.push('/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java');
+  }
+  if (env.JAVA_HOME) fallbacks.push(path.join(env.JAVA_HOME, 'bin', 'java'));
+  return fallbacks;
+}
+
 function discoverToolchain(env = process.env) {
   const nodeFallbacks = process.platform === 'darwin'
     ? ['/opt/homebrew/opt/node@22/bin/node', '/usr/local/opt/node@22/bin/node']
@@ -74,12 +85,7 @@ function discoverToolchain(env = process.env) {
     throw new Error(`Node ${PINS.nodeMajor} is required; found ${node.output} at ${node.path}.`);
   }
 
-  const javaFallbacks = [];
-  if (env.JAVA_HOME) javaFallbacks.push(path.join(env.JAVA_HOME, 'bin', 'java'));
-  if (process.platform === 'darwin') {
-    javaFallbacks.push('/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java');
-  }
-  const java = selectExecutable('java', ['-version'], env, javaFallbacks);
+  const java = selectExecutable('java', ['-version'], env, javaFallbacks(env));
   if (parseMajor(java.output, 'Java') !== PINS.javaMajor) {
     throw new Error(`Java ${PINS.javaMajor} is required; found ${java.output.split('\n')[0]} at ${java.path}.`);
   }
@@ -129,4 +135,10 @@ function describeToolchain(tools) {
   ].join(' ');
 }
 
-module.exports = {PINS, describeToolchain, discoverToolchain, parseMajor};
+module.exports = {
+  PINS,
+  describeToolchain,
+  discoverToolchain,
+  javaFallbacks,
+  parseMajor,
+};

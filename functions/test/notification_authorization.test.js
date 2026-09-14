@@ -8,7 +8,10 @@ const test = require('node:test');
 const admin = require('firebase-admin');
 if (admin.apps.length === 0) admin.initializeApp({projectId: 'demo-hoopsconnect'});
 
-const {loadAuthorizedRecipients} = require('../lib/notification_authorization');
+const {
+  loadAuthorizedRecipients,
+  loadTeamAcknowledgmentRecipients,
+} = require('../lib/notification_authorization');
 const db = admin.firestore();
 
 async function clearFirestore() {
@@ -24,6 +27,7 @@ async function seed(uid, {
   userAssociationId = associationId,
   capabilities = ['posts.acknowledge'],
   prefs = {},
+  teamId = 't1',
 } = {}) {
   await db.doc('users/' + uid).set({
     displayName: uid,
@@ -41,7 +45,7 @@ async function seed(uid, {
       capabilities,
       authorizationSchemaVersion: schema,
       divisionId: 'd1',
-      teamId: 't1',
+      teamId,
     });
   }
 }
@@ -50,6 +54,22 @@ test.beforeEach(clearFirestore);
 test.after(async () => {
   await clearFirestore();
   await admin.app().delete();
+});
+
+test('acknowledgment audiences contain only team-assigned reps with team names', async () => {
+  await db.doc('associations/jba/teams/t1').set({name: 'Kingston Lions'});
+  await seed('team-rep');
+  await seed('capable-admin-without-team', {teamId: null});
+  await seed('rep-with-missing-team', {teamId: 'missing'});
+
+  const recipients = await loadTeamAcknowledgmentRecipients(db, 'jba', {
+    divisionId: 'd1',
+  });
+
+  assert.deepEqual(
+    recipients.map(({uid, teamId, teamName}) => ({uid, teamId, teamName})),
+    [{uid: 'team-rep', teamId: 't1', teamName: 'Kingston Lions'}],
+  );
 });
 
 test('private ack targeting excludes legacy, suspended, revoked, demoted, and cross-tenant profiles', async () => {

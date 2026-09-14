@@ -42,7 +42,8 @@ void main() {
       router.routeInformationProvider.value.uri.path,
       PublicRoutePaths.standings,
     );
-    expect(find.text('Premier · 1 GP · PF 82 · PA 79'), findsOneWidget);
+    expect(find.text('Premier'), findsOneWidget);
+    expect(find.text('1 GP · PF 82 · PA 79'), findsOneWidget);
     expect(
       find.text('Winning percentage; tied ranks remain tied'),
       findsOneWidget,

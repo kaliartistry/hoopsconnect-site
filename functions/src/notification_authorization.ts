@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import {AUTHORIZATION_SCHEMA_VERSION} from "./authorization";
+import {AUTHORIZATION_SCHEMA_VERSION, capabilities} from "./authorization";
 
 export interface AuthorizedRecipient {
   uid: string;
@@ -8,6 +8,11 @@ export interface AuthorizedRecipient {
   divisionId: string | null;
   fcmTokens: string[];
   notificationPrefs: Record<string, unknown>;
+}
+
+export interface TeamAcknowledgmentRecipient extends AuthorizedRecipient {
+  teamId: string;
+  teamName: string;
 }
 
 interface RecipientOptions {
@@ -73,4 +78,43 @@ export async function loadAuthorizedRecipients(
     });
   }
   return result;
+}
+
+/**
+ * Acknowledgment posts target active team representatives, not every role that
+ * happens to hold the acknowledgment capability. Resolve the display name from
+ * the authoritative team record so private posts never expose a raw team ID.
+ */
+export async function loadTeamAcknowledgmentRecipients(
+  db: admin.firestore.Firestore,
+  associationId: string,
+  options: Pick<RecipientOptions, "divisionId"> = {},
+): Promise<TeamAcknowledgmentRecipient[]> {
+  const recipients = (await loadAuthorizedRecipients(
+    db,
+    associationId,
+    capabilities.postsAcknowledge,
+    options,
+  )).filter((recipient): recipient is AuthorizedRecipient & {teamId: string} =>
+    typeof recipient.teamId === "string" && recipient.teamId.length > 0
+  );
+  if (recipients.length === 0) return [];
+
+  const teamIds = [...new Set(recipients.map((recipient) => recipient.teamId))];
+  const teamDocs = await db.getAll(
+    ...teamIds.map((teamId) => db.doc(`associations/${associationId}/teams/${teamId}`))
+  );
+  const teamNames = new Map<string, string>();
+  for (let index = 0; index < teamIds.length; index += 1) {
+    const team = teamDocs[index];
+    const name = team.exists ? team.data()?.name : null;
+    if (typeof name === "string" && name.trim().length > 0) {
+      teamNames.set(teamIds[index], name.trim());
+    }
+  }
+
+  return recipients.flatMap((recipient) => {
+    const teamName = teamNames.get(recipient.teamId);
+    return teamName ? [{...recipient, teamName}] : [];
+  });
 }

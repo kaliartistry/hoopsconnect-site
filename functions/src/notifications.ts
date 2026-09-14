@@ -6,7 +6,10 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import * as admin from "firebase-admin";
 import {capabilities} from "./authorization";
-import {loadAuthorizedRecipients} from "./notification_authorization";
+import {
+  loadAuthorizedRecipients,
+  loadTeamAcknowledgmentRecipients,
+} from "./notification_authorization";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -93,10 +96,9 @@ export const onPostCreatedWithAck = onDocumentCreated(
     );
 
     try {
-      const recipients = await loadAuthorizedRecipients(
+      const recipients = await loadTeamAcknowledgmentRecipients(
         db,
         assocId,
-        capabilities.postsAcknowledge,
         {divisionId: postData.divisionFilter},
       );
       const expectedAcks: Record<string, AckExpectedEntry> = {};
@@ -105,7 +107,7 @@ export const onPostCreatedWithAck = onDocumentCreated(
       for (const recipient of recipients) {
         expectedAcks[recipient.uid] = {
           name: recipient.displayName,
-          teamName: recipient.teamId || "",
+          teamName: recipient.teamName,
         };
         if (recipient.notificationPrefs.newPosts !== false) {
           allTokens.push(...recipient.fcmTokens);

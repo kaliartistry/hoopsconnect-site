@@ -318,6 +318,57 @@ async function seedLeague(db, admin) {
     });
   }
 
+  set(`associations/${ASSOCIATION_ID}/posts/qa-public-welcome`, {
+    authorId: 'qa-superadmin',
+    authorName: 'QA Super Admin',
+    authorRole: 'superAdmin',
+    type: 'announcement',
+    title: 'Welcome to the HoopsConnect presentation',
+    body:
+      'Use this synthetic workspace to review schedules, standings, league communications, statistics, and role-based administration.',
+    imageUrl: null,
+    divisionFilter: null,
+    pinned: true,
+    urgent: false,
+    visibility: 'public',
+    archived: false,
+    createdAt: updatedAt,
+    reactions: {},
+    requiresAck: false,
+    ackDeadline: null,
+    ackTargetScope: 'all',
+    expectedAcks: {},
+    ackStatus: {},
+    ackRemindersSent: 0,
+    qaFixtureVersion: QA_FIXTURE_VERSION,
+  });
+  set(`associations/${ASSOCIATION_ID}/posts/qa-game-day-check-in`, {
+    authorId: 'qa-superadmin',
+    authorName: 'QA Super Admin',
+    authorRole: 'superAdmin',
+    type: 'general',
+    title: 'Game-day operations check-in',
+    body:
+      'Please confirm the roster and venue details for the next scheduled fixture.',
+    imageUrl: null,
+    divisionFilter: 'premier',
+    pinned: false,
+    urgent: true,
+    visibility: 'internal',
+    archived: false,
+    createdAt: updatedAt,
+    reactions: {},
+    requiresAck: true,
+    ackDeadline: timestamp.fromDate(new Date('2026-10-15T17:00:00.000Z')),
+    ackTargetScope: 'division',
+    expectedAcks: {
+      'qa-rep': {name: 'QA rep', teamName: 'Kingston Lions'},
+    },
+    ackStatus: {},
+    ackRemindersSent: 0,
+    qaFixtureVersion: QA_FIXTURE_VERSION,
+  });
+
   for (const [index, player] of players.entries()) {
     const totals = {
       pts: Math.round(player.ppg * player.gamesPlayed),
@@ -648,7 +699,7 @@ async function main() {
   );
   console.log(
     `HOOPSCONNECT_QA_FIXTURES_OK users=${roles.length * 2} ` +
-    `teams=${TEAM_FIXTURES.length} players=24 publicGames=${publicSnapshot.schedule.length} ` +
+    `teams=${TEAM_FIXTURES.length} players=24 posts=2 publicGames=${publicSnapshot.schedule.length} ` +
     `leaderboards=${publicSnapshot.leaderboards.length} callable=true storage=true ` +
     `password=${PASSWORD}`,
   );

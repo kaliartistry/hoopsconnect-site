@@ -368,6 +368,12 @@ class _StandingsTabState extends State<_StandingsTab> {
               _divisionId == null || standing.divisionId == _divisionId,
         )
         .toList(growable: false);
+    final standingSections = <String?, List<PublicStanding>>{};
+    for (final standing in standings) {
+      standingSections
+          .putIfAbsent(standing.divisionId, () => <PublicStanding>[])
+          .add(standing);
+    }
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
@@ -401,38 +407,49 @@ class _StandingsTabState extends State<_StandingsTab> {
         else
           Card(
             child: Column(
-              children: standings
-                  .map((row) {
-                    final divisionLabel = _divisionId == null
-                        ? widget.snapshot.divisionName(row.divisionId)
-                        : null;
-                    final recordDetails =
-                        '${_known(row.gamesPlayed)} GP · PF ${_known(row.pointsFor)} · PA ${_known(row.pointsAgainst)}';
-                    return ListTile(
-                      onTap: row.teamId == null
-                          ? null
-                          : () =>
-                                context.go(PublicRoutePaths.team(row.teamId!)),
-                      leading: CircleAvatar(child: Text(_rankLabel(row))),
-                      title: Text(
-                        row.teamName,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: Text(
-                        divisionLabel == null
-                            ? recordDetails
-                            : '$divisionLabel · $recordDetails',
-                      ),
-                      trailing: Text(
-                        _record(row.wins, row.losses),
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+              children: [
+                for (final section in standingSections.entries) ...[
+                  if (_divisionId == null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                      child: Text(
+                        widget.snapshot.divisionName(section.key),
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    );
-                  })
-                  .toList(growable: false),
+                    ),
+                  for (final row in section.value)
+                    Builder(
+                      builder: (context) {
+                        final recordDetails =
+                            '${_known(row.gamesPlayed)} GP · PF ${_known(row.pointsFor)} · PA ${_known(row.pointsAgainst)}';
+                        return ListTile(
+                          onTap: row.teamId == null
+                              ? null
+                              : () => context.go(
+                                  PublicRoutePaths.team(row.teamId!),
+                                ),
+                          leading: CircleAvatar(child: Text(_rankLabel(row))),
+                          title: Text(
+                            row.teamName,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(recordDetails),
+                          trailing: Text(
+                            _record(row.wins, row.losses),
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ],
             ),
           ),
       ],

@@ -72,6 +72,7 @@ service-account*.json
 .local/stat-migration/
 .local/authorization-migration/
 .playwright-cli/
+output/playwright/
 
 # Firebase service configs (contain API keys / project IDs)
 # Uncomment below if you want to keep these out of version control.

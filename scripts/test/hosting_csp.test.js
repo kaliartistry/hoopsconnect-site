@@ -21,6 +21,10 @@ const directives = Object.fromEntries(
       return [name, sources];
     }),
 );
+const webIndex = fs.readFileSync(
+  path.resolve(__dirname, '../../web/index.html'),
+  'utf8',
+);
 
 test('production and QA web entrypoints use clean-path routing', () => {
   for (const entrypoint of ['lib/main.dart', 'lib/main_qa.dart']) {
@@ -42,6 +46,24 @@ test('production and QA web entrypoints use clean-path routing', () => {
   assert.deepEqual(firebase.hosting.rewrites, [
     {source: '**', destination: '/index.html'},
   ]);
+});
+
+test('local Firebase warning stays visible without obstructing app navigation', () => {
+  assert.match(
+    webIndex,
+    /\.firebase-emulator-warning\s*\{[^}]*pointer-events:\s*none\s*!important;/s,
+  );
+});
+
+test('QA web auth cannot retain a stale identity across emulator restarts', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '../../lib/platform/qa_environment.dart'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /useAuthEmulator\([\s\S]*setPersistence\(Persistence\.NONE\)/,
+  );
 });
 
 function sourceAllows(source, urlString, selfOrigin) {
