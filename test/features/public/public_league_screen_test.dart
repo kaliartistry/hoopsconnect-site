@@ -180,11 +180,95 @@ void main() {
 
     expect(find.text('Home 0'), findsNothing);
     expect(find.text('Load 1 more games'), findsOneWidget);
-    await tester.tap(find.text('Load 1 more games'));
+    final loadMore = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Load 1 more games'),
+    );
+    loadMore.onPressed!();
     await tester.pumpAndSettle();
 
     expect(find.text('Home 0'), findsOneWidget);
     expect(find.text('Load 1 more games'), findsNothing);
+  });
+
+  testWidgets(
+    'guest switches from a dated schedule to a calendar day in Jamaica time',
+    (tester) async {
+      final games = [
+        PublicGame(
+          gameId: 'late-game',
+          title: 'Late Home vs Late Away',
+          startTime: DateTime.utc(2026, 9, 10, 4, 30),
+          divisionId: 'premier',
+          homeTeamId: 'home',
+          homeTeamName: 'Late Home',
+          awayTeamId: 'away',
+          awayTeamName: 'Late Away',
+          status: PublicGameStatus.scheduled,
+        ),
+        PublicGame(
+          gameId: 'morning-game',
+          title: 'Morning Home vs Morning Away',
+          startTime: DateTime.utc(2026, 9, 10, 5, 30),
+          divisionId: 'premier',
+          homeTeamId: 'home',
+          homeTeamName: 'Morning Home',
+          awayTeamId: 'away',
+          awayTeamName: 'Morning Away',
+          status: PublicGameStatus.scheduled,
+        ),
+        PublicGame(
+          gameId: 'october-game',
+          title: 'October Home vs October Away',
+          startTime: DateTime.utc(2026, 10, 15, 23),
+          divisionId: 'premier',
+          homeTeamId: 'home',
+          homeTeamName: 'October Home',
+          awayTeamId: 'away',
+          awayTeamName: 'October Away',
+          status: PublicGameStatus.scheduled,
+        ),
+      ];
+      await _pump(tester, _snapshot(schedule: games));
+
+      expect(find.byKey(const Key('public-games-schedule-view')), findsOne);
+      expect(find.text('Wednesday, September 9, 2026'), findsOne);
+      expect(find.text('Thursday, September 10, 2026'), findsOne);
+
+      await tester.tap(find.text('Calendar'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('public-games-calendar')), findsOne);
+      await tester.tap(find.byKey(const Key('public-game-day-2026-10-15')));
+      await tester.pumpAndSettle();
+      expect(find.text('October 2026'), findsOneWidget);
+      expect(find.text('October Home'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('public-game-day-2026-09-09')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Late Home'), findsOne);
+      expect(find.text('Morning Home'), findsNothing);
+      expect(find.text('October Home'), findsNothing);
+      expect(find.text('September 2026'), findsOneWidget);
+      expect(find.text('Wednesday, September 9, 2026'), findsOne);
+    },
+  );
+
+  testWidgets('public games layout fits desktop without overflow', (
+    tester,
+  ) async {
+    await _pump(tester, _snapshot(), size: const Size(1440, 1000));
+
+    expect(find.text('Games & scores'), findsOneWidget);
+    expect(find.text('Schedule'), findsOneWidget);
+    expect(find.text('Calendar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('public-games-calendar-view')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('fresh public detail URLs resolve and unknown IDs stay public', (
