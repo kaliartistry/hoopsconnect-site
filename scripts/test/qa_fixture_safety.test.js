@@ -67,16 +67,19 @@ test('QA role authority and schema version exactly match the canonical Functions
   }
 });
 
-test('full dataset has four deterministic teams for roster and division journeys', () => {
+test('full dataset has six deterministic teams for multi-league journeys', () => {
   assert.deepEqual(TEAM_FIXTURES.map((team) => team.id), [
     'kingston-lions',
     'montego-bay-waves',
     'spanish-town-sparks',
     'portmore-pelicans',
+    'kingston-college-braves',
+    'calabar-high-lions',
   ]);
   assert.deepEqual(new Set(TEAM_FIXTURES.map((team) => team.divisionId)), new Set([
     'premier',
     'development',
+    'schoolboy-a',
   ]));
 });
 
