@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
+import '../../core/utils/error_mapper.dart';
+import '../../core/widgets/empty_state.dart';
+import '../board/board_post_visibility.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/post_providers.dart';
+import '../../providers/role_preview_provider.dart';
+import 'widgets/acknowledgment_action.dart';
 
 class AckDetailScreen extends ConsumerWidget {
   final String postId;
@@ -13,7 +18,8 @@ class AckDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final postAsync = ref.watch(postDetailProvider(postId));
-    final currentUser = ref.watch(currentUserProvider).value;
+    final presentationUser = ref.watch(effectiveUserProvider);
+    final realUser = ref.watch(currentUserProvider).valueOrNull;
     final assocId = ref.watch(currentAssociationIdProvider);
 
     return Scaffold(
@@ -26,9 +32,21 @@ class AckDetailScreen extends ConsumerWidget {
           if (post == null) {
             return const Center(child: Text('Post not found'));
           }
+          if (!postIsVisibleInBoardPresentation(post, presentationUser)) {
+            return const EmptyState(
+              icon: Icons.visibility_off_outlined,
+              title: 'Post hidden in this role preview',
+              subtitle: 'Return to the Board to choose a visible post.',
+            );
+          }
 
-          final userAcked =
-              currentUser != null && post.hasUserAcked(currentUser.id);
+          final userAcked = realUser != null && post.hasUserAcked(realUser.id);
+          final assignedToRealUser =
+              realUser != null && post.expectedAcks.containsKey(realUser.id);
+          final previewShowsAcknowledge =
+              presentationUser?.hasCapability('posts.acknowledge') ?? false;
+          final realUserCanAcknowledge =
+              realUser?.hasCapability('posts.acknowledge') ?? false;
           final isOverdue = post.isAckOverdue();
 
           return ListView(
@@ -38,7 +56,9 @@ class AckDetailScreen extends ConsumerWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: post.urgent ? AppColors.urgentBg : Colors.white,
+                  color: post.urgent
+                      ? AppColors.urgentBg
+                      : Theme.of(context).cardColor,
                   border: Border.all(
                     color: post.urgent ? AppColors.urgent : AppColors.border,
                   ),
@@ -51,33 +71,35 @@ class AckDetailScreen extends ConsumerWidget {
                     Wrap(
                       spacing: 4,
                       children: [
-                        if (post.urgent) _badge('URGENT', Colors.white, AppColors.urgent),
-                        if (isOverdue) _badge('OVERDUE', Colors.white, AppColors.urgent),
+                        if (post.urgent)
+                          _badge('URGENT', Colors.white, AppColors.urgent),
+                        if (isOverdue)
+                          _badge('OVERDUE', Colors.white, AppColors.urgent),
                         _badge('ACK REQUIRED', Colors.white, AppColors.ack),
                       ],
                     ),
                     const SizedBox(height: 12),
                     Text(
                       post.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       post.body,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
-                        color: AppColors.textSecondary,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                         height: 1.5,
                       ),
                     ),
                     const SizedBox(height: 12),
                     // Metadata
                     Text(
-                      'Posted by ${post.authorName} on ${DateFormat('MMM d, yyyy').format(post.createdAt)}',
+                      'Posted by ${post.authorName} on ${LeagueTime.formatJamaicaDate(post.createdAt, pattern: 'MMM d, yyyy')} at ${LeagueTime.formatJamaicaTime(post.createdAt)}',
                       style: const TextStyle(
                         fontSize: 12,
                         color: AppColors.textMuted,
@@ -86,7 +108,7 @@ class AckDetailScreen extends ConsumerWidget {
                     if (post.ackDeadline != null) ...[
                       const SizedBox(height: 4),
                       Text(
-                        'Deadline: ${DateFormat('MMM d, yyyy h:mm a').format(post.ackDeadline!)}',
+                        'Deadline: ${LeagueTime.formatJamaicaDate(post.ackDeadline!, pattern: 'MMM d, yyyy')} at ${LeagueTime.formatJamaicaTime(post.ackDeadline!)}',
                         style: TextStyle(
                           fontSize: 12,
                           color: isOverdue ? AppColors.urgent : AppColors.ack,
@@ -103,7 +125,7 @@ class AckDetailScreen extends ConsumerWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Theme.of(context).cardColor,
                   border: Border.all(color: AppColors.border),
                   borderRadius: BorderRadius.circular(AppSizes.radiusMd),
                 ),
@@ -149,28 +171,23 @@ class AckDetailScreen extends ConsumerWidget {
               const SizedBox(height: 24),
 
               // Acknowledge button
-              if (!userAcked && currentUser != null) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (assocId != null) {
-                        ref.read(postRepositoryProvider).acknowledge(
-                              assocId,
-                              post.id,
-                            );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.ack,
-                    ),
-                    icon: const Icon(Icons.check_circle, size: 20),
-                    label: const Text(
-                      'Acknowledge This Post',
-                      style: TextStyle(fontSize: 16),
-                    ),
-                  ),
+              if (!userAcked &&
+                  previewShowsAcknowledge &&
+                  realUserCanAcknowledge &&
+                  assignedToRealUser) ...[
+                AcknowledgmentAction(
+                  onAcknowledge: () async {
+                    final actingUser = ref
+                        .read(currentUserProvider)
+                        .valueOrNull;
+                    if (assocId != null &&
+                        actingUser?.hasCapability('posts.acknowledge') ==
+                            true) {
+                      await ref
+                          .read(postRepositoryProvider)
+                          .acknowledge(assocId, post.id);
+                    }
+                  },
                 ),
               ],
 
@@ -203,7 +220,7 @@ class AckDetailScreen extends ConsumerWidget {
         loading: () => const Center(
           child: CircularProgressIndicator(color: AppColors.primary),
         ),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => Center(child: Text(ErrorMapper.map(e))),
       ),
     );
   }

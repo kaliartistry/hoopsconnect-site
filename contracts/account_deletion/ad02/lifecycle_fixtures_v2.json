@@ -53,13 +53,18 @@
   },
   "routeExpectations": {
     "signedOutOrdinary": "/login",
-    "signedOutDeletion": "/delete-account",
+    "signedOutDeletion": "/login",
+    "authenticatedDeletion": "/account/delete",
+    "authenticatedDeviceReconciliation": "/account/deletion/reconcile-device",
+    "publicStatus": "/account/deletion/status",
+    "deletingWithReceipt": "/account/deletion/status",
+    "deletedWithReceipt": "/account/deletion/status",
     "establishing": "/loading",
     "refreshRequired": "/loading",
     "ready": "/board",
     "blocked": "/access-blocked",
-    "deleting": "/delete-account",
-    "deleted": "/delete-account"
+    "deleting": "/account/delete",
+    "deleted": "/login"
   },
   "requiredDenials": [
     "missing_token_proof",

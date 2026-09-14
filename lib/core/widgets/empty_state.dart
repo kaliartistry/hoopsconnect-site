@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../constants/app_constants.dart';
 
 /// Reusable empty-state placeholder with icon, title, subtitle, and optional
@@ -21,40 +22,43 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSizes.paddingLg),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 48,
-              color: AppColors.textMuted,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 13,
+            Semantics(
+              container: true,
+              label: '$title. $subtitle',
+              child: ExcludeSemantics(
+                child: Column(
+                  children: [
+                    Icon(icon, size: 48, color: colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 12),
+                    Text(
+                      title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: 20),
-              OutlinedButton(
-                onPressed: onAction,
-                child: Text(actionLabel!),
-              ),
+              OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
             ],
           ],
         ),

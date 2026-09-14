@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/time/league_time.dart';
+import '../../ack/widgets/acknowledgment_action.dart';
 import '../../../models/post_model.dart';
-import 'package:intl/intl.dart';
 
 class PostCard extends StatelessWidget {
   final PostModel post;
   final String? currentUserId;
   final bool canEditDelete;
-  final VoidCallback? onAcknowledge;
+  final Future<void> Function()? onAcknowledge;
   final VoidCallback? onTap;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
@@ -28,193 +29,226 @@ class PostCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool userAcked =
         currentUserId != null && post.hasUserAcked(currentUserId!);
-    final bool needsAck = post.requiresAck && !userAcked;
+    final bool isAssigned =
+        currentUserId != null && post.expectedAcks.containsKey(currentUserId);
+    final bool needsAck = post.requiresAck && isAssigned && !userAcked;
+    final borderRadius = BorderRadius.circular(AppSizes.radiusMd);
+    final backgroundColor = post.urgent
+        ? AppColors.urgentBg
+        : needsAck
+        ? AppColors.ackBg
+        : Theme.of(context).cardColor;
+    final borderColor = post.urgent
+        ? AppColors.urgent
+        : needsAck
+        ? AppColors.ack
+        : Theme.of(context).dividerColor;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(
-          color: post.urgent
-              ? AppColors.urgentBg
-              : needsAck
-                  ? AppColors.ackBg
-                  : Theme.of(context).cardColor,
-          border: Border.all(
-            color: post.urgent
-                ? AppColors.urgent
-                : needsAck
-                    ? AppColors.ack
-                    : Theme.of(context).dividerColor,
-          ),
-          borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: backgroundColor,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: borderColor),
+          borderRadius: borderRadius,
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Badges row + edit/delete menu
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        if (post.pinned) _badge('PINNED', AppColors.primary, AppColors.primaryLight),
-                        if (post.urgent) _badge('URGENT', Colors.white, AppColors.urgent),
-                        if (needsAck)
-                          _badge('ACK REQUIRED', Colors.white, AppColors.ack),
-                        if (userAcked)
-                          _badge('ACKNOWLEDGED', Colors.white, AppColors.success),
-                        _badge(
-                          post.isAssociationPost ? 'ASSOCIATION' : 'TEAM',
-                          post.isAssociationPost
-                              ? AppColors.primary
-                              : AppColors.info,
-                          post.isAssociationPost
-                              ? AppColors.primaryLight
-                              : AppColors.infoLight,
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (canEditDelete)
-                    SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: PopupMenuButton<String>(
-                        padding: EdgeInsets.zero,
-                        iconSize: 18,
-                        onSelected: (action) {
-                          if (action == 'edit') onEdit?.call();
-                          if (action == 'delete') onDelete?.call();
-                        },
-                        itemBuilder: (_) => [
-                          const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Delete',
-                                style: TextStyle(color: AppColors.urgent)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: borderRadius,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Badges row + edit/delete menu
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          if (post.pinned)
+                            _badge(
+                              'PINNED',
+                              AppColors.primary,
+                              AppColors.primaryLight,
+                            ),
+                          if (post.urgent)
+                            _badge('URGENT', Colors.white, AppColors.urgent),
+                          if (needsAck)
+                            _badge('ACK REQUIRED', Colors.white, AppColors.ack),
+                          if (userAcked)
+                            _badge(
+                              'ACKNOWLEDGED',
+                              Colors.white,
+                              AppColors.success,
+                            ),
+                          _badge(
+                            post.isAssociationPost ? 'ASSOCIATION' : 'TEAM',
+                            post.isAssociationPost
+                                ? AppColors.primary
+                                : AppColors.info,
+                            post.isAssociationPost
+                                ? AppColors.primaryLight
+                                : AppColors.infoLight,
                           ),
                         ],
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 8),
-
-              // Title
-              Text(
-                post.title,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 4),
-
-              // Body
-              Text(
-                post.body,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-
-              // Live countdown for ack-required posts that aren't yet ack'd.
-              if (needsAck && post.ackDeadline != null) ...[
-                const SizedBox(height: 8),
-                _AckCountdown(deadline: post.ackDeadline!),
-              ],
-
-              // Acknowledge button
-              if (needsAck && onAcknowledge != null) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: onAcknowledge,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.ack,
-                    ),
-                    icon: const Icon(Icons.check, size: 18),
-                    label: const Text('Tap to Acknowledge'),
-                  ),
-                ),
-              ],
-
-              if (userAcked) ...[
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.successBg,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: AppColors.success.withValues(alpha: 0.4),
-                    ),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.check_circle,
-                          size: 14, color: AppColors.success),
-                      SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          'Acknowledged · admin notified',
-                          style: TextStyle(
-                            color: AppColors.success,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-
-              // Footer
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.only(top: 8),
-                decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: Theme.of(context).dividerColor, width: 0.5),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${post.authorName} · ${post.teamName ?? "Association"} · ${_timeAgo(post.createdAt)}',
-                      style: const TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 11,
-                      ),
-                    ),
-                    if (post.requiresAck)
-                      Text(
-                        '${post.ackCount}/${post.expectedAckCount} confirmed',
-                        style: const TextStyle(
-                          color: AppColors.ack,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
+                    if (canEditDelete)
+                      SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: PopupMenuButton<String>(
+                          padding: EdgeInsets.zero,
+                          iconSize: 18,
+                          onSelected: (action) {
+                            if (action == 'edit') onEdit?.call();
+                            if (action == 'delete') onDelete?.call();
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Text('Edit'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text(
+                                'Delete',
+                                style: TextStyle(color: AppColors.urgent),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+
+                // Title
+                Text(
+                  post.title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+
+                // Body
+                Text(
+                  post.body,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+
+                // Live countdown for ack-required posts that aren't yet ack'd.
+                if (needsAck && post.ackDeadline != null) ...[
+                  const SizedBox(height: 8),
+                  _AckCountdown(deadline: post.ackDeadline!),
+                ],
+
+                // Acknowledge button
+                if (needsAck && onAcknowledge != null) ...[
+                  const SizedBox(height: 10),
+                  AcknowledgmentAction(
+                    compact: true,
+                    onAcknowledge: onAcknowledge!,
+                  ),
+                ],
+
+                if (userAcked) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.successBg,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: AppColors.success.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle,
+                          size: 14,
+                          color: AppColors.success,
+                        ),
+                        SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Acknowledged',
+                            style: TextStyle(
+                              color: AppColors.success,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                // Footer
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.only(top: 8),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color: Theme.of(context).dividerColor,
+                        width: 0.5,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${post.authorName} · ${post.teamName ?? "Association"} · ${_timeAgo(post.createdAt)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      if (post.requiresAck) ...[
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            '${post.ackCount}/${post.expectedAckCount} confirmed',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.end,
+                            style: const TextStyle(
+                              color: AppColors.ack,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -244,7 +278,7 @@ class PostCard extends StatelessWidget {
     if (diff.inMinutes < 60) return '${diff.inMinutes}m';
     if (diff.inHours < 24) return '${diff.inHours}h';
     if (diff.inDays < 7) return '${diff.inDays}d';
-    return DateFormat('MMM d').format(date);
+    return LeagueTime.formatJamaicaDate(date, pattern: 'MMM d');
   }
 }
 
@@ -286,10 +320,10 @@ class _AckCountdownState extends State<_AckCountdown> {
     final color = overdue
         ? AppColors.urgent
         : magnitude.inHours < 6
-            ? AppColors.urgent
-            : magnitude.inHours < 24
-                ? AppColors.ack
-                : AppColors.textSecondary;
+        ? AppColors.urgent
+        : magnitude.inHours < 24
+        ? AppColors.ack
+        : AppColors.textSecondary;
     final bg = overdue || magnitude.inHours < 6
         ? AppColors.urgentBg
         : AppColors.ackBg;
@@ -321,11 +355,8 @@ class _AckCountdownState extends State<_AckCountdown> {
           ),
           const Spacer(),
           Text(
-            DateFormat('MMM d, h:mm a').format(widget.deadline),
-            style: const TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 11,
-            ),
+            '${LeagueTime.formatJamaicaDate(widget.deadline, pattern: 'MMM d')} · ${LeagueTime.formatJamaicaTime(widget.deadline)}',
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
           ),
         ],
       ),

@@ -47,6 +47,39 @@ void requireLocalJournalOperationPackageBinding({
   }
 }
 
+void requireLocalCandidateRevisionReceiptBinding({
+  required PreparedGameRecoveryPackage preparedPackage,
+  required OperationReceiptContract receipt,
+  required LocalCandidateRevisionReceiptEnvelope? candidateRevisionReceipt,
+  required LocalJournalErrorCode errorCode,
+}) {
+  final preparedRevision = preparedPackage.candidateRevision;
+  if (preparedRevision == null) {
+    if (candidateRevisionReceipt != null) {
+      throw LocalJournalException(
+        errorCode,
+        'A non-candidate workspace contains candidate receipt evidence',
+      );
+    }
+    return;
+  }
+  final envelope = candidateRevisionReceipt;
+  if (envelope == null ||
+      !envelope.candidateRevision.hasSameIdentity(preparedRevision) ||
+      envelope.preparationPackageChecksum != preparedPackage.packageChecksum ||
+      OfficialStatCanonicalEncoding.encode(
+            operationReceiptToMap(envelope.operationReceipt),
+          ) !=
+          OfficialStatCanonicalEncoding.encode(
+            operationReceiptToMap(receipt),
+          )) {
+    throw LocalJournalException(
+      errorCode,
+      'Candidate receipt does not bind the exact prepared revision and package',
+    );
+  }
+}
+
 void requireLocalJournalAcceptedCheckpointBinding({
   required LocalWorkspaceCheckpoint checkpoint,
   required List<LocalJournalEntry> retainedEntries,
@@ -107,16 +140,46 @@ enum RecoveryArchiveTrust { localOriginal, importedUntrusted }
 final class PrunedReceiptEvidence {
   final int localSequence;
   final OperationReceiptContract receipt;
+  final LocalCandidateRevisionReceiptEnvelope? candidateRevisionReceipt;
 
-  PrunedReceiptEvidence({required this.localSequence, required this.receipt}) {
+  PrunedReceiptEvidence({
+    required this.localSequence,
+    required this.receipt,
+    this.candidateRevisionReceipt,
+  }) {
     LocalJournalValidation.requireSafeInteger('localSequence', localSequence);
     operationReceiptToMap(receipt);
+    final revisionReceipt = candidateRevisionReceipt;
+    if (revisionReceipt != null &&
+        OfficialStatCanonicalEncoding.encode(
+              operationReceiptToMap(revisionReceipt.operationReceipt),
+            ) !=
+            OfficialStatCanonicalEncoding.encode(
+              operationReceiptToMap(receipt),
+            )) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.receiptMismatch,
+        'Pruned candidate revision envelope wraps a different receipt',
+      );
+    }
   }
 
   factory PrunedReceiptEvidence.fromContractMap(Map<String, Object?> map) {
-    LocalJournalValidation.exactKeys(map, const {'localSequence', 'receipt'});
+    const requiredKeys = {'localSequence', 'receipt'};
+    final actualKeys = map.keys.toSet();
+    if (!actualKeys.containsAll(requiredKeys) ||
+        actualKeys.difference(requiredKeys).difference(const {
+          'candidateRevisionReceipt',
+        }).isNotEmpty) {
+      throw LocalJournalException(
+        LocalJournalErrorCode.archivePartial,
+        'Pruned receipt evidence contains missing or unsupported fields',
+      );
+    }
     final rawReceipt = map['receipt'];
-    if (rawReceipt is! Map) {
+    final rawRevisionReceipt = map['candidateRevisionReceipt'];
+    if (rawReceipt is! Map ||
+        (rawRevisionReceipt != null && rawRevisionReceipt is! Map)) {
       throw LocalJournalException(
         LocalJournalErrorCode.archivePartial,
         'Pruned receipt evidence is missing its receipt',
@@ -128,10 +191,17 @@ final class PrunedReceiptEvidence {
         map['localSequence'],
       ),
       receipt: operationReceiptFromMap(Map<String, Object?>.from(rawReceipt)),
+      candidateRevisionReceipt: rawRevisionReceipt == null
+          ? null
+          : LocalCandidateRevisionReceiptEnvelope.fromContractMap(
+              Map<String, Object?>.from(rawRevisionReceipt as Map),
+            ),
     );
   }
 
   Map<String, Object?> toContractMap() => {
+    if (candidateRevisionReceipt case final revisionReceipt?)
+      'candidateRevisionReceipt': revisionReceipt.toContractMap(),
     'localSequence': localSequence,
     'receipt': operationReceiptToMap(receipt),
   };
@@ -486,6 +556,13 @@ final class LocalJournalRecoveryArchive {
           'Recovery archive receipt tombstones are duplicated or out of scope',
         );
       }
+      requireLocalCandidateRevisionReceiptBinding(
+        preparedPackage: preparedPackage,
+        receipt: receipt,
+        candidateRevisionReceipt:
+            receiptTombstones[sequence].candidateRevisionReceipt,
+        errorCode: LocalJournalErrorCode.archiveTampered,
+      );
     }
     if (receiptTombstones.length != prunedThroughSequence + 1) {
       throw LocalJournalException(
@@ -511,6 +588,15 @@ final class LocalJournalRecoveryArchive {
         checkpoint: checkpoint,
         errorCode: LocalJournalErrorCode.archiveTampered,
       );
+      final receipt = entry.delivery.serverReceipt.valueOrNull;
+      if (receipt != null) {
+        requireLocalCandidateRevisionReceiptBinding(
+          preparedPackage: preparedPackage,
+          receipt: receipt,
+          candidateRevisionReceipt: entry.delivery.candidateRevisionReceipt,
+          errorCode: LocalJournalErrorCode.archiveTampered,
+        );
+      }
       if (operation.partition.key != partition.key ||
           operation.localSequence != expectedSequence) {
         throw LocalJournalException(

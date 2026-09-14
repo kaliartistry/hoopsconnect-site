@@ -1,0 +1,84 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": ["node_modules", ".git"]
+    },
+    {
+      "source": "public_functions",
+      "codebase": "public",
+      "ignore": ["node_modules", ".git"]
+    }
+  ],
+  "hosting": {
+    "public": "build/web",
+    "ignore": ["firebase.qa.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com/firebasejs/ https://accounts.google.com/gsi/client; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:18080 http://127.0.0.1:19099 http://127.0.0.1:19199 http://127.0.0.1:15001 ws://127.0.0.1:18080 ws://127.0.0.1:19099 https://fonts.gstatic.com https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; object-src 'none'; base-uri 'self';"
+          }
+        ]
+      }
+    ]
+  },
+  "emulators": {
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 19099
+    },
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 18080
+    },
+    "functions": {
+      "host": "127.0.0.1",
+      "port": 15001
+    },
+    "storage": {
+      "host": "127.0.0.1",
+      "port": 19199
+    },
+    "hosting": {
+      "host": "127.0.0.1",
+      "port": 15500
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

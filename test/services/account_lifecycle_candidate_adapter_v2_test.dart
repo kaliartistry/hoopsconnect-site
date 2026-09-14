@@ -143,7 +143,8 @@ void main() {
       expect(
         candidateRouteForAccountLifecycleV2(
           state: AuthIncarnationSessionStateV2.signedOut,
-          requestedLocation: '/delete-account',
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.requestDeletion,
           intent: AccountLifecycleRouteIntentV2.accountDeletion,
         ),
         expected['signedOutDeletion'],
@@ -166,6 +167,25 @@ void main() {
           entry.value,
         );
       }
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: AuthIncarnationSessionStateV2.deleting,
+          requestedLocation: '/board',
+          intent: AccountLifecycleRouteIntentV2.accountDeletion,
+          statusReceiptState:
+              AccountLifecycleStatusReceiptStateV2.exactAccepted,
+        ),
+        expected['deletingWithReceipt'],
+      );
+      expect(
+        candidateRouteForAccountLifecycleV2(
+          state: AuthIncarnationSessionStateV2.ready,
+          requestedLocation:
+              AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+          requiresDeviceReconciliation: true,
+        ),
+        expected['authenticatedDeviceReconciliation'],
+      );
     },
   );
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../providers/auth_providers.dart';
 
 class AccessBlockedScreen extends ConsumerWidget {
@@ -30,6 +32,13 @@ class AccessBlockedScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 20),
                 FilledButton(
+                  key: const Key('blocked-account-deletion'),
+                  onPressed: () =>
+                      context.push(AccountLifecycleRoutePaths.requestDeletion),
+                  child: const Text('Review account deletion'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
                   onPressed: () => ref.read(authRepositoryProvider).signOut(),
                   child: const Text('Sign out'),
                 ),

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/time/league_time.dart';
 import '../../models/event_model.dart';
 import '../../models/game_stats_model.dart';
 import '../../models/team_model.dart';
@@ -22,21 +23,31 @@ class CalendarScreen extends ConsumerStatefulWidget {
 }
 
 class _CalendarScreenState extends ConsumerState<CalendarScreen> {
-  DateTime _focusedDay = DateTime.now();
-  DateTime _selectedDay = DateTime.now();
+  DateTime _focusedDay = LeagueTime.jamaicaDate(DateTime.now());
+  DateTime _selectedDay = LeagueTime.jamaicaDate(DateTime.now());
   bool _showMonthView = true;
 
   @override
   Widget build(BuildContext context) {
-    final firstDay = DateTime(_focusedDay.year, _focusedDay.month - 1, 1);
-    final lastDay = DateTime(_focusedDay.year, _focusedDay.month + 2, 0);
+    final firstCivil = DateTime.utc(_focusedDay.year, _focusedDay.month - 1, 1);
+    final lastCivilExclusive = DateTime.utc(
+      _focusedDay.year,
+      _focusedDay.month + 2,
+      1,
+    );
+    final firstDay = LeagueTime.startOfJamaicaDayUtc(firstCivil);
+    final lastDay = LeagueTime.startOfJamaicaDayUtc(
+      lastCivilExclusive,
+    ).subtract(const Duration(microseconds: 1));
     final selectedDivisionId = ref.watch(selectedDivisionIdProvider);
 
-    final eventsAsync = ref.watch(eventsStreamProvider((
-      from: firstDay,
-      to: lastDay,
-      divisionId: selectedDivisionId,
-    )));
+    final eventsAsync = ref.watch(
+      eventsStreamProvider((
+        from: firstDay,
+        to: lastDay,
+        divisionId: selectedDivisionId,
+      )),
+    );
     final teamsAsync = ref.watch(teamsStreamProvider);
 
     return Scaffold(
@@ -45,7 +56,9 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
         actions: [
           IconButton(
             icon: Icon(
-              _showMonthView ? Icons.view_agenda_outlined : Icons.calendar_month_outlined,
+              _showMonthView
+                  ? Icons.view_agenda_outlined
+                  : Icons.calendar_month_outlined,
             ),
             tooltip: _showMonthView ? 'List view' : 'Month view',
             onPressed: () => setState(() => _showMonthView = !_showMonthView),
@@ -59,15 +72,11 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
           // Group events by day
           final eventsByDay = <DateTime, List<EventModel>>{};
           for (final event in events) {
-            final day = DateTime(
-              event.startTime.year,
-              event.startTime.month,
-              event.startTime.day,
-            );
+            final day = LeagueTime.jamaicaDate(event.startTime);
             eventsByDay.putIfAbsent(day, () => []).add(event);
           }
 
-          final selectedDayNorm = DateTime(
+          final selectedDayNorm = DateTime.utc(
             _selectedDay.year,
             _selectedDay.month,
             _selectedDay.day,
@@ -143,15 +152,14 @@ class _ListView extends ConsumerWidget {
     return Column(
       children: [
         // Date scroller
-        DateScroller(
-          selectedDate: selectedDay,
-          onDateSelected: onDateSelected,
-        ),
+        DateScroller(selectedDate: selectedDay, onDateSelected: onDateSelected),
 
         // Selected date header
         Padding(
-          padding:
-              const EdgeInsets.symmetric(horizontal: AppSizes.paddingMd, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSizes.paddingMd,
+            vertical: 8,
+          ),
           child: Row(
             children: [
               Text(
@@ -165,8 +173,10 @@ class _ListView extends ConsumerWidget {
               const SizedBox(width: 8),
               if (selectedEvents.isNotEmpty)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
                     borderRadius: BorderRadius.circular(10),
@@ -243,7 +253,7 @@ class _MonthView extends StatelessWidget {
           onDaySelected: onDaySelected,
           onPageChanged: onPageChanged,
           eventLoader: (day) {
-            final norm = DateTime(day.year, day.month, day.day);
+            final norm = DateTime.utc(day.year, day.month, day.day);
             return eventsByDay[norm] ?? [];
           },
           calendarStyle: CalendarStyle(
@@ -292,8 +302,10 @@ class _MonthView extends StatelessWidget {
               const SizedBox(width: 8),
               if (selectedEvents.isNotEmpty)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
                     borderRadius: BorderRadius.circular(10),
@@ -316,8 +328,9 @@ class _MonthView extends StatelessWidget {
           child: selectedEvents.isEmpty
               ? const _EmptyState()
               : ListView.builder(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: AppSizes.paddingMd),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSizes.paddingMd,
+                  ),
                   itemCount: selectedEvents.length,
                   itemBuilder: (context, i) {
                     final event = selectedEvents[i];
@@ -362,14 +375,17 @@ class _GameCardWithStats extends ConsumerWidget {
     final gameStats = statsAsync.valueOrNull;
     final currentUser = ref.watch(currentUserProvider).valueOrNull;
 
-    final isApproved = event.statsStatus == StatsStatus.approved ||
+    final isApproved =
+        event.statsStatus == StatsStatus.approved ||
         gameStats?.status == GameStatsStatus.approved;
-    final isSubmitted = !isApproved &&
+    final isSubmitted =
+        !isApproved &&
         (event.statsStatus == StatsStatus.submitted ||
             gameStats?.status == GameStatsStatus.submitted);
     final hasStats = isApproved || isSubmitted;
     final canEnter = currentUser?.canEnterStats ?? false;
-    final isPending = event.statsStatus == StatsStatus.pending ||
+    final isPending =
+        event.statsStatus == StatsStatus.pending ||
         (gameStats == null && event.statsStatus == StatsStatus.pending);
 
     final hasPostGameDraft =
@@ -386,7 +402,9 @@ class _GameCardWithStats extends ConsumerWidget {
           onTeamTap: (teamId) => context.push('/team/$teamId'),
         ),
         // Stat action row
-        if (hasStats || (canEnter && isPending) || (canEnter && hasPostGameDraft))
+        if (hasStats ||
+            (canEnter && isPending) ||
+            (canEnter && hasPostGameDraft))
           Transform.translate(
             offset: const Offset(0, -10), // overlap with card bottom margin
             child: Container(
@@ -409,17 +427,24 @@ class _GameCardWithStats extends ConsumerWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF16A34A).withValues(alpha: 0.08),
+                            color: const Color(
+                              0xFF16A34A,
+                            ).withValues(alpha: 0.08),
                             border: Border.all(
-                              color: const Color(0xFF16A34A).withValues(alpha: 0.3),
+                              color: const Color(
+                                0xFF16A34A,
+                              ).withValues(alpha: 0.3),
                             ),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.scoreboard_outlined,
-                                  color: Color(0xFF16A34A), size: 18),
+                              Icon(
+                                Icons.scoreboard_outlined,
+                                color: Color(0xFF16A34A),
+                                size: 18,
+                              ),
                               SizedBox(width: 6),
                               Text(
                                 'Box Score',
@@ -438,22 +463,28 @@ class _GameCardWithStats extends ConsumerWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: GestureDetector(
-                          onTap: () =>
-                              context.push('/admin/stats/${event.id}'),
+                          onTap: () => context.push('/admin/stats/${event.id}'),
                           child: Container(
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF2563EB).withValues(alpha: 0.08),
+                              color: const Color(
+                                0xFF2563EB,
+                              ).withValues(alpha: 0.08),
                               border: Border.all(
-                                color: const Color(0xFF2563EB).withValues(alpha: 0.3),
+                                color: const Color(
+                                  0xFF2563EB,
+                                ).withValues(alpha: 0.3),
                               ),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.edit_note,
-                                    color: Color(0xFF2563EB), size: 18),
+                                Icon(
+                                  Icons.edit_note,
+                                  color: Color(0xFF2563EB),
+                                  size: 18,
+                                ),
                                 SizedBox(width: 6),
                                 Text(
                                   'Correct',
@@ -476,17 +507,24 @@ class _GameCardWithStats extends ConsumerWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF2563EB).withValues(alpha: 0.08),
+                            color: const Color(
+                              0xFF2563EB,
+                            ).withValues(alpha: 0.08),
                             border: Border.all(
-                              color: const Color(0xFF2563EB).withValues(alpha: 0.3),
+                              color: const Color(
+                                0xFF2563EB,
+                              ).withValues(alpha: 0.3),
                             ),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.edit_calendar_outlined,
-                                  color: Color(0xFF2563EB), size: 18),
+                              Icon(
+                                Icons.edit_calendar_outlined,
+                                color: Color(0xFF2563EB),
+                                size: 18,
+                              ),
                               SizedBox(width: 6),
                               Text(
                                 'Resume Post-Game Draft',
@@ -504,9 +542,8 @@ class _GameCardWithStats extends ConsumerWidget {
                   ] else if (canEnter && isPending) ...[
                     Expanded(
                       child: GestureDetector(
-                        onTap: () => context.push(
-                          '/live-stats?eventId=${event.id}',
-                        ),
+                        onTap: () =>
+                            context.push('/live-stats?eventId=${event.id}'),
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
@@ -519,8 +556,11 @@ class _GameCardWithStats extends ConsumerWidget {
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.play_circle_outline,
-                                  color: AppColors.primary, size: 18),
+                              Icon(
+                                Icons.play_circle_outline,
+                                color: AppColors.primary,
+                                size: 18,
+                              ),
                               SizedBox(width: 6),
                               Text(
                                 'Live Stats',
@@ -542,17 +582,24 @@ class _GameCardWithStats extends ConsumerWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF3B82F6).withValues(alpha: 0.08),
+                            color: const Color(
+                              0xFF3B82F6,
+                            ).withValues(alpha: 0.08),
                             border: Border.all(
-                              color: const Color(0xFF3B82F6).withValues(alpha: 0.3),
+                              color: const Color(
+                                0xFF3B82F6,
+                              ).withValues(alpha: 0.3),
                             ),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.edit_note,
-                                  color: Color(0xFF3B82F6), size: 18),
+                              Icon(
+                                Icons.edit_note,
+                                color: Color(0xFF3B82F6),
+                                size: 18,
+                              ),
                               SizedBox(width: 6),
                               Text(
                                 'Post-Game',
@@ -586,18 +633,11 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.event_busy_outlined,
-            size: 40,
-            color: AppColors.textMuted,
-          ),
+          Icon(Icons.event_busy_outlined, size: 40, color: AppColors.textMuted),
           SizedBox(height: 8),
           Text(
             'No events this day',
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 14,
-            ),
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
           ),
         ],
       ),

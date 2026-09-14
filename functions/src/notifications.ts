@@ -6,7 +6,11 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import * as admin from "firebase-admin";
 import {capabilities} from "./authorization";
-import {loadAuthorizedRecipients} from "./notification_authorization";
+import {
+  loadAuthorizedRecipients,
+  loadFavoriteTeamRecipients,
+  loadTeamAcknowledgmentRecipients,
+} from "./notification_authorization";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -93,10 +97,9 @@ export const onPostCreatedWithAck = onDocumentCreated(
     );
 
     try {
-      const recipients = await loadAuthorizedRecipients(
+      const recipients = await loadTeamAcknowledgmentRecipients(
         db,
         assocId,
-        capabilities.postsAcknowledge,
         {divisionId: postData.divisionFilter},
       );
       const expectedAcks: Record<string, AckExpectedEntry> = {};
@@ -105,7 +108,7 @@ export const onPostCreatedWithAck = onDocumentCreated(
       for (const recipient of recipients) {
         expectedAcks[recipient.uid] = {
           name: recipient.displayName,
-          teamName: recipient.teamId || "",
+          teamName: recipient.teamName,
         };
         if (recipient.notificationPrefs.newPosts !== false) {
           allTokens.push(...recipient.fcmTokens);
@@ -408,10 +411,39 @@ interface NotificationPayload {
   data?: Record<string, string>;
 }
 
+export async function notifyFavoriteTeamFans(input: {
+  db: admin.firestore.Firestore;
+  associationId: string;
+  gameId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore: number;
+  awayScore: number;
+}): Promise<number> {
+  const recipients = await loadFavoriteTeamRecipients(
+    input.db,
+    input.associationId,
+    [input.homeTeamId, input.awayTeamId],
+  );
+  const tokens = recipients.flatMap((recipient) => recipient.fcmTokens);
+  await sendMulticast(tokens, {
+    title: `Final: ${input.homeTeamName} ${input.homeScore}, ${input.awayTeamName} ${input.awayScore}`,
+    body: "The final score is ready. Open HoopsConnect for the game details.",
+    data: {
+      type: "favorite_team_final",
+      assocId: input.associationId,
+      gameId: input.gameId,
+    },
+  });
+  return recipients.length;
+}
+
 /**
  * Send multicast FCM message, handling token cleanup for invalid tokens.
  */
-async function sendMulticast(
+export async function sendMulticast(
   tokens: string[],
   payload: NotificationPayload
 ): Promise<void> {

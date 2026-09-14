@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum StatsStatus { pending, submitted, approved }
+enum StatsStatus { pending, submitted, approved, cancelled }
+
+enum EventLifecycleStatus { scheduled, cancelled }
 
 class EventModel {
   final String id;
@@ -14,6 +16,7 @@ class EventModel {
   final String? description;
   final String createdBy;
   final StatsStatus statsStatus;
+  final EventLifecycleStatus lifecycleStatus;
 
   const EventModel({
     required this.id,
@@ -27,6 +30,7 @@ class EventModel {
     this.description,
     required this.createdBy,
     this.statsStatus = StatsStatus.pending,
+    this.lifecycleStatus = EventLifecycleStatus.scheduled,
   });
 
   factory EventModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -44,9 +48,8 @@ class EventModel {
       teamIds: List<String>.from(data['teamIds'] ?? []),
       description: data['description'] as String?,
       createdBy: data['createdBy'] as String,
-      statsStatus: StatsStatus.values.byName(
-        data['statsStatus'] as String? ?? 'pending',
-      ),
+      statsStatus: _statsStatus(data['statsStatus']),
+      lifecycleStatus: _eventLifecycleStatus(data['status']),
     );
   }
 
@@ -62,10 +65,241 @@ class EventModel {
       'description': description,
       'createdBy': createdBy,
       'statsStatus': statsStatus.name,
+      'status': lifecycleStatus.name,
     };
   }
 
   bool get isGame => type == 'game';
   bool get needsStats =>
-      isGame && statsStatus == StatsStatus.pending;
+      isGame &&
+      lifecycleStatus != EventLifecycleStatus.cancelled &&
+      statsStatus == StatsStatus.pending;
+}
+
+StatsStatus _statsStatus(Object? value) {
+  if (value == null) return StatsStatus.pending;
+  if (value is String && StatsStatus.values.asNameMap().containsKey(value)) {
+    return StatsStatus.values.byName(value);
+  }
+  throw FormatException('Unsupported stats status: $value');
+}
+
+EventLifecycleStatus _eventLifecycleStatus(Object? value) {
+  if (value == null) return EventLifecycleStatus.scheduled;
+  if (value is String &&
+      EventLifecycleStatus.values.asNameMap().containsKey(value)) {
+    return EventLifecycleStatus.values.byName(value);
+  }
+  throw FormatException('Unsupported event lifecycle status: $value');
+}
+
+enum ManualScheduleConflictKind { duplicate, teamOverlap }
+
+class ManualScheduleConflict {
+  final ManualScheduleConflictKind kind;
+  final String eventId;
+  final String eventTitle;
+
+  const ManualScheduleConflict({
+    required this.kind,
+    required this.eventId,
+    required this.eventTitle,
+  });
+}
+
+class ManualGameScheduleRequest {
+  static const schemaVersion = 1;
+
+  final String operationId;
+  final String seasonId;
+  final String divisionId;
+  final String homeTeamId;
+  final String awayTeamId;
+  final DateTime startTimeUtc;
+  final DateTime endTimeUtc;
+  final String? location;
+
+  ManualGameScheduleRequest({
+    required this.operationId,
+    required this.seasonId,
+    required this.divisionId,
+    required this.homeTeamId,
+    required this.awayTeamId,
+    required this.startTimeUtc,
+    required this.endTimeUtc,
+    this.location,
+  }) {
+    for (final entry in {
+      'operationId': operationId,
+      'seasonId': seasonId,
+      'divisionId': divisionId,
+      'homeTeamId': homeTeamId,
+      'awayTeamId': awayTeamId,
+    }.entries) {
+      if (!_scheduleIdPattern.hasMatch(entry.value)) {
+        throw ArgumentError.value(entry.value, entry.key, 'invalid opaque ID');
+      }
+    }
+    if (homeTeamId == awayTeamId) {
+      throw ArgumentError('Home and away teams must be different');
+    }
+    if (!startTimeUtc.isUtc || !endTimeUtc.isUtc) {
+      throw ArgumentError('Schedule instants must be explicit UTC values');
+    }
+    if (!endTimeUtc.isAfter(startTimeUtc)) {
+      throw ArgumentError('Game end must be after its start');
+    }
+    if ((location?.trim().length ?? 0) > 200) {
+      throw ArgumentError.value(
+        location,
+        'location',
+        'must be at most 200 characters',
+      );
+    }
+  }
+
+  Map<String, Object?> toMap() => {
+    'schemaVersion': schemaVersion,
+    'operationId': operationId,
+    'seasonId': seasonId,
+    'divisionId': divisionId,
+    'homeTeamId': homeTeamId,
+    'awayTeamId': awayTeamId,
+    'startTimeUtc': startTimeUtc.toIso8601String(),
+    'endTimeUtc': endTimeUtc.toIso8601String(),
+    if (location?.trim().isNotEmpty == true) 'location': location!.trim(),
+  };
+}
+
+List<ManualScheduleConflict> findManualScheduleConflicts({
+  required Iterable<EventModel> existingEvents,
+  required String homeTeamId,
+  required String awayTeamId,
+  required DateTime startTimeUtc,
+  required DateTime endTimeUtc,
+}) {
+  final proposedTeams = {homeTeamId, awayTeamId};
+  final conflicts = <ManualScheduleConflict>[];
+  for (final event in existingEvents.where(
+    (event) =>
+        event.isGame && event.lifecycleStatus != EventLifecycleStatus.cancelled,
+  )) {
+    final existingTeams = event.teamIds.toSet();
+    final samePair =
+        existingTeams.length == 2 &&
+        existingTeams.containsAll(proposedTeams) &&
+        proposedTeams.containsAll(existingTeams);
+    if (samePair && event.startTime.toUtc() == startTimeUtc) {
+      conflicts.add(
+        ManualScheduleConflict(
+          kind: ManualScheduleConflictKind.duplicate,
+          eventId: event.id,
+          eventTitle: event.title,
+        ),
+      );
+      continue;
+    }
+    if (existingTeams.intersection(proposedTeams).isEmpty) continue;
+    final existingStart = event.startTime.toUtc();
+    final existingEnd =
+        event.endTime?.toUtc() ?? existingStart.add(const Duration(hours: 2));
+    if (startTimeUtc.isBefore(existingEnd) &&
+        endTimeUtc.isAfter(existingStart)) {
+      conflicts.add(
+        ManualScheduleConflict(
+          kind: ManualScheduleConflictKind.teamOverlap,
+          eventId: event.id,
+          eventTitle: event.title,
+        ),
+      );
+    }
+  }
+  return conflicts;
+}
+
+final _scheduleIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
+
+class ScheduleOperationReceipt {
+  final String operationId;
+  final String eventId;
+  final String status;
+  final int scheduleVersion;
+  final String? itemKey;
+
+  const ScheduleOperationReceipt({
+    required this.operationId,
+    required this.eventId,
+    required this.status,
+    required this.scheduleVersion,
+    this.itemKey,
+  });
+
+  factory ScheduleOperationReceipt.fromMap(
+    Map<String, dynamic> map, {
+    String? parentOperationId,
+  }) {
+    final operationId = parentOperationId ?? map['operationId'];
+    final eventId = map['eventId'];
+    final status = map['status'];
+    final version = map['scheduleVersion'];
+    if (operationId is! String ||
+        !_scheduleIdPattern.hasMatch(operationId) ||
+        eventId is! String ||
+        !_scheduleIdPattern.hasMatch(eventId) ||
+        status is! String ||
+        !{'created', 'updated', 'cancelled'}.contains(status) ||
+        version is! int ||
+        version < 1) {
+      throw const FormatException('Invalid schedule operation receipt');
+    }
+    return ScheduleOperationReceipt(
+      operationId: operationId,
+      eventId: eventId,
+      status: status,
+      scheduleVersion: version,
+      itemKey: map['itemKey'] as String?,
+    );
+  }
+}
+
+enum ScheduledGameMutationAction { edit, reschedule, cancel }
+
+class ScheduledGameMutationRequest {
+  final String operationId;
+  final String eventId;
+  final int expectedScheduleVersion;
+  final ScheduledGameMutationAction action;
+  final DateTime? startTimeUtc;
+  final DateTime? endTimeUtc;
+  final String? location;
+  final String? title;
+  final String? description;
+  final String? reason;
+
+  const ScheduledGameMutationRequest({
+    required this.operationId,
+    required this.eventId,
+    required this.expectedScheduleVersion,
+    required this.action,
+    this.startTimeUtc,
+    this.endTimeUtc,
+    this.location,
+    this.title,
+    this.description,
+    this.reason,
+  });
+
+  Map<String, Object?> toMap() => {
+    'schemaVersion': ManualGameScheduleRequest.schemaVersion,
+    'operationId': operationId,
+    'eventId': eventId,
+    'expectedScheduleVersion': expectedScheduleVersion,
+    'action': action.name,
+    if (startTimeUtc != null) 'startTimeUtc': startTimeUtc!.toIso8601String(),
+    if (endTimeUtc != null) 'endTimeUtc': endTimeUtc!.toIso8601String(),
+    if (location != null) 'location': location,
+    if (title != null) 'title': title,
+    if (description != null) 'description': description,
+    if (reason != null) 'reason': reason,
+  };
 }

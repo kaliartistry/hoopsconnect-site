@@ -10,8 +10,14 @@ class StatExportService {
     final buf = StringBuffer();
 
     // Header
-    buf.writeln('${stats.homeTeamName} ${stats.homeScore} - ${stats.awayTeamName} ${stats.awayScore}');
-    buf.writeln(stats.status == GameStatsStatus.approved ? 'FINAL' : stats.status.name.toUpperCase());
+    buf.writeln(
+      '${stats.homeTeamName} ${stats.homeScore} - ${stats.awayTeamName} ${stats.awayScore}',
+    );
+    buf.writeln(
+      stats.status == GameStatsStatus.approved
+          ? 'FINAL'
+          : stats.status.name.toUpperCase(),
+    );
     buf.writeln();
 
     final homePlayers = stats.playerLines.entries
@@ -34,14 +40,16 @@ class StatExportService {
     List<MapEntry<String, PlayerStatLine>> players,
   ) {
     buf.writeln(teamName);
-    buf.writeln(_padRight('Player', 18) +
-        _padCenter('MIN', 5) +
-        _padCenter('PTS', 5) +
-        _padCenter('REB', 5) +
-        _padCenter('AST', 5) +
-        _padCenter('STL', 5) +
-        _padCenter('BLK', 5) +
-        _padCenter('FLS', 5));
+    buf.writeln(
+      _padRight('Player', 18) +
+          _padCenter('MIN', 5) +
+          _padCenter('PTS', 5) +
+          _padCenter('REB', 5) +
+          _padCenter('AST', 5) +
+          _padCenter('STL', 5) +
+          _padCenter('BLK', 5) +
+          _padCenter('FLS', 5),
+    );
     buf.writeln('-' * 53);
 
     int totalMin = 0, totalPts = 0, totalReb = 0, totalAst = 0;
@@ -57,25 +65,29 @@ class StatExportService {
       totalBlk += p.blk;
       totalFls += p.fls;
 
-      buf.writeln(_padRight(p.name, 18) +
-          _padCenter('${p.min}', 5) +
-          _padCenter('${p.pts}', 5) +
-          _padCenter('${p.reb}', 5) +
-          _padCenter('${p.ast}', 5) +
-          _padCenter('${p.stl}', 5) +
-          _padCenter('${p.blk}', 5) +
-          _padCenter('${p.fls}', 5));
+      buf.writeln(
+        _padRight(p.name, 18) +
+            _padCenter('${p.min}', 5) +
+            _padCenter('${p.pts}', 5) +
+            _padCenter('${p.reb}', 5) +
+            _padCenter('${p.ast}', 5) +
+            _padCenter('${p.stl}', 5) +
+            _padCenter('${p.blk}', 5) +
+            _padCenter('${p.fls}', 5),
+      );
     }
 
     buf.writeln('-' * 53);
-    buf.writeln(_padRight('TOTAL', 18) +
-        _padCenter('$totalMin', 5) +
-        _padCenter('$totalPts', 5) +
-        _padCenter('$totalReb', 5) +
-        _padCenter('$totalAst', 5) +
-        _padCenter('$totalStl', 5) +
-        _padCenter('$totalBlk', 5) +
-        _padCenter('$totalFls', 5));
+    buf.writeln(
+      _padRight('TOTAL', 18) +
+          _padCenter('$totalMin', 5) +
+          _padCenter('$totalPts', 5) +
+          _padCenter('$totalReb', 5) +
+          _padCenter('$totalAst', 5) +
+          _padCenter('$totalStl', 5) +
+          _padCenter('$totalBlk', 5) +
+          _padCenter('$totalFls', 5),
+    );
   }
 
   /// Format leaderboard as text.
@@ -91,7 +103,9 @@ class StatExportService {
 
     for (var i = 0; i < entries.length; i++) {
       final e = entries[i];
-      buf.writeln('${i + 1}. ${e.name} (${e.teamName}) - ${e.value.toStringAsFixed(1)}');
+      buf.writeln(
+        '${i + 1}. ${e.name} (${e.teamName}) - ${e.value.toStringAsFixed(1)}',
+      );
     }
 
     return buf.toString();
@@ -102,7 +116,9 @@ class StatExportService {
     final buf = StringBuffer();
 
     buf.writeln(stats.playerName);
-    buf.writeln('${stats.teamName ?? 'Unknown Team'} | GP: ${stats.gamesPlayed}');
+    buf.writeln(
+      '${stats.teamName ?? 'Unknown Team'} | GP: ${stats.gamesPlayed}',
+    );
     buf.writeln();
     buf.writeln('Season Averages');
     buf.writeln('-' * 25);
@@ -115,13 +131,32 @@ class StatExportService {
     return buf.toString();
   }
 
-  /// Copy to clipboard and show a snackbar.
-  static void copyToClipboard(String text, BuildContext context) {
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied to clipboard')),
-    );
+  /// Copy to clipboard and report success only after the platform confirms it.
+  static Future<bool> copyToClipboard(
+    String text,
+    BuildContext context, {
+    Future<void> Function(String text)? writer,
+  }) async {
+    try {
+      await (writer ?? _writeClipboard)(text);
+      if (!context.mounted) return true;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+      return true;
+    } catch (_) {
+      if (!context.mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not copy. Clipboard access was denied.'),
+        ),
+      );
+      return false;
+    }
   }
+
+  static Future<void> _writeClipboard(String text) =>
+      Clipboard.setData(ClipboardData(text: text));
 
   // -- helpers --
 

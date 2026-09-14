@@ -5,6 +5,17 @@ const int accountDirectorySchemaVersionV2 = 2;
 
 enum AccountLifecycleRouteIntentV2 { ordinary, accountDeletion }
 
+/// Verified classification of the device-local deletion receipt, made before
+/// route selection. A caller may not collapse a stale or cross-account receipt
+/// into a generic boolean and accidentally enter public status recovery.
+enum AccountLifecycleStatusReceiptStateV2 {
+  absent,
+  exactAcceptanceUnknown,
+  exactAccepted,
+  exactComplete,
+  staleOrMismatched,
+}
+
 final class ActiveMemberDirectoryEntryV2 {
   final String uid;
   final String displayName;
@@ -101,16 +112,59 @@ final class ActiveMemberDirectoryV2 {
   };
 }
 
+abstract final class AccountLifecycleCandidateRoutePathsV2 {
+  static const requestDeletion = '/account/delete';
+  static const deletionStatus = '/account/deletion/status';
+  static const reconcileDeviceWork = '/account/deletion/reconcile-device';
+}
+
 String candidateRouteForAccountLifecycleV2({
   required AuthIncarnationSessionStateV2 state,
   required String requestedLocation,
   AccountLifecycleRouteIntentV2 intent = AccountLifecycleRouteIntentV2.ordinary,
+  AccountLifecycleStatusReceiptStateV2 statusReceiptState =
+      AccountLifecycleStatusReceiptStateV2.absent,
+  bool requiresDeviceReconciliation = false,
 }) {
-  if (requestedLocation == '/delete-account' ||
-      intent == AccountLifecycleRouteIntentV2.accountDeletion ||
-      state == AuthIncarnationSessionStateV2.deleting ||
-      state == AuthIncarnationSessionStateV2.deleted) {
-    return '/delete-account';
+  if (requestedLocation ==
+      AccountLifecycleCandidateRoutePathsV2.deletionStatus) {
+    return AccountLifecycleCandidateRoutePathsV2.deletionStatus;
+  }
+  final hasExactRecoverableStatusReceipt = switch (statusReceiptState) {
+    AccountLifecycleStatusReceiptStateV2.exactAcceptanceUnknown ||
+    AccountLifecycleStatusReceiptStateV2.exactAccepted ||
+    AccountLifecycleStatusReceiptStateV2.exactComplete => true,
+    AccountLifecycleStatusReceiptStateV2.absent ||
+    AccountLifecycleStatusReceiptStateV2.staleOrMismatched => false,
+  };
+  if (hasExactRecoverableStatusReceipt) {
+    return AccountLifecycleCandidateRoutePathsV2.deletionStatus;
+  }
+  if (requestedLocation ==
+      AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork) {
+    return state == AuthIncarnationSessionStateV2.signedOut ||
+            state == AuthIncarnationSessionStateV2.deleted
+        ? '/login'
+        : state == AuthIncarnationSessionStateV2.establishing ||
+              state == AuthIncarnationSessionStateV2.refreshRequired
+        ? '/loading'
+        : AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork;
+  }
+  if (requestedLocation ==
+          AccountLifecycleCandidateRoutePathsV2.requestDeletion ||
+      intent == AccountLifecycleRouteIntentV2.accountDeletion) {
+    if (state == AuthIncarnationSessionStateV2.signedOut ||
+        state == AuthIncarnationSessionStateV2.deleted) {
+      return '/login';
+    }
+    if (state == AuthIncarnationSessionStateV2.establishing ||
+        state == AuthIncarnationSessionStateV2.refreshRequired) {
+      return '/loading';
+    }
+    if (requiresDeviceReconciliation) {
+      return AccountLifecycleCandidateRoutePathsV2.reconcileDeviceWork;
+    }
+    return AccountLifecycleCandidateRoutePathsV2.requestDeletion;
   }
   return switch (state) {
     AuthIncarnationSessionStateV2.signedOut => '/login',
@@ -118,8 +172,14 @@ String candidateRouteForAccountLifecycleV2({
     AuthIncarnationSessionStateV2.refreshRequired => '/loading',
     AuthIncarnationSessionStateV2.ready => requestedLocation,
     AuthIncarnationSessionStateV2.blocked => '/access-blocked',
-    AuthIncarnationSessionStateV2.deleting ||
-    AuthIncarnationSessionStateV2.deleted => '/delete-account',
+    AuthIncarnationSessionStateV2.deleting =>
+      hasExactRecoverableStatusReceipt
+          ? AccountLifecycleCandidateRoutePathsV2.deletionStatus
+          : AccountLifecycleCandidateRoutePathsV2.requestDeletion,
+    AuthIncarnationSessionStateV2.deleted =>
+      hasExactRecoverableStatusReceipt
+          ? AccountLifecycleCandidateRoutePathsV2.deletionStatus
+          : '/login',
   };
 }
 

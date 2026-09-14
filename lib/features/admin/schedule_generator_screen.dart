@@ -1,13 +1,15 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
-import '../../core/constants/firestore_paths.dart';
-import '../../models/event_model.dart';
-import '../../providers/auth_providers.dart';
+import '../../core/time/league_time.dart';
+import '../../core/utils/error_mapper.dart';
+import '../../core/widgets/app_state_message.dart';
+import '../../models/team_model.dart';
 import '../../providers/division_providers.dart';
+import '../../providers/league_workflow_providers.dart';
+import '../../providers/season_providers.dart';
+import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
 
 // ── Round-robin helpers ──────────────────────────────────────────────
@@ -45,6 +47,40 @@ List<(String, String)> generateRoundRobin(List<String> teamIds, int rounds) {
   return matchups;
 }
 
+class SchedulePreviewCapacity {
+  final int requestedGameCount;
+  final int feasibleGameCount;
+
+  const SchedulePreviewCapacity({
+    required this.requestedGameCount,
+    required this.feasibleGameCount,
+  });
+
+  bool get isComplete => feasibleGameCount >= requestedGameCount;
+
+  int get missingGameCount => feasibleGameCount >= requestedGameCount
+      ? 0
+      : requestedGameCount - feasibleGameCount;
+
+  String get blockingMessage =>
+      'Requested $requestedGameCount games, but only $feasibleGameCount fit '
+      'the selected dates and time slots. Add game days or time slots, extend '
+      'the end date, or reduce the number of rounds or teams.';
+}
+
+SchedulePreviewCapacity assessSchedulePreviewCapacity({
+  required int requestedGameCount,
+  required int feasibleGameCount,
+}) {
+  if (requestedGameCount < 0 || feasibleGameCount < 0) {
+    throw ArgumentError('Schedule preview counts must be nonnegative');
+  }
+  return SchedulePreviewCapacity(
+    requestedGameCount: requestedGameCount,
+    feasibleGameCount: feasibleGameCount,
+  );
+}
+
 /// Assigns matchups to date+time slots.
 List<_ScheduledGame> _assignSlots({
   required List<(String, String)> matchups,
@@ -72,12 +108,10 @@ List<_ScheduledGame> _assignSlots({
             awayId: awayId,
             homeName: homeName,
             awayName: awayName,
-            dateTime: DateTime(
-              date.year,
-              date.month,
-              date.day,
-              slot.hour,
-              slot.minute,
+            dateTime: LeagueTime.jamaicaWallClockToUtc(
+              date: date,
+              hour: slot.hour,
+              minute: slot.minute,
             ),
             venue: venue,
           ),
@@ -127,10 +161,15 @@ class _ScheduleGeneratorScreenState
   final _customRoundsController = TextEditingController(
     text: '${AppDefaults.defaultRounds}',
   );
+  String? _customRoundsError;
 
   // Step 3: Dates & Times
-  DateTime _startDate = DateTime.now().add(AppDefaults.scheduleStartOffset);
-  DateTime _endDate = DateTime.now().add(AppDefaults.scheduleEndOffset);
+  DateTime _startDate = LeagueTime.jamaicaDate(
+    DateTime.now(),
+  ).add(AppDefaults.scheduleStartOffset);
+  DateTime _endDate = LeagueTime.jamaicaDate(
+    DateTime.now(),
+  ).add(AppDefaults.scheduleEndOffset);
   final Set<int> _gameDays = Set<int>.from(AppDefaults.defaultGameDays);
   final List<TimeOfDay> _timeSlots = [AppDefaults.defaultGameTime];
 
@@ -139,8 +178,9 @@ class _ScheduleGeneratorScreenState
 
   // Step 5: Preview
   List<_ScheduledGame> _preview = [];
-  bool _isCreating = false;
-  double _createProgress = 0;
+  String? _previewBlockMessage;
+  String? _batchOperationId;
+  bool _savingSchedule = false;
 
   @override
   void dispose() {
@@ -153,7 +193,7 @@ class _ScheduleGeneratorScreenState
 
   int get _gameCount {
     final n = _selectedTeamIds.length;
-    if (n < 2) return 0;
+    if (n < 2 || _rounds < 1) return 0;
     return (n * (n - 1) ~/ 2) * _rounds;
   }
 
@@ -169,8 +209,51 @@ class _ScheduleGeneratorScreenState
 
   // ── generate preview ──
 
-  void _generatePreview() {
+  bool _generatePreview() {
     final teams = ref.read(teamsStreamProvider).valueOrNull ?? [];
+    final seasonId = ref.read(activeSeasonIdProvider).valueOrNull;
+    final activeDivisionIds = ref
+        .read(activeDivisionsProvider)
+        .map((division) => division.id)
+        .toSet();
+    if (seasonId == null ||
+        _divisionId == null ||
+        !activeDivisionIds.contains(_divisionId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Choose an active season and division before previewing.',
+          ),
+        ),
+      );
+      return false;
+    }
+    if (_rounds < 1 || _customRoundsError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid number of rounds.')),
+      );
+      return false;
+    }
+    final eligibleTeamIds = teamsEligibleForSchedule(
+      teams: teams,
+      seasonId: seasonId,
+      divisionId: _divisionId!,
+    ).map((team) => team.id).toSet();
+    if (_selectedTeamIds.length < 2 ||
+        !_selectedTeamIds.every(eligibleTeamIds.contains)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Reload the active season and division teams before previewing.',
+          ),
+        ),
+      );
+      setState(() {
+        _preview = [];
+        _previewBlockMessage = null;
+      });
+      return false;
+    }
     final teamNames = <String, String>{};
     for (final t in teams) {
       teamNames[t.id] = t.name;
@@ -190,84 +273,106 @@ class _ScheduleGeneratorScreenState
           : _venueController.text.trim(),
     );
 
-    setState(() => _preview = scheduled);
-  }
-
-  // ── bulk create ──
-
-  Future<void> _createSchedule() async {
-    final user = ref.read(currentUserProvider).value;
-    final assocId = ref.read(currentAssociationIdProvider);
-    if (user == null || assocId == null) return;
+    final capacity = assessSchedulePreviewCapacity(
+      requestedGameCount: _gameCount,
+      feasibleGameCount: scheduled.length,
+    );
+    if (!capacity.isComplete) {
+      setState(() {
+        _preview = scheduled;
+        _previewBlockMessage = capacity.blockingMessage;
+      });
+      return false;
+    }
 
     setState(() {
-      _isCreating = true;
-      _createProgress = 0;
+      _preview = scheduled;
+      _previewBlockMessage = null;
+      _batchOperationId = ref
+          .read(eventRepositoryProvider)
+          .newScheduleOperationId();
     });
+    return true;
+  }
 
-    try {
-      final db = FirebaseFirestore.instance;
-      final eventsCol = db.collection(FirestorePaths.events(assocId));
-
-      // Firestore batch limit is 500
-      const batchSize = 500;
-      for (var i = 0; i < _preview.length; i += batchSize) {
-        final batch = db.batch();
-        final end = (i + batchSize > _preview.length)
-            ? _preview.length
-            : i + batchSize;
-
-        for (var j = i; j < end; j++) {
-          final g = _preview[j];
-          final event = EventModel(
-            id: '',
-            title: '${g.homeName} vs ${g.awayName}',
-            type: AppDefaults.eventTypeGame,
-            startTime: g.dateTime,
-            endTime: g.dateTime.add(AppDefaults.defaultGameDuration),
-            location: g.venue,
-            divisionId: _divisionId,
-            teamIds: [g.homeId, g.awayId],
-            createdBy: user.id,
-          );
-          batch.set(eventsCol.doc(), event.toFirestore());
-        }
-
-        await batch.commit();
-        setState(() {
-          _createProgress = end / _preview.length;
-        });
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_preview.length} games created successfully!'),
-          ),
-        );
-        context.pop();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isCreating = false);
+  Future<void> _saveSchedule() async {
+    final seasonId = ref.read(activeSeasonIdProvider).valueOrNull;
+    final divisionId = _divisionId;
+    final operationId = _batchOperationId;
+    if (_savingSchedule ||
+        seasonId == null ||
+        divisionId == null ||
+        operationId == null ||
+        _preview.isEmpty ||
+        _preview.length > 25) {
+      return;
     }
+    setState(() => _savingSchedule = true);
+    try {
+      final games = _preview.indexed
+          .map((indexed) {
+            final (index, game) = indexed;
+            return <String, Object?>{
+              'itemKey': 'preview_${index.toString().padLeft(3, '0')}',
+              'seasonId': seasonId,
+              'divisionId': divisionId,
+              'homeTeamId': game.homeId,
+              'awayTeamId': game.awayId,
+              'startTimeUtc': game.dateTime.toUtc().toIso8601String(),
+              'endTimeUtc': game.dateTime
+                  .toUtc()
+                  .add(AppDefaults.defaultGameDuration)
+                  .toIso8601String(),
+              'location': game.venue,
+            };
+          })
+          .toList(growable: false);
+      final receipts = await ref
+          .read(eventRepositoryProvider)
+          .createScheduleBatch(operationId: operationId, games: games);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${receipts.length} games scheduled.')),
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _previewBlockMessage = ErrorMapper.map(error));
+    } finally {
+      if (mounted) setState(() => _savingSchedule = false);
+    }
+  }
+
+  void _setCustomRounds(String value) {
+    final parsed = int.tryParse(value.trim());
+    setState(() {
+      _previewBlockMessage = null;
+      if (parsed == null || parsed < 1 || parsed > 6) {
+        _rounds = 0;
+        _customRoundsError = 'Enter a whole number from 1 to 6.';
+      } else {
+        _rounds = parsed;
+        _customRoundsError = null;
+      }
+    });
   }
 
   // ── date/time pickers ──
 
   Future<void> _pickStartDate() async {
+    final today = LeagueTime.jamaicaDate(DateTime.now());
     final date = await showDatePicker(
       context: context,
       initialDate: _startDate,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(AppDefaults.datePickerMaxFuture),
+      firstDate: today,
+      lastDate: today.add(AppDefaults.datePickerMaxFuture),
     );
-    if (date != null) setState(() => _startDate = date);
+    if (date != null) {
+      setState(() {
+        _startDate = date;
+        _previewBlockMessage = null;
+      });
+    }
   }
 
   Future<void> _pickEndDate() async {
@@ -277,7 +382,12 @@ class _ScheduleGeneratorScreenState
       firstDate: _startDate,
       lastDate: _startDate.add(AppDefaults.datePickerMaxFuture),
     );
-    if (date != null) setState(() => _endDate = date);
+    if (date != null) {
+      setState(() {
+        _endDate = date;
+        _previewBlockMessage = null;
+      });
+    }
   }
 
   Future<void> _addTimeSlot() async {
@@ -286,22 +396,39 @@ class _ScheduleGeneratorScreenState
       initialTime: AppDefaults.altGameTimeSlot,
     );
     if (time != null) {
-      setState(() => _timeSlots.add(time));
+      setState(() {
+        _timeSlots.add(time);
+        _previewBlockMessage = null;
+      });
     }
   }
 
   // ── step navigation ──
 
   void _onStepContinue() {
+    if (_currentStep == 0 && _divisionId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose an active division')),
+      );
+      return;
+    }
     if (_currentStep == 0 && _selectedTeamIds.length < 2) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Select at least 2 teams')));
       return;
     }
+    if (_currentStep == 1 &&
+        (_rounds < 1 ||
+            (_formatLabel == 'custom' && _customRoundsError != null))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a whole number from 1 to 6.')),
+      );
+      return;
+    }
     if (_currentStep == 3) {
       // Moving to preview — generate it
-      _generatePreview();
+      if (!_generatePreview()) return;
     }
     if (_currentStep < 4) {
       setState(() => _currentStep++);
@@ -318,15 +445,19 @@ class _ScheduleGeneratorScreenState
 
   @override
   Widget build(BuildContext context) {
-    final divisionsAsync = ref.watch(divisionsStreamProvider);
+    final seasonAsync = ref.watch(activeSeasonIdProvider);
+    final seasonId = seasonAsync.valueOrNull;
     final teamsAsync = ref.watch(teamsStreamProvider);
-    final divisions = divisionsAsync.valueOrNull ?? [];
+    final divisions = ref.watch(activeDivisionsProvider);
     final allTeams = teamsAsync.valueOrNull ?? [];
 
-    // Filter teams by selected division
-    final filteredTeams = _divisionId == null
-        ? allTeams
-        : allTeams.where((t) => t.divisionId == _divisionId).toList();
+    final filteredTeams = seasonId == null || _divisionId == null
+        ? const <TeamModel>[]
+        : teamsEligibleForSchedule(
+            teams: allTeams,
+            seasonId: seasonId,
+            divisionId: _divisionId!,
+          );
 
     return Scaffold(
       appBar: AppBar(
@@ -365,28 +496,50 @@ class _ScheduleGeneratorScreenState
             content: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DropdownButtonFormField<String?>(
-                  initialValue: _divisionId,
+                if (seasonAsync.isLoading)
+                  const AppLoadingState(
+                    label: 'Loading active season',
+                    compact: true,
+                  )
+                else if (seasonId == null)
+                  const AppStateMessage(
+                    title: 'No active season',
+                    message: 'Activate a season before generating a schedule.',
+                    tone: AppStateTone.error,
+                    compact: true,
+                  ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue:
+                      divisions.any((division) => division.id == _divisionId)
+                      ? _divisionId
+                      : null,
                   decoration: const InputDecoration(labelText: 'Division'),
-                  items: [
-                    const DropdownMenuItem(
-                      value: null,
-                      child: Text('All Divisions'),
-                    ),
-                    ...divisions.map(
-                      (d) => DropdownMenuItem(value: d.id, child: Text(d.name)),
-                    ),
-                  ],
-                  onChanged: (v) {
-                    setState(() {
-                      _divisionId = v;
-                      // Auto-select all teams in division
-                      final divTeams = v == null
-                          ? allTeams
-                          : allTeams.where((t) => t.divisionId == v).toList();
-                      _selectedTeamIds = divTeams.map((t) => t.id).toSet();
-                    });
-                  },
+                  items: divisions
+                      .map(
+                        (division) => DropdownMenuItem(
+                          value: division.id,
+                          child: Text(division.name),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: seasonId == null
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _divisionId = value;
+                            _previewBlockMessage = null;
+                            final divisionTeams = teamsEligibleForSchedule(
+                              teams: allTeams,
+                              seasonId: seasonId,
+                              divisionId: value,
+                            );
+                            _selectedTeamIds = divisionTeams
+                                .map((team) => team.id)
+                                .toSet();
+                          });
+                        },
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -407,6 +560,7 @@ class _ScheduleGeneratorScreenState
                       selected: selected,
                       onSelected: (v) {
                         setState(() {
+                          _previewBlockMessage = null;
                           if (v) {
                             _selectedTeamIds.add(t.id);
                           } else {
@@ -446,17 +600,13 @@ class _ScheduleGeneratorScreenState
                       width: 120,
                       child: TextFormField(
                         controller: _customRoundsController,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Rounds',
                           isDense: true,
+                          errorText: _customRoundsError,
                         ),
                         keyboardType: TextInputType.number,
-                        onChanged: (v) {
-                          final n = int.tryParse(v);
-                          if (n != null && n >= 1 && n <= 6) {
-                            setState(() => _rounds = n);
-                          }
-                        },
+                        onChanged: _setCustomRounds,
                       ),
                     ),
                   ),
@@ -501,7 +651,9 @@ class _ScheduleGeneratorScreenState
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Start Date'),
-                  subtitle: Text(DateFormat('MMM d, yyyy').format(_startDate)),
+                  subtitle: Text(
+                    '${DateFormat('MMM d, yyyy').format(_startDate)} (Jamaica)',
+                  ),
                   trailing: TextButton(
                     onPressed: _pickStartDate,
                     child: const Text('Change'),
@@ -510,7 +662,9 @@ class _ScheduleGeneratorScreenState
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('End Date'),
-                  subtitle: Text(DateFormat('MMM d, yyyy').format(_endDate)),
+                  subtitle: Text(
+                    '${DateFormat('MMM d, yyyy').format(_endDate)} (Jamaica)',
+                  ),
                   trailing: TextButton(
                     onPressed: _pickEndDate,
                     child: const Text('Change'),
@@ -549,7 +703,7 @@ class _ScheduleGeneratorScreenState
                   children: [
                     ..._timeSlots.asMap().entries.map((e) {
                       return Chip(
-                        label: Text(e.value.format(context)),
+                        label: Text('${e.value.format(context)} JA'),
                         onDeleted: _timeSlots.length > 1
                             ? () {
                                 setState(() => _timeSlots.removeAt(e.key));
@@ -588,7 +742,7 @@ class _ScheduleGeneratorScreenState
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          '$_gameCount games → $_availableSlots available slots',
+                          '$_gameCount requested • $_availableSlots feasible slots',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: _availableSlots >= _gameCount
@@ -609,13 +763,27 @@ class _ScheduleGeneratorScreenState
             title: const Text('Venue'),
             isActive: _currentStep >= 3,
             state: _currentStep > 3 ? StepState.complete : StepState.indexed,
-            content: TextFormField(
-              controller: _venueController,
-              decoration: const InputDecoration(
-                labelText: 'Default Venue',
-                hintText: 'e.g. National Indoor Sports Centre',
-                prefixIcon: Icon(Icons.location_on_outlined),
-              ),
+            content: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(
+                  controller: _venueController,
+                  decoration: const InputDecoration(
+                    labelText: 'Default Venue',
+                    hintText: 'e.g. National Indoor Sports Centre',
+                    prefixIcon: Icon(Icons.location_on_outlined),
+                  ),
+                ),
+                if (_previewBlockMessage != null) ...[
+                  const SizedBox(height: 12),
+                  AppStateMessage(
+                    title: 'Schedule preview blocked',
+                    message: _previewBlockMessage!,
+                    tone: AppStateTone.error,
+                    compact: true,
+                  ),
+                ],
+              ],
             ),
           ),
 
@@ -648,8 +816,19 @@ class _ScheduleGeneratorScreenState
           _formatLabel = label;
           if (rounds != null) {
             _rounds = rounds;
+            _customRoundsError = null;
             _customRoundsController.text = rounds.toString();
+          } else {
+            final parsed = int.tryParse(_customRoundsController.text.trim());
+            if (parsed == null || parsed < 1 || parsed > 6) {
+              _rounds = 0;
+              _customRoundsError = 'Enter a whole number from 1 to 6.';
+            } else {
+              _rounds = parsed;
+              _customRoundsError = null;
+            }
           }
+          _previewBlockMessage = null;
         });
       },
     );
@@ -662,6 +841,7 @@ class _ScheduleGeneratorScreenState
       selected: selected,
       onSelected: (v) {
         setState(() {
+          _previewBlockMessage = null;
           if (v) {
             _gameDays.add(weekday);
           } else {
@@ -689,20 +869,29 @@ class _ScheduleGeneratorScreenState
       );
     }
 
+    final seasonId = ref.watch(activeSeasonIdProvider).valueOrNull;
+    final workflow = ref.watch(leagueWorkflowCapabilityProvider).valueOrNull;
+    final serverReady =
+        workflow?.schedulingEnabled == true &&
+        workflow?.activeSeasonId == seasonId;
+    final withinAtomicLimit = _preview.length <= 25;
+    final canCreate =
+        serverReady &&
+        withinAtomicLimit &&
+        _preview.isNotEmpty &&
+        _batchOperationId != null &&
+        !_savingSchedule;
+
     // Group by week
     final grouped = <String, List<_ScheduledGame>>{};
     final weekFmt = DateFormat('MMM d');
     for (final g in _preview) {
+      final civil = LeagueTime.jamaicaCivilFromInstant(g.dateTime);
       // Get Monday of the week
-      final monday = g.dateTime.subtract(
-        Duration(days: g.dateTime.weekday - 1),
-      );
+      final monday = civil.subtract(Duration(days: civil.weekday - 1));
       final key = 'Week of ${weekFmt.format(monday)}';
       grouped.putIfAbsent(key, () => []).add(g);
     }
-
-    final dateFmt = DateFormat('EEE, MMM d');
-    final timeFmt = DateFormat('h:mm a');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -713,7 +902,9 @@ class _ScheduleGeneratorScreenState
         ),
         const SizedBox(height: 4),
         Text(
-          'Scroll to review, then tap Create to save all games.',
+          serverReady
+              ? 'Review the Jamaica schedule below. The server will revalidate the full batch atomically.'
+              : 'Review the Jamaica schedule below. Creation stays closed until the server capability is verified.',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 16),
@@ -745,7 +936,7 @@ class _ScheduleGeneratorScreenState
                     style: const TextStyle(fontSize: 14),
                   ),
                   subtitle: Text(
-                    '${dateFmt.format(g.dateTime)} · ${timeFmt.format(g.dateTime)} · ${g.venue}',
+                    '${LeagueTime.formatJamaicaDate(g.dateTime, pattern: 'EEE, MMM d')} · ${LeagueTime.formatJamaicaTime(g.dateTime)} · ${g.venue}',
                     style: const TextStyle(fontSize: 12),
                   ),
                 );
@@ -757,39 +948,45 @@ class _ScheduleGeneratorScreenState
 
         const SizedBox(height: 16),
 
-        // Create button
-        if (_isCreating) ...[
-          LinearProgressIndicator(value: _createProgress),
-          const SizedBox(height: 8),
-          Center(
-            child: Text(
-              '${(_createProgress * _preview.length).round()} / ${_preview.length}',
-              style: const TextStyle(color: AppColors.textSecondary),
+        AppStateMessage(
+          title: !withinAtomicLimit
+              ? 'Schedule is too large for one atomic save'
+              : serverReady
+              ? 'Protected schedule creation ready'
+              : 'Schedule creation unavailable',
+          message: !withinAtomicLimit
+              ? 'This preview has ${_preview.length} games. The current safe limit is 25, so no partial schedule will be written. Shorten the date range or split the season deliberately.'
+              : serverReady
+              ? 'All games will be created together, or none will be created if any server-side scope or conflict check fails.'
+              : 'A fixed-purpose server operation and direct-write deny rules must both be active before this schedule can be written.',
+          tone: AppStateTone.warning,
+          compact: true,
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: canCreate ? _saveSchedule : null,
+            icon: Icon(
+              serverReady ? Icons.cloud_done_outlined : Icons.lock_outline,
+            ),
+            label: Text(
+              _savingSchedule
+                  ? 'Creating schedule…'
+                  : canCreate
+                  ? 'Create ${_preview.length} Games'
+                  : 'Create ${_preview.length} Games unavailable',
             ),
           ),
-        ] else ...[
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _createSchedule,
-              icon: const Icon(Icons.check),
-              label: Text('Create ${_preview.length} Games'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
-            ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => setState(() => _currentStep = 0),
+            child: const Text('Start Over'),
           ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () => setState(() => _currentStep = 0),
-              child: const Text('Start Over'),
-            ),
-          ),
-        ],
+        ),
       ],
     );
   }

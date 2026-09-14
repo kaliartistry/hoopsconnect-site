@@ -23,3 +23,21 @@ export {
   revokePrivilegedInvite,
   setMemberRole,
 } from "./membership";
+
+// ── Callable-only league operations ───────────────────────────────
+export {
+  getRosterWorkspace,
+  submitRosterChange,
+  reviewRosterProposal,
+  deleteDivisionIfUnreferenced,
+  scheduleGame,
+  createScheduleBatch,
+  mutateScheduledGame,
+} from "./league_operations";
+
+export {
+  seasonPrepare,
+  seasonActivate,
+  seasonArchive,
+  seasonRestore,
+} from "./season_operations";

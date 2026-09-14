@@ -576,6 +576,77 @@ test('Auth-only and malformed legacy membership accounts remain eligible without
   assert.equal(legacyBinding.custodyRequiresAttentionV1, true);
 });
 
+test('unresolved custody follows the real AD04 status progression while personal deletion continues', async () => {
+  const result = await acceptedAccount({
+    uid: 'custody-attention-wire',
+    membershipValue: {
+      legacyRole: 'admin',
+      arbitraryPath: 'memberships/custody-attention-wire',
+    },
+  });
+  const getStatus = () => coordinator.getCandidateAccountDeletionStatusV1({
+    repository: result.repository,
+    request: {schemaVersion: 1, requestId: result.request.requestId,
+      statusSecret: STATUS_SECRET},
+    nowSecV1: NOW + 90,
+  });
+  const binding = result.repository.values.get(records.deletionJobBindingPathV1(
+    result.accepted.internalJobId));
+  assert.equal(binding.custodyRequiresAttentionV1, true);
+  assert.deepEqual({phase: (await getStatus()).phase,
+    messageCode: (await getStatus()).messageCode}, {
+    phase: 'processing', messageCode: 'AD_DELETION_REQUESTED',
+  });
+
+  const tasks = tasksFor(result.repository, result.accepted, result.principal);
+  const auth = new FakeAuthAdapter(result.repository,
+    result.principal.accountGenerationV2);
+  const cleanupAdapters = contract.accountDeletionAdapterIds.map((adapterId) =>
+    fakeCleanupAdapter(result.repository, adapterId));
+  let tick = 2;
+  for (const taskValue of tasks.filter((entry) => entry.kindV1.startsWith('auth'))) {
+    assert.equal((await runTask({repository: result.repository,
+      principal: result.principal, task: taskValue, authAdapter: auth,
+      cleanupAdapters, now: NOW + tick++})).stateV1, 'completed');
+  }
+  const afterAuth = await getStatus();
+  assert.deepEqual({phase: afterAuth.phase, messageCode: afterAuth.messageCode}, {
+    phase: 'accountRemovedCleanupPending',
+    messageCode: 'AD_ACCOUNT_REMOVED_CLEANUP_PENDING',
+  });
+  assert.equal(auth.deleteCalls, 1,
+    'unresolved shared custody must not block personal Auth deletion');
+
+  const appleTask = tasks.find((entry) =>
+    entry.kindV1 === 'appleCredentialDisposition');
+  await runTask({repository: result.repository, principal: result.principal,
+    task: appleTask, authAdapter: auth, cleanupAdapters, now: NOW + tick++});
+  for (const taskValue of tasks.filter((entry) =>
+    entry.kindV1 === 'cleanupAdapter')) {
+    await runTask({repository: result.repository, principal: result.principal,
+      task: taskValue, authAdapter: auth, cleanupAdapters, now: NOW + tick++});
+  }
+  const reconcileTask = tasks.find((entry) =>
+    entry.kindV1 === 'reconcileCompletion');
+  assert.equal((await runTask({repository: result.repository,
+    principal: result.principal, task: reconcileTask, authAdapter: auth,
+    cleanupAdapters, now: NOW + tick++})).stateV1, 'completed');
+
+  const attention = await getStatus();
+  assert.deepEqual({phase: attention.phase,
+    messageCode: attention.messageCode}, {
+    phase: 'attentionRequired', messageCode: 'AD_CLEANUP_ATTENTION_REQUIRED',
+  });
+  const job = result.repository.values.get(records.deletionJobPathV1(
+    result.accepted.internalJobId));
+  assert.equal(job.state, 'needsAttention');
+  assert.equal(job.custodyRecorded, false);
+  assert.equal(job.authorityFenceDurable, true);
+  assert.equal(result.repository.values.get(ad02.accountLifecycleAuthorityPathV2(
+    result.principal)).lifecycleStateV2, 'deleting',
+  'the shared-account lifecycle fence remains active for operator resolution');
+});
+
 test('provider-owned non-opaque UID stays exact and Auth-only deletion works without provisioning', async () => {
   const uid = fixture.providerOwnedUidPath.uid;
   const lifecyclePath = records.candidateAccountLifecycleAuthorityPathV1(scope(uid));

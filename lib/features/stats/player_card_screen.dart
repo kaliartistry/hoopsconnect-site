@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
+import '../../core/time/league_time.dart';
+import '../../models/association_branding_model.dart';
 import '../../models/player_season_stats_model.dart';
-import '../../providers/association_branding_providers.dart';
+import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/stats_providers.dart';
+import '../../services/public_artifact_release_validator.dart';
 
 class PlayerCardScreen extends ConsumerWidget {
   final String playerId;
@@ -209,7 +211,7 @@ class PlayerCardScreen extends ConsumerWidget {
   }
 
   Widget _gameLogRow(BuildContext context, GameLogEntry game) {
-    final dateStr = DateFormat('MMM d').format(game.date);
+    final dateStr = LeagueTime.formatJamaicaDate(game.date, pattern: 'MMM d');
 
     return GestureDetector(
       onTap: () => context.push('/box-score/${game.eventId}'),
@@ -296,18 +298,44 @@ class _PlayerStatsShareButton extends ConsumerWidget {
     if (playerStats == null || playerStats.gamesPlayed == 0) {
       return const SizedBox.shrink();
     }
-    final branding = ref.watch(effectiveAssociationBrandingProvider);
+    final snapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
+    final publicPlayer = snapshot?.playerDetail(playerStats.playerId);
+    final canShare =
+        snapshot != null &&
+        snapshot.canCreatePublishedArtifacts &&
+        snapshot.version.privacyEpoch != null &&
+        publicPlayer != null;
     return IconButton(
       icon: const Icon(Icons.share_outlined),
-      tooltip: 'Share player stats',
-      onPressed: () => showBrandedShareSheet(
-        context: context,
-        branding: branding,
-        payload: BrandedSharePayload.playerStats(
-          stats: playerStats,
-          branding: branding,
-        ),
-      ),
+      tooltip: canShare
+          ? 'Share published player stats'
+          : 'Published player stats are not available to share',
+      onPressed: !canShare
+          ? null
+          : () {
+              final branding =
+                  AssociationBrandingModel.jba(
+                    associationId: snapshot.associationId,
+                  ).copyWith(
+                    leagueName: snapshot.leagueName,
+                    shortName: snapshot.leagueShortName,
+                  );
+              final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
+              showBrandedShareSheet(
+                context: context,
+                branding: branding,
+                payload: BrandedSharePayload.publicPlayer(
+                  snapshot: snapshot,
+                  player: publicPlayer,
+                  branding: branding,
+                ),
+                validateCurrent: () async {
+                  await ref
+                      .read(publicArtifactReleaseValidatorProvider)
+                      .requireCurrent(releaseBinding);
+                },
+              );
+            },
     );
   }
 }

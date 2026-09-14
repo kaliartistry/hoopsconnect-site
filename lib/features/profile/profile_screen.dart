@@ -49,16 +49,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   String _roleLabel(UserModel user) {
-    if (user.isSuperAdmin) return 'Super Admin';
     switch (user.role) {
       case UserRole.admin:
         return 'Admin';
       case UserRole.rep:
         return 'Team Rep';
       case UserRole.media:
+      case UserRole.press:
         return 'Media';
-      default:
-        return user.role.name;
+      case UserRole.statistician:
+        return 'Statistician';
+      case UserRole.fan:
+        return 'Fan';
+      case UserRole.superAdmin:
+        return 'Super Admin';
     }
   }
 
@@ -68,24 +72,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     setState(() => _saving = true);
     try {
-      await ref
-          .read(authRepositoryProvider)
-          .updateUser(user.id, {'displayName': newName});
+      await ref.read(authRepositoryProvider).updateUser(user.id, {
+        'displayName': newName,
+      });
       if (mounted) {
         setState(() {
           _hasEdited = false;
           _saving = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Name updated')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Name updated')));
       }
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update name: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to update name: $e')));
       }
     }
   }
@@ -102,9 +106,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.urgent,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.urgent),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Sign Out'),
           ),
@@ -136,9 +138,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
           final teamName = user.teamId != null
               ? teams
-                  .where((t) => t.id == user.teamId)
-                  .map((t) => t.name)
-                  .firstOrNull
+                    .where((t) => t.id == user.teamId)
+                    .map((t) => t.name)
+                    .firstOrNull
               : null;
 
           return ListView(
@@ -203,8 +205,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
-                      onPressed:
-                          _hasEdited && !_saving ? () => _saveName(user) : null,
+                      onPressed: _hasEdited && !_saving
+                          ? () => _saveName(user)
+                          : null,
                       child: _saving
                           ? const SizedBox(
                               width: 18,
@@ -226,8 +229,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 title: 'Email',
                 child: Row(
                   children: [
-                    const Icon(Icons.email_outlined,
-                        size: 20, color: AppColors.textSecondary),
+                    const Icon(
+                      Icons.email_outlined,
+                      size: 20,
+                      color: AppColors.textSecondary,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -249,8 +255,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   title: 'Team',
                   child: Row(
                     children: [
-                      const Icon(Icons.groups_outlined,
-                          size: 20, color: AppColors.textSecondary),
+                      const Icon(
+                        Icons.groups_outlined,
+                        size: 20,
+                        color: AppColors.textSecondary,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         teamName,
@@ -272,21 +281,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   children: [
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.settings_outlined,
-                          color: AppColors.textSecondary),
+                      leading: const Icon(
+                        Icons.settings_outlined,
+                        color: AppColors.textSecondary,
+                      ),
                       title: const Text('Settings'),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: AppColors.textMuted),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: AppColors.textMuted,
+                      ),
                       onTap: () => context.push('/settings'),
                     ),
                     const Divider(height: 1),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.info_outline,
-                          color: AppColors.textSecondary),
+                      leading: const Icon(
+                        Icons.info_outline,
+                        color: AppColors.textSecondary,
+                      ),
                       title: const Text('About'),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: AppColors.textMuted),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: AppColors.textMuted,
+                      ),
                       onTap: () => context.push('/about'),
                     ),
                   ],

@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../../app/app_version.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../providers/auth_providers.dart';
+import '../../providers/public_league_provider.dart';
 import '../../providers/theme_providers.dart';
-
-const _appVersion = '1.0.3';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -18,12 +19,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _ackReminders = true;
   bool _statReminders = true;
   bool _newPostNotifications = true;
+  bool _favoriteTeamUpdates = true;
+  final Set<String> _favoriteLeagueIds = {};
+  final Set<String> _favoriteTeamIds = {};
   bool _loaded = false;
   bool _saving = false;
 
   @override
   Widget build(BuildContext context) {
     final userAsync = ref.watch(currentUserProvider);
+    final publicSnapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -40,10 +45,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _ackReminders = prefs.ackReminders;
             _statReminders = prefs.statReminders;
             _newPostNotifications = prefs.newPosts;
+            _favoriteTeamUpdates = prefs.favoriteTeamUpdates;
+            _favoriteLeagueIds
+              ..clear()
+              ..addAll(user.favoriteLeagueIds);
+            _favoriteTeamIds
+              ..clear()
+              ..addAll(user.favoriteTeamIds);
             _loaded = true;
           }
 
           final themeMode = ref.watch(themeModeProvider);
+          final version = ref.watch(appVersionInfoProvider);
           final cardColor =
               Theme.of(context).cardTheme.color ?? Theme.of(context).cardColor;
           final borderColor = Theme.of(
@@ -88,6 +101,95 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 24),
 
+              _buildSectionHeader('Favorite Teams'),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  border: Border.all(color: borderColor),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                ),
+                child: publicSnapshot == null
+                    ? const ListTile(
+                        leading: Icon(Icons.favorite_border),
+                        title: Text('Published teams unavailable'),
+                        subtitle: Text(
+                          'Refresh when the public league schedule is available.',
+                        ),
+                      )
+                    : ExpansionTile(
+                        initiallyExpanded: _favoriteTeamIds.isEmpty,
+                        leading: const Icon(Icons.favorite_outline),
+                        title: Text(
+                          _favoriteTeamIds.isEmpty
+                              ? 'Choose teams to follow'
+                              : '${_favoriteTeamIds.length} team${_favoriteTeamIds.length == 1 ? '' : 's'} followed',
+                        ),
+                        subtitle: const Text(
+                          'Your teams stay together across scores and alerts',
+                        ),
+                        children: [
+                          for (final league
+                              in publicSnapshot.availableLeagues) ...[
+                            CheckboxListTile(
+                              value: _favoriteLeagueIds.contains(
+                                league.leagueId,
+                              ),
+                              title: Text(
+                                league.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: const Text('Follow every team'),
+                              onChanged: (selected) => setState(() {
+                                final teamIds = publicSnapshot.teams
+                                    .where(
+                                      (team) => league.divisionIds.contains(
+                                        team.divisionId,
+                                      ),
+                                    )
+                                    .map((team) => team.teamId);
+                                if (selected == true) {
+                                  _favoriteLeagueIds.add(league.leagueId);
+                                  _favoriteTeamIds.addAll(teamIds);
+                                } else {
+                                  _favoriteLeagueIds.remove(league.leagueId);
+                                  _favoriteTeamIds.removeAll(teamIds);
+                                }
+                              }),
+                            ),
+                            for (final team in publicSnapshot.teams.where(
+                              (team) =>
+                                  league.divisionIds.contains(team.divisionId),
+                            ))
+                              CheckboxListTile(
+                                key: Key('favorite-team-${team.teamId}'),
+                                contentPadding: const EdgeInsets.only(
+                                  left: 48,
+                                  right: 16,
+                                ),
+                                value: _favoriteTeamIds.contains(team.teamId),
+                                title: Text(team.name),
+                                subtitle: Text(
+                                  publicSnapshot.divisionName(team.divisionId),
+                                ),
+                                onChanged: (selected) => setState(() {
+                                  if (selected == true) {
+                                    _favoriteTeamIds.add(team.teamId);
+                                  } else {
+                                    _favoriteTeamIds.remove(team.teamId);
+                                    _favoriteLeagueIds.remove(league.leagueId);
+                                  }
+                                }),
+                              ),
+                            const Divider(height: 1),
+                          ],
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 24),
+
               // Notifications section
               _buildSectionHeader('Notifications'),
               const SizedBox(height: 8),
@@ -99,6 +201,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 child: Column(
                   children: [
+                    SwitchListTile(
+                      title: const Text('Favorite Team Updates'),
+                      subtitle: const Text(
+                        'Get final scores and schedule updates for teams you follow',
+                      ),
+                      value: _favoriteTeamUpdates,
+                      activeTrackColor: AppColors.primary,
+                      onChanged: (val) =>
+                          setState(() => _favoriteTeamUpdates = val),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     SwitchListTile(
                       title: const Text('Acknowledgment Reminders'),
                       subtitle: const Text(
@@ -145,6 +258,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                         )
                       : const Text('Save Preferences'),
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              _buildSectionHeader('Account Access'),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  border: Border.all(color: borderColor),
+                  borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                ),
+                child: Column(
+                  children: [
+                    ListTile(
+                      key: const Key('settings-password-recovery'),
+                      leading: const Icon(Icons.password_outlined),
+                      title: const Text('Password and sign-in help'),
+                      subtitle: const Text(
+                        'Reset an email password or choose your Google or Apple sign-in',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push(
+                        Uri(
+                          path: AppRouteContract.passwordRecovery,
+                          queryParameters: {'email': user.email},
+                        ).toString(),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    ListTile(
+                      key: const Key('settings-delete-account'),
+                      leading: const Icon(Icons.person_remove_outlined),
+                      title: const Text('Delete account'),
+                      subtitle: const Text(
+                        'Review consequences and work saved on this device',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push(
+                        AccountLifecycleRoutePaths.requestDeletion,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 32),
@@ -199,12 +355,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       onTap: () => context.push('/legal/privacy'),
                     ),
                     const Divider(height: 1, indent: 16, endIndent: 16),
-                    const ListTile(
-                      leading: Icon(Icons.tag, color: AppColors.textSecondary),
-                      title: Text('Version'),
+                    ListTile(
+                      leading: const Icon(
+                        Icons.tag,
+                        color: AppColors.textSecondary,
+                      ),
+                      title: const Text('Version'),
                       trailing: Text(
-                        _appVersion,
-                        style: TextStyle(color: AppColors.textMuted),
+                        version.when(
+                          data: (value) => value.label,
+                          loading: () => 'Loading…',
+                          error: (_, _) => 'Unavailable',
+                        ),
+                        key: const Key('settings-version'),
+                        style: const TextStyle(color: AppColors.textMuted),
                       ),
                     ),
                   ],
@@ -239,7 +403,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           'ackReminders': _ackReminders,
           'statReminders': _statReminders,
           'newPosts': _newPostNotifications,
+          'favoriteTeamUpdates': _favoriteTeamUpdates,
         },
+        'favoriteLeagueIds': _favoriteLeagueIds.toList(growable: false),
+        'favoriteTeamIds': _favoriteTeamIds.toList(growable: false),
       });
       if (mounted) {
         setState(() => _saving = false);

@@ -50,6 +50,10 @@ class AuthRepository {
     return _auth.signInWithEmailAndPassword(email: email, password: password);
   }
 
+  Future<void> sendPasswordResetEmail(String email) {
+    return _auth.sendPasswordResetEmail(email: email.trim());
+  }
+
   Future<UserCredential> signUp({
     required String email,
     required String password,

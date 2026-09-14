@@ -3,7 +3,10 @@ import '../../core/constants/firestore_paths.dart';
 import '../../models/team_model.dart';
 
 class TeamRepository {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFirestore _db;
+
+  TeamRepository({FirebaseFirestore? firestore})
+    : _db = firestore ?? FirebaseFirestore.instance;
 
   CollectionReference<TeamModel> _teamsRef(String assocId) {
     return _db
@@ -20,8 +23,8 @@ class TeamRepository {
       query = query.where('seasonId', isEqualTo: seasonId);
     }
     return query.snapshots().map(
-          (snap) => snap.docs.map((d) => d.data()).toList(),
-        );
+      (snap) => snap.docs.map((d) => d.data()).toList(),
+    );
   }
 
   Future<TeamModel?> getTeam(String assocId, String teamId) async {
@@ -30,13 +33,17 @@ class TeamRepository {
   }
 
   Stream<TeamModel?> watchTeam(String assocId, String teamId) {
-    return _teamsRef(assocId).doc(teamId).snapshots().map(
-          (snap) => snap.exists ? snap.data() : null,
-        );
+    return _teamsRef(
+      assocId,
+    ).doc(teamId).snapshots().map((snap) => snap.exists ? snap.data() : null);
   }
 
-  Future<void> createTeam(String assocId, TeamModel team) {
-    return _teamsRef(assocId).doc(team.id).set(team);
+  Future<String> createTeam(String assocId, TeamModel team) async {
+    final doc = team.id.isEmpty
+        ? _teamsRef(assocId).doc()
+        : _teamsRef(assocId).doc(team.id);
+    await doc.set(team.copyWith(id: doc.id));
+    return doc.id;
   }
 
   Future<void> updateTeam(
@@ -45,5 +52,19 @@ class TeamRepository {
     Map<String, dynamic> data,
   ) {
     return _db.doc(FirestorePaths.team(assocId, teamId)).update(data);
+  }
+
+  Future<void> updateTeamIdentity({
+    required String assocId,
+    required String teamId,
+    required String name,
+    required String divisionId,
+  }) {
+    return updateTeam(assocId, teamId, {
+      'name': name.trim(),
+      'normalizedName': normalizeTeamName(name),
+      'divisionId': divisionId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 }

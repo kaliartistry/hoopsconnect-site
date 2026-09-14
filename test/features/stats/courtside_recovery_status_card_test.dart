@@ -1,0 +1,374 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hoops_connect/features/stats/widgets/courtside_recovery_status_card.dart';
+import 'package:hoops_connect/models/official_stats/command_contract.dart';
+import 'package:hoops_connect/models/official_stats/domain_contracts.dart';
+import 'package:hoops_connect/models/official_stats/domain_enums.dart';
+import 'package:hoops_connect/services/local_game_journal/courtside_recovery.dart';
+import 'package:hoops_connect/services/local_game_journal/journal_error.dart';
+import 'package:hoops_connect/services/local_game_journal/journal_models.dart';
+
+CourtsideRecoverySnapshot _snapshot({
+  CourtsideRecoveryPhase phase = CourtsideRecoveryPhase.ready,
+  JournalDeliveryState state = JournalDeliveryState.savedOnDevice,
+  bool responseUnknown = false,
+  LocalWorkspaceRecoveryState recoveryState =
+      LocalWorkspaceRecoveryState.active,
+  WorkspaceSubmissionState submissionState =
+      WorkspaceSubmissionState.captureOpen,
+  CommandErrorCode errorCode = CommandErrorCode.assignmentRequired,
+  bool includeOperation = true,
+}) {
+  final revision = LocalCandidateRevisionIdentity(
+    scope: GameScope(
+      associationId: 'jba',
+      competitionId: 'nbl',
+      seasonId: 'season_2026',
+      divisionId: 'division_1',
+      phaseId: 'regular',
+      gameId: 'game_1',
+    ),
+    revisionId: 'revision_1',
+    revisionNumber: 1,
+    revisionHash: List.filled(64, 'a').join(),
+  );
+  final evidence = submissionState == WorkspaceSubmissionState.submitted
+      ? LocalCandidateRevisionSubmissionEvidence.queued(
+          revision: revision,
+          preparationPackageChecksum: List.filled(64, 'b').join(),
+          submittedThroughSequence: 0,
+          submittedThroughHash: List.filled(64, 'c').join(),
+          observedAt: DateTime.utc(2026, 9, 11, 14),
+        ).accepted(
+          acceptedThroughSequence: 0,
+          acceptedJournalHead: 'head_1',
+          acceptedJournalHash: List.filled(64, 'c').join(),
+          observedAt: DateTime.utc(2026, 9, 11, 14, 1),
+        )
+      : null;
+  return CourtsideRecoverySnapshot(
+    phase: phase,
+    operations: includeOperation
+        ? [
+            CourtsideOperationStatus(
+              operationId: 'operation_1',
+              commandId: 'command_1',
+              localSequence: 0,
+              state: state,
+              responseUnknown: responseUnknown,
+              lastErrorCode: state == JournalDeliveryState.needsAttention
+                  ? errorCode.name
+                  : null,
+              pauseReason: state == JournalDeliveryState.needsAttention
+                  ? 'operatorResolutionRequired'
+                  : null,
+            ),
+          ]
+        : const [],
+    captureAvailability: LocalCaptureAvailability.ready,
+    workspaceRecoveryState: recoveryState,
+    workspaceSubmissionState: submissionState,
+    boundRevision: revision,
+    submissionEvidence: evidence,
+    lastFailureCode: null,
+  );
+}
+
+CourtsideRecoverySnapshot _mixedAttentionSnapshot() {
+  final base = _snapshot(
+    phase: CourtsideRecoveryPhase.needsAttention,
+    includeOperation: false,
+  );
+  return CourtsideRecoverySnapshot(
+    phase: CourtsideRecoveryPhase.needsAttention,
+    operations: const [
+      CourtsideOperationStatus(
+        operationId: 'operation_operator',
+        commandId: 'command_operator',
+        localSequence: 0,
+        state: JournalDeliveryState.needsAttention,
+        responseUnknown: false,
+        lastErrorCode: 'assignmentRequired',
+        pauseReason: 'operatorResolutionRequired',
+      ),
+      CourtsideOperationStatus(
+        operationId: 'operation_reauth',
+        commandId: 'command_reauth',
+        localSequence: 1,
+        state: JournalDeliveryState.needsAttention,
+        responseUnknown: false,
+        lastErrorCode: 'unauthenticated',
+        pauseReason: 'authenticationRequired',
+      ),
+    ],
+    captureAvailability: base.captureAvailability,
+    workspaceRecoveryState: base.workspaceRecoveryState,
+    workspaceSubmissionState: base.workspaceSubmissionState,
+    boundRevision: base.boundRevision,
+    submissionEvidence: base.submissionEvidence,
+    lastFailureCode: 'assignmentRequired',
+  );
+}
+
+Widget _app({
+  required CourtsideRecoverySnapshot snapshot,
+  VoidCallback? onRecover,
+  ValueChanged<String>? onRetry,
+  ValueChanged<String>? onReauthenticate,
+  bool includeTextField = false,
+}) => MaterialApp(
+  home: Scaffold(
+    body: Column(
+      children: [
+        if (includeTextField) const TextField(key: ValueKey('stat-note-field')),
+        CourtsideRecoveryStatusCard(
+          snapshot: snapshot,
+          onRecoverForeground: onRecover,
+          onRetryOperation: onRetry,
+          onReauthenticateAndRetryOperation: onReauthenticate,
+        ),
+      ],
+    ),
+  ),
+);
+
+void main() {
+  testWidgets('shows distinct local states and an honest closed-PWA boundary', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          state: JournalDeliveryState.queued,
+          responseUnknown: true,
+        ),
+      ),
+    );
+
+    expect(find.text('Saved on this device'), findsOneWidget);
+    expect(find.text('On device: 0'), findsOneWidget);
+    expect(find.text('Queued: 1'), findsOneWidget);
+    expect(find.text('Sending: 0'), findsOneWidget);
+    expect(find.text('Accepted: 0'), findsOneWidget);
+    expect(find.text('Needs attention: 0'), findsOneWidget);
+    expect(find.textContaining('response unknown'), findsOneWidget);
+    expect(
+      find.textContaining('Closing the web app stops delivery'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          state: JournalDeliveryState.accepted,
+          submissionState: WorkspaceSubmissionState.submitted,
+        ),
+      ),
+    );
+    expect(find.text('Revision delivery accepted'), findsOneWidget);
+    expect(find.textContaining('exact durable receipt'), findsOneWidget);
+  });
+
+  testWidgets('buttons are focus-driven and never fire while typing', (
+    tester,
+  ) async {
+    var recoveries = 0;
+    String? retriedOperation;
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          phase: CourtsideRecoveryPhase.needsAttention,
+          state: JournalDeliveryState.needsAttention,
+          errorCode: CommandErrorCode.transientUnavailable,
+        ),
+        includeTextField: true,
+        onRecover: () => recoveries++,
+        onRetry: (operationId) => retriedOperation = operationId,
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('stat-note-field')));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(recoveries, 0);
+    expect(retriedOperation, isNull);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(recoveries, 1);
+    expect(retriedOperation, isNull);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(retriedOperation, 'operation_1');
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(recoveries, 2);
+  });
+
+  testWidgets('writer conflict preserves work without offering unsafe retry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          phase: CourtsideRecoveryPhase.needsAttention,
+          state: JournalDeliveryState.needsAttention,
+          recoveryState: LocalWorkspaceRecoveryState.conflictBranch,
+        ),
+        onRetry: (_) {},
+      ),
+    );
+
+    expect(find.text('Writer conflict needs attention'), findsOneWidget);
+    expect(find.textContaining('branch is preserved'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'fully pruned accepted and signed-out work never looks capture-ready',
+    (tester) async {
+      await tester.pumpWidget(
+        _app(
+          snapshot: _snapshot(
+            state: JournalDeliveryState.accepted,
+            submissionState: WorkspaceSubmissionState.submitted,
+            includeOperation: false,
+          ),
+        ),
+      );
+      expect(find.text('Revision delivery accepted'), findsOneWidget);
+      expect(find.text('Ready for stat entry'), findsNothing);
+
+      await tester.pumpWidget(
+        _app(
+          snapshot: _snapshot(
+            phase: CourtsideRecoveryPhase.signedOut,
+            includeOperation: false,
+          ),
+        ),
+      );
+      expect(find.text('Saved work stays on this device'), findsOneWidget);
+      expect(find.text('Ready for stat entry'), findsNothing);
+    },
+  );
+
+  testWidgets('retry policy produces distinct actions and honest copy', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          phase: CourtsideRecoveryPhase.needsAttention,
+          state: JournalDeliveryState.needsAttention,
+          errorCode: CommandErrorCode.unauthenticated,
+        ),
+        onRetry: (_) {},
+        onReauthenticate: (_) {},
+      ),
+    );
+    expect(find.text('Sign in again to retry'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('courtside-reauthenticate-operation-operation_1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          phase: CourtsideRecoveryPhase.needsAttention,
+          state: JournalDeliveryState.needsAttention,
+          errorCode: CommandErrorCode.staleRevision,
+        ),
+        onRetry: (_) {},
+      ),
+    );
+    expect(find.text('Game state changed'), findsOneWidget);
+    expect(find.textContaining('will not be resent'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(
+      _app(
+        snapshot: _snapshot(
+          phase: CourtsideRecoveryPhase.needsAttention,
+          state: JournalDeliveryState.needsAttention,
+          errorCode: CommandErrorCode.assignmentRequired,
+        ),
+        onRetry: (_) {},
+      ),
+    );
+    expect(find.text('Operator resolution required'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('courtside-retry-operation-operation_1')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'mixed recovery exposes every disposition and only the safe action',
+    (tester) async {
+      String? reauthenticatedOperation;
+      await tester.pumpWidget(
+        _app(
+          snapshot: _mixedAttentionSnapshot(),
+          onRetry: (_) => fail('operator resolution must not retry directly'),
+          onReauthenticate: (operationId) =>
+              reauthenticatedOperation = operationId,
+        ),
+      );
+
+      expect(find.text('2 saved operations need attention'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('courtside-recovery-operation-operation_operator'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('courtside-recovery-operation-operation_reauth'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Operator resolution required'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Account verification required'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('will not be resent directly'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('courtside-retry-operation-operation_operator'),
+        ),
+        findsNothing,
+      );
+      final reauth = find.byKey(
+        const ValueKey('courtside-reauthenticate-operation-operation_reauth'),
+      );
+      expect(reauth, findsOneWidget);
+      await tester.tap(reauth);
+      expect(reauthenticatedOperation, 'operation_reauth');
+    },
+  );
+}
