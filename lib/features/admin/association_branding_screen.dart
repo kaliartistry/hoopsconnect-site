@@ -159,7 +159,7 @@ class _AssociationBrandingScreenState
       canPop: !_dirty && !_saving,
       onPopInvokedWithResult: _handlePop,
       child: Scaffold(
-        appBar: AppBar(title: const Text('Branding & Sponsor')),
+        appBar: AppBar(title: const Text('Association Brand & Mega Sponsor')),
         body: brandingAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => ErrorDisplay(
@@ -264,13 +264,13 @@ class _AssociationBrandingScreenState
         ],
         _sectionCard(
           context,
-          title: 'League identity',
+          title: 'Association identity',
           description:
-              'This identity leads the app, public pages, and share cards. Sponsor details always remain secondary.',
+              'This identity leads the app and sits above every league. Sponsor details always remain secondary.',
           children: [
             _textField(
               controller: _leagueName,
-              label: 'Full league or association name',
+              label: 'Association name',
               required: true,
             ),
             _textField(
@@ -365,15 +365,15 @@ class _AssociationBrandingScreenState
         const SizedBox(height: 16),
         _sectionCard(
           context,
-          title: 'Title sponsor',
+          title: 'Association mega sponsor',
           description:
-              'Optional sponsor recognition never replaces the league name, colors, or logo.',
+              'This optional sponsor appears across the association. Each league can still carry its own title sponsor.',
           children: [
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Show title sponsor'),
+              title: const Text('Show association mega sponsor'),
               subtitle: const Text(
-                'Display one optional sponsor below the league identity.',
+                'Display one optional sponsor across every league.',
               ),
               value: _sponsorEnabled,
               onChanged: _saving
@@ -718,7 +718,7 @@ class _AssociationBrandingScreenState
       builder: (dialogContext) => AlertDialog(
         title: const Text('Discard branding changes?'),
         content: const Text(
-          'Your unsaved league identity and sponsor edits will be lost.',
+          'Your unsaved association identity and sponsor edits will be lost.',
         ),
         actions: [
           TextButton(
@@ -802,7 +802,10 @@ class _BrandingPreview extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Live league preview', style: theme.textTheme.titleMedium),
+                Text(
+                  'Live association preview',
+                  style: theme.textTheme.titleMedium,
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'This is the primary identity people will see.',
@@ -840,7 +843,7 @@ class _BrandingPreview extends StatelessWidget {
                   const _PreviewStatus(
                     icon: Icons.visibility_off_outlined,
                     message:
-                        'Sponsor is off. The full league identity remains active.',
+                        'Sponsor is off. The association identity remains active.',
                   )
                 else ...[
                   _LogoPreview(

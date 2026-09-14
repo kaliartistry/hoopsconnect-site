@@ -30,7 +30,7 @@ version mismatch when a pin is unavailable.
 The successful markers are:
 
 ```text
-HOOPSCONNECT_QA_FIXTURES_OK users=14 teams=4 players=24 posts=2 publicGames=6 leaderboards=10 callable=true storage=true password=LocalQa-Only-42!
+HOOPSCONNECT_QA_FIXTURES_OK users=14 teams=6 players=36 posts=2 publicGames=9 leaderboards=15 callable=true storage=true password=LocalQa-Only-42!
 HOOPSCONNECT_WEB_BOOT_OK fresh=true update=true newDocument=true staleWorkerRemoved=true
 HOOPSCONNECT_QA_DELIVERY_GUARD_OK codebases=default,public
 ```
@@ -48,7 +48,7 @@ run from being refreshed against a replacement instance.
 Every fixture role and capability set, including the historical `press` alias,
 is loaded directly from `functions/src/authorization_schema_v1.json`. The
 fixture does not maintain a second authorization table. The full dataset has
-four teams across Premier and Development, 24 rostered players (including `0`
+six teams across the NBL, Women’s League, and School Leagues, 36 rostered players (including `0`
 and `00` jersey cases), regulation and overtime finals, submitted, rejected,
 in-progress and scheduled games, one public announcement, one acknowledgment
 post, all/division standings, five leaderboard

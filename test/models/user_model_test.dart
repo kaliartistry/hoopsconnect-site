@@ -11,6 +11,7 @@ void main() {
       expect(prefs.ackReminders, true);
       expect(prefs.statReminders, true);
       expect(prefs.newPosts, true);
+      expect(prefs.favoriteTeamUpdates, true);
     });
 
     test('fromMap with null returns defaults', () {
@@ -18,6 +19,7 @@ void main() {
       expect(prefs.ackReminders, true);
       expect(prefs.statReminders, true);
       expect(prefs.newPosts, true);
+      expect(prefs.favoriteTeamUpdates, true);
     });
 
     test('fromMap parses explicit false values', () {
@@ -25,10 +27,12 @@ void main() {
         'ackReminders': false,
         'statReminders': false,
         'newPosts': false,
+        'favoriteTeamUpdates': false,
       });
       expect(prefs.ackReminders, false);
       expect(prefs.statReminders, false);
       expect(prefs.newPosts, false);
+      expect(prefs.favoriteTeamUpdates, false);
     });
 
     test('fromMap supports legacy newPostNotifications key', () {
@@ -41,6 +45,7 @@ void main() {
       expect(prefs.ackReminders, true);
       expect(prefs.statReminders, true);
       expect(prefs.newPosts, true);
+      expect(prefs.favoriteTeamUpdates, true);
     });
 
     test('toMap round-trips through fromMap', () {
@@ -48,11 +53,13 @@ void main() {
         ackReminders: false,
         statReminders: true,
         newPosts: false,
+        favoriteTeamUpdates: false,
       );
       final restored = NotificationPrefs.fromMap(prefs.toMap());
       expect(restored.ackReminders, false);
       expect(restored.statReminders, true);
       expect(restored.newPosts, false);
+      expect(restored.favoriteTeamUpdates, false);
     });
 
     test('copyWith overrides specified fields', () {

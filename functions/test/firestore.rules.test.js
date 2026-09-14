@@ -394,6 +394,30 @@ test('fan can read self and same-association public data but not other users or 
   await assertFails(getDoc(doc(fan, 'associations/other')));
 });
 
+test('fans can save bounded favorites but cannot change authority fields', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'users/fan-favorites'), {
+      email: 'favorites@example.com',
+      displayName: 'Favorites Fan',
+      associationId: 'jba',
+      role: 'fan',
+      favoriteLeagueIds: [],
+      favoriteTeamIds: [],
+      notificationPrefs: {favoriteTeamUpdates: true},
+    });
+  });
+  const fan = authed('fan-favorites', 'favorites@example.com');
+  await assertSucceeds(updateDoc(doc(fan, 'users/fan-favorites'), {
+    favoriteLeagueIds: ['nbl', 'schools'],
+    favoriteTeamIds: ['team-a', 'team-b'],
+    notificationPrefs: {favoriteTeamUpdates: false},
+  }));
+  await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {
+    favoriteTeamIds: Array.from({length: 51}, (_, index) => `team-${index}`),
+  }));
+  await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {role: 'admin'}));
+});
+
 test('fan query proves public non-ack visibility and internal reads fail', async () => {
   await seed(async (db) => {
     await setDoc(doc(db, 'users/fan-1'), {

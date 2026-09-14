@@ -307,6 +307,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('public-games-calendar')), findsOne);
+      await tester.ensureVisible(
+        find.byKey(const Key('public-game-day-2026-10-15')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('public-game-day-2026-10-15')));
       await tester.pumpAndSettle();
       expect(find.text('October 2026'), findsOneWidget);
@@ -318,6 +322,10 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.ensureVisible(
+        find.byKey(const Key('public-game-day-2026-09-09')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('public-game-day-2026-09-09')));
       await tester.pumpAndSettle();
 
@@ -362,6 +370,64 @@ void main() {
 
     expect(find.byKey(const Key('public-games-calendar-view')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('guest switches leagues and sees league-scoped highlights', (
+    tester,
+  ) async {
+    final games = [
+      ..._snapshot().schedule,
+      PublicGame(
+        gameId: 'schools-final',
+        title: 'School Home vs School Away',
+        startTime: DateTime.utc(2026, 9, 9, 20),
+        divisionId: 'schoolboy-a',
+        homeTeamId: 'school-home',
+        homeTeamName: 'School Home',
+        awayTeamId: 'school-away',
+        awayTeamName: 'School Away',
+        homeScore: 68,
+        awayScore: 64,
+        status: PublicGameStatus.finalResult,
+      ).withComputedResultVersion(),
+    ];
+    await _pump(
+      tester,
+      _snapshot(
+        schedule: games,
+        divisions: const [
+          PublicDivision(divisionId: 'premier', name: 'Premier'),
+          PublicDivision(divisionId: 'schoolboy-a', name: 'Schoolboy A'),
+        ],
+        leagues: const [
+          PublicLeagueDefinition(
+            leagueId: 'nbl',
+            name: 'National Basketball League',
+            shortName: 'NBL',
+            divisionIds: ['premier'],
+          ),
+          PublicLeagueDefinition(
+            leagueId: 'schools',
+            name: 'School Leagues',
+            shortName: 'Schools',
+            divisionIds: ['schoolboy-a'],
+            sponsor: PublicSponsor(
+              enabled: true,
+              name: 'Campus Courts',
+              label: 'Title sponsor',
+            ),
+          ),
+        ],
+      ),
+      size: const Size(1100, 1000),
+    );
+
+    expect(find.text('Home'), findsWidgets);
+    await tester.tap(find.byKey(const Key('public-league-schools')));
+    await tester.pumpAndSettle();
+    expect(find.text('Title sponsor Campus Courts'), findsOneWidget);
+    expect(find.text('School Home'), findsWidgets);
+    expect(find.text('Home'), findsNothing);
   });
 
   testWidgets('fresh public detail URLs resolve and unknown IDs stay public', (
@@ -453,6 +519,8 @@ Future<GoRouter> _pump(
 PublicLeagueSnapshot _snapshot({
   List<PublicGame>? schedule,
   List<PublicLeaderboard>? leaderboards,
+  List<PublicDivision>? divisions,
+  List<PublicLeagueDefinition>? leagues,
 }) => PublicLeagueSnapshot(
   leagueName: 'Jamaica Basketball Association',
   leagueShortName: 'JBA',
@@ -469,7 +537,10 @@ PublicLeagueSnapshot _snapshot({
     privacyEpoch: 7,
     generatedAt: DateTime.utc(2026, 9, 10, 21),
   ),
-  divisions: const [PublicDivision(divisionId: 'premier', name: 'Premier')],
+  divisions:
+      divisions ??
+      const [PublicDivision(divisionId: 'premier', name: 'Premier')],
+  leagues: leagues ?? const [],
   teams: const [
     PublicTeam(teamId: 'home', name: 'Home', divisionId: 'premier'),
     PublicTeam(teamId: 'away', name: 'Away', divisionId: 'premier'),

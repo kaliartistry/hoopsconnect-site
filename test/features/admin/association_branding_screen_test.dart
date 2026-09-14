@@ -16,7 +16,7 @@ void main() {
         expect(find.byKey(const Key('branding-live-preview')), findsOneWidget);
         expect(find.text('Jamaica Basketball Association'), findsWidgets);
         expect(
-          find.text('Sponsor is off. The full league identity remains active.'),
+          find.text('Sponsor is off. The association identity remains active.'),
           findsOneWidget,
         );
         expect(find.text('No league logo added.'), findsOneWidget);
@@ -61,14 +61,11 @@ void main() {
   ) async {
     await _pumpScreen(tester, width: 768, height: 1500);
 
-    await tester.enterText(
-      _field('Full league or association name'),
-      'JBA Pro',
-    );
+    await tester.enterText(_field('Association name'), 'JBA Pro');
     await tester.pump();
-    await tester.ensureVisible(find.text('Show title sponsor'));
+    await tester.ensureVisible(find.text('Show association mega sponsor'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Show title sponsor'));
+    await tester.tap(find.text('Show association mega sponsor'));
     await tester.pump();
     await tester.enterText(_field('Sponsor name'), 'Courtside Co');
     await tester.pump();
@@ -93,9 +90,9 @@ void main() {
       'http://example.com/logo.png',
     );
     await tester.pump();
-    await tester.ensureVisible(find.text('Show title sponsor'));
+    await tester.ensureVisible(find.text('Show association mega sponsor'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Show title sponsor'));
+    await tester.tap(find.text('Show association mega sponsor'));
     await tester.pump();
     await tester.enterText(
       _field('Sponsor logo HTTPS URL'),
@@ -164,10 +161,7 @@ void main() {
     controller.add(AssociationBrandingModel.jba());
     await tester.pump();
 
-    await tester.enterText(
-      _field('Full league or association name'),
-      'My unsaved JBA name',
-    );
+    await tester.enterText(_field('Association name'), 'My unsaved JBA name');
     await tester.pump();
     controller.add(
       AssociationBrandingModel.jba().copyWith(
@@ -177,10 +171,7 @@ void main() {
     await tester.pump();
 
     expect(
-      tester
-          .widget<TextFormField>(_field('Full league or association name'))
-          .controller!
-          .text,
+      tester.widget<TextFormField>(_field('Association name')).controller!.text,
       'My unsaved JBA name',
     );
     expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
@@ -193,10 +184,7 @@ void main() {
     await tester.tap(find.byKey(const Key('use-saved-branding')));
     await tester.pump();
     expect(
-      tester
-          .widget<TextFormField>(_field('Full league or association name'))
-          .controller!
-          .text,
+      tester.widget<TextFormField>(_field('Association name')).controller!.text,
       'Saved somewhere else',
     );
     expect(find.text('All branding changes are saved.'), findsOneWidget);
@@ -224,10 +212,7 @@ void main() {
     stream.add(AssociationBrandingModel.jba());
     await tester.pump();
 
-    await tester.enterText(
-      _field('Full league or association name'),
-      'Jamaica Hoops League',
-    );
+    await tester.enterText(_field('Association name'), 'Jamaica Hoops League');
     await tester.pump();
     await tester.ensureVisible(_saveButton());
     await tester.pumpAndSettle();
@@ -250,79 +235,77 @@ void main() {
     expect(find.text('All branding changes are saved.'), findsOneWidget);
   });
 
-  testWidgets('remote updates cannot replace the draft during an in-flight save', (
-    tester,
-  ) async {
-    final stream = StreamController<AssociationBrandingModel>();
-    final save = Completer<void>();
-    addTearDown(stream.close);
-    await _pumpScreen(
-      tester,
-      width: 768,
-      height: 1500,
-      stream: stream.stream,
-      onSave: (_) => save.future,
-    );
-    stream.add(AssociationBrandingModel.jba());
-    await tester.pump();
+  testWidgets(
+    'remote updates cannot replace the draft during an in-flight save',
+    (tester) async {
+      final stream = StreamController<AssociationBrandingModel>();
+      final save = Completer<void>();
+      addTearDown(stream.close);
+      await _pumpScreen(
+        tester,
+        width: 768,
+        height: 1500,
+        stream: stream.stream,
+        onSave: (_) => save.future,
+      );
+      stream.add(AssociationBrandingModel.jba());
+      await tester.pump();
 
-    await tester.enterText(
-      _field('Full league or association name'),
-      'Locally saving name',
-    );
-    await tester.pump();
-    await tester.ensureVisible(_saveButton());
-    await tester.pumpAndSettle();
-    await tester.tap(_saveButton());
-    await tester.pump();
+      await tester.enterText(_field('Association name'), 'Locally saving name');
+      await tester.pump();
+      await tester.ensureVisible(_saveButton());
+      await tester.pumpAndSettle();
+      await tester.tap(_saveButton());
+      await tester.pump();
 
-    stream.add(
-      AssociationBrandingModel.jba().copyWith(
-        leagueName: 'Saved somewhere else',
-      ),
-    );
-    await tester.pump();
+      stream.add(
+        AssociationBrandingModel.jba().copyWith(
+          leagueName: 'Saved somewhere else',
+        ),
+      );
+      await tester.pump();
 
-    expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
-    expect(tester.widget<FilledButton>(_saveButton()).onPressed, isNull);
-    expect(
-      tester.widget<FilledButton>(
-        find.byKey(const Key('use-saved-branding')),
-      ).onPressed,
-      isNull,
-    );
-    expect(
-      tester.widget<TextButton>(
-        find.byKey(const Key('keep-branding-edits')),
-      ).onPressed,
-      isNull,
-    );
+      expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
+      expect(tester.widget<FilledButton>(_saveButton()).onPressed, isNull);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('use-saved-branding')))
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<TextButton>(find.byKey(const Key('keep-branding-edits')))
+            .onPressed,
+        isNull,
+      );
 
-    save.complete();
-    await tester.pumpAndSettle();
-    expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
-    expect(
-      find.text('Resolve the saved-settings update before saving.'),
-      findsOneWidget,
-    );
-    expect(
-      tester
-          .widget<TextFormField>(_field('Full league or association name'))
-          .controller!
-          .text,
-      'Locally saving name',
-    );
+      save.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Saved settings changed elsewhere'), findsOneWidget);
+      expect(
+        find.text('Resolve the saved-settings update before saving.'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(_field('Association name'))
+            .controller!
+            .text,
+        'Locally saving name',
+      );
 
-    await tester.tap(find.byKey(const Key('use-saved-branding')));
-    await tester.pump();
-    expect(
-      tester
-          .widget<TextFormField>(_field('Full league or association name'))
-          .controller!
-          .text,
-      'Saved somewhere else',
-    );
-  });
+      await tester.tap(find.byKey(const Key('use-saved-branding')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextFormField>(_field('Association name'))
+            .controller!
+            .text,
+        'Saved somewhere else',
+      );
+    },
+  );
 
   testWidgets('save failure maps the error without exposing raw details', (
     tester,
@@ -392,13 +375,13 @@ void main() {
 
     await tester.tap(find.text('Keep editing'));
     await tester.pumpAndSettle();
-    expect(find.text('Branding & Sponsor'), findsOneWidget);
+    expect(find.text('Association Brand & Mega Sponsor'), findsOneWidget);
 
     await tester.pageBack();
     await tester.pumpAndSettle();
     await tester.tap(find.text('Discard changes'));
     await tester.pumpAndSettle();
-    expect(find.text('Branding & Sponsor'), findsNothing);
+    expect(find.text('Association Brand & Mega Sponsor'), findsNothing);
     expect(find.text('Open branding'), findsOneWidget);
   });
 }

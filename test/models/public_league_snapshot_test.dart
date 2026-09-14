@@ -2,6 +2,62 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
 
 void main() {
+  test('maps association branding and nested league division scopes', () {
+    final snapshot = PublicLeagueSnapshot.fromMap({
+      'published': true,
+      'association': {
+        'name': 'Jamaica Basketball Association',
+        'shortName': 'JBA',
+        'sponsor': {
+          'enabled': true,
+          'name': 'Association Sponsor',
+          'label': 'Presented by',
+        },
+      },
+      'league': {'name': 'Jamaica Basketball Association', 'shortName': 'JBA'},
+      'leagues': [
+        {
+          'leagueId': 'schools',
+          'name': 'School Leagues',
+          'shortName': 'Schools',
+          'divisionIds': ['a', 'b', 'girls'],
+          'branding': {
+            'primaryColorHex': '#1565C0',
+            'sponsor': {
+              'enabled': true,
+              'name': 'League Sponsor',
+              'label': 'Title sponsor',
+            },
+          },
+        },
+      ],
+      'seasonId': 'season-1',
+      'generatedAt': '2026-09-10T21:00:00.000Z',
+      'divisions': [
+        {'divisionId': 'a', 'name': 'A Division'},
+        {'divisionId': 'b', 'name': 'B Division'},
+        {'divisionId': 'girls', 'name': 'Girls Division'},
+      ],
+      'teams': [
+        {'teamId': 'team-a', 'name': 'Team A', 'divisionId': 'a'},
+      ],
+      'schedule': const [],
+      'standings': const [],
+      'leaderboards': const [],
+    });
+
+    expect(
+      snapshot.effectiveAssociationBrand.sponsor.name,
+      'Association Sponsor',
+    );
+    expect(snapshot.availableLeagues.single.name, 'School Leagues');
+    expect(snapshot.availableLeagues.single.sponsor.name, 'League Sponsor');
+    expect(
+      snapshot.divisionsForLeague('schools').map((division) => division.name),
+      ['A Division', 'B Division', 'Girls Division'],
+    );
+  });
+
   test('parses the certified public snapshot used by guest mode', () {
     final snapshot = PublicLeagueSnapshot.fromMap({
       'published': true,

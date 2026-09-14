@@ -21,7 +21,7 @@ const pinnedBaseBlobs = Object.freeze({
   // Reviewed callable-only season lifecycle transition; AD05 stays absent.
   'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
   'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
-  'firestore.rules': '74e7c8dc7530ca45e22c2757d7a8dfa5b35da123',
+  'firestore.rules': '366dfece2fe30a5a8e81184f2e3e587311bd0d44',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/domain/account_deletion_contract.ts':
     '39a76af7b7fc2b76389cbf31defa0aab60c6e5fe',

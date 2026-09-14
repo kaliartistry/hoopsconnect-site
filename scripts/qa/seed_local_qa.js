@@ -25,6 +25,8 @@ const TEAM_FIXTURES = Object.freeze([
   {id: 'montego-bay-waves', name: 'Montego Bay Waves', divisionId: 'premier'},
   {id: 'spanish-town-sparks', name: 'Spanish Town Sparks', divisionId: 'development'},
   {id: 'portmore-pelicans', name: 'Portmore Pelicans', divisionId: 'development'},
+  {id: 'kingston-college-braves', name: 'Kingston College Braves', divisionId: 'schoolboy-a'},
+  {id: 'calabar-high-lions', name: 'Calabar High Lions', divisionId: 'schoolboy-a'},
 ]);
 
 const PLAYER_NAMES = Object.freeze({
@@ -32,6 +34,8 @@ const PLAYER_NAMES = Object.freeze({
   'montego-bay-waves': ['Jordan Clarke', 'Akeem Foster', 'Ricardo Hill', 'Noel Morgan', 'Shawn Powell', 'Troy Williams'],
   'spanish-town-sparks': ['Dario Bennett', 'Javon Cole', 'Nico Davis', 'Rohan Ellis', 'Kadeem Francis', 'Marlon Green'],
   'portmore-pelicans': ['Amari Henry', 'Joel Irving', 'Kevin James', 'Leon King', 'Micah Lawson', 'Nathan Miller'],
+  'kingston-college-braves': ['Jaden Adams', 'Kyle Bailey', 'Micah Chambers', 'Nathan Dale', 'Owen Edwards', 'Tyler Forbes'],
+  'calabar-high-lions': ['Aaron Gordon', 'Brian Harris', 'Cory Irving', 'Dylan Johnson', 'Ethan King', 'Fabian Lee'],
 });
 
 function requireSafeEnvironment(env = process.env) {
@@ -153,7 +157,10 @@ function profile(user, role, associationId, teamId) {
       ackReminders: false,
       statReminders: false,
       newPosts: false,
+      favoriteTeamUpdates: true,
     },
+    favoriteLeagueIds: [],
+    favoriteTeamIds: [],
     authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     qaFixtureVersion: QA_FIXTURE_VERSION,
   };
@@ -264,6 +271,8 @@ async function seedLeague(db, admin) {
     {teamId: 'montego-bay-waves', teamName: 'Montego Bay Waves', divisionId: 'premier', rank: 2, rankStatus: 'ranked', wins: 5, losses: 4, pct: 0.556, gb: 2, streak: 'L1', lastTen: '5-4', pointsFor: 705, pointsAgainst: 694},
     {teamId: 'spanish-town-sparks', teamName: 'Spanish Town Sparks', divisionId: 'development', rank: 1, rankStatus: 'ranked', wins: 6, losses: 3, pct: 0.667, gb: 1, streak: 'W1', lastTen: '6-3', pointsFor: 712, pointsAgainst: 681},
     {teamId: 'portmore-pelicans', teamName: 'Portmore Pelicans', divisionId: 'development', rank: 2, rankStatus: 'ranked', wins: 3, losses: 6, pct: 0.333, gb: 4, streak: 'L2', lastTen: '3-6', pointsFor: 649, pointsAgainst: 716},
+    {teamId: 'kingston-college-braves', teamName: 'Kingston College Braves', divisionId: 'schoolboy-a', rank: 1, rankStatus: 'ranked', wins: 5, losses: 1, pct: 0.833, gb: 0, streak: 'W4', lastTen: '5-1', pointsFor: 466, pointsAgainst: 401},
+    {teamId: 'calabar-high-lions', teamName: 'Calabar High Lions', divisionId: 'schoolboy-a', rank: 2, rankStatus: 'ranked', wins: 4, losses: 2, pct: 0.667, gb: 1, streak: 'W1', lastTen: '4-2', pointsFor: 451, pointsAgainst: 423},
   ];
 
   set(`associations/${ASSOCIATION_ID}`, {
@@ -271,6 +280,45 @@ async function seedLeague(db, admin) {
     shortName: 'JBA QA',
     currentSeasonId: seasonId,
     primaryColor: '#2E7D32',
+    brandingV1: {
+      schemaVersion: 1,
+      leagueName: 'Jamaica Basketball Association',
+      shortName: 'Jamaica Basketball',
+      logoUrl: null,
+      primaryColorHex: '#2E7D32',
+      secondaryColorHex: '#1B5E20',
+      accentColorHex: '#F9A825',
+      sponsor: {
+        enabled: true,
+        name: 'Islandwide Sports Partner',
+        label: 'Synthetic association sponsor',
+        logoUrl: null,
+        websiteUrl: null,
+      },
+    },
+    leagueCatalogV1: {
+      schemaVersion: 1,
+      leagues: [
+        {
+          leagueId: 'nbl', name: 'National Basketball League', shortName: 'NBL',
+          description: 'Jamaica national club competition', divisionIds: ['premier'],
+          status: 'active', sortOrder: 0,
+          branding: {schemaVersion: 1, primaryColorHex: '#0B5D3B', secondaryColorHex: '#083D2A', accentColorHex: '#F9A825', sponsor: {enabled: true, name: 'Courtside Mobile', label: 'Synthetic title sponsor'}},
+        },
+        {
+          leagueId: 'womens', name: 'Women’s League', shortName: 'Women’s',
+          description: 'Women’s national competition', divisionIds: ['development'],
+          status: 'active', sortOrder: 1,
+          branding: {schemaVersion: 1, primaryColorHex: '#7B1FA2', secondaryColorHex: '#4A148C', accentColorHex: '#F9A825', sponsor: {enabled: true, name: 'Her Game Jamaica', label: 'Synthetic title sponsor'}},
+        },
+        {
+          leagueId: 'schools', name: 'School Leagues', shortName: 'Schools',
+          description: 'Schoolboy and girls basketball', divisionIds: ['schoolboy-a', 'schoolboy-b', 'schoolboy-c', 'schoolgirls'],
+          status: 'active', sortOrder: 2,
+          branding: {schemaVersion: 1, primaryColorHex: '#1565C0', secondaryColorHex: '#0D47A1', accentColorHex: '#FFB300', sponsor: {enabled: true, name: 'Campus Courts', label: 'Synthetic title sponsor'}},
+        },
+      ],
+    },
     publicLeagueState: 'published',
     publicPrivacyEpoch: 1,
     standingsPolicyLabel:
@@ -292,7 +340,14 @@ async function seedLeague(db, admin) {
       qaFixtureVersion: QA_FIXTURE_VERSION,
     });
   }
-  for (const [id, name] of [['premier', 'Premier Division'], ['development', 'Development Division']]) {
+  for (const [id, name] of [
+    ['premier', 'Premier Division'],
+    ['development', 'Women’s Division'],
+    ['schoolboy-a', 'Schoolboy A Division'],
+    ['schoolboy-b', 'Schoolboy B Division'],
+    ['schoolboy-c', 'Schoolboy C Division'],
+    ['schoolgirls', 'Schoolgirls Division'],
+  ]) {
     set(`associations/${ASSOCIATION_ID}/divisions/${id}`, {
       name, seasonId, qaFixtureVersion: QA_FIXTURE_VERSION,
     });
@@ -406,6 +461,9 @@ async function seedLeague(db, admin) {
     {id: 'qa-changes-requested', home: 'portmore-pelicans', away: 'spanish-town-sparks', divisionId: 'development', start: '2026-09-05T22:00:00.000Z', venue: 'Portmore HEART Academy', statsStatus: 'submitted', status: 'rejected', score: [69, 72], quarters: [[16, 18, 17, 18], [18, 16, 20, 18]]},
     {id: 'qa-in-progress', home: 'kingston-lions', away: 'spanish-town-sparks', divisionId: 'premier', start: '2026-09-10T23:00:00.000Z', venue: 'National Indoor Sports Centre', statsStatus: 'pending', status: 'inProgress', score: [38, 35], quarters: [[19, 19], [17, 18]]},
     {id: 'qa-upcoming-game', home: 'montego-bay-waves', away: 'portmore-pelicans', divisionId: 'premier', start: '2026-10-15T23:00:00.000Z', venue: 'Montego Bay Community Centre', statsStatus: 'pending'},
+    {id: 'qa-women-upcoming', home: 'spanish-town-sparks', away: 'portmore-pelicans', divisionId: 'development', start: '2026-10-17T22:00:00.000Z', venue: 'GC Foster College', statsStatus: 'pending'},
+    {id: 'qa-schools-final', home: 'kingston-college-braves', away: 'calabar-high-lions', divisionId: 'schoolboy-a', start: '2026-08-30T20:00:00.000Z', venue: 'National Arena', statsStatus: 'approved', status: 'approved', score: [68, 64], quarters: [[17, 18, 15, 18], [14, 16, 19, 15]]},
+    {id: 'qa-schools-upcoming', home: 'calabar-high-lions', away: 'kingston-college-braves', divisionId: 'schoolboy-a', start: '2026-10-18T19:00:00.000Z', venue: 'Kingston College Gymnasium', statsStatus: 'pending'},
   ];
   const teamsById = new Map(TEAM_FIXTURES.map((team) => [team.id, team]));
   for (const game of games) {
@@ -462,6 +520,7 @@ async function seedLeague(db, admin) {
     [null, standings],
     ['premier', standings.filter((row) => row.divisionId === 'premier')],
     ['development', standings.filter((row) => row.divisionId === 'development')],
+    ['schoolboy-a', standings.filter((row) => row.divisionId === 'schoolboy-a')],
   ]) {
     set(`associations/${ASSOCIATION_ID}/standings/${seasonId}_${divisionId || 'all'}`, {
       seasonId,
@@ -473,7 +532,7 @@ async function seedLeague(db, admin) {
     });
   }
   const categories = [['ppg', 'ppg'], ['rpg', 'rpg'], ['apg', 'apg'], ['spg', 'spg'], ['bpg', 'bpg']];
-  for (const divisionId of [null, 'premier', 'development']) {
+  for (const divisionId of [null, 'premier', 'development', 'schoolboy-a']) {
     const eligible = divisionId ? players.filter((player) => player.divisionId === divisionId) : players;
     for (const [category, field] of categories) {
       const rankings = [...eligible]
@@ -658,12 +717,12 @@ async function publishQaPublicSnapshot(db) {
   }));
   if (
     snapshot.published !== true ||
-    snapshot.schedule?.length !== 6 ||
-    snapshot.standings?.length !== 4 ||
+    snapshot.schedule?.length !== 9 ||
+    snapshot.standings?.length !== 6 ||
     !snapshot.standings.every(
       (row) => Number.isInteger(row.rank) && row.rankStatus === 'ranked',
     ) ||
-    snapshot.leaderboards?.length !== 10 ||
+    snapshot.leaderboards?.length !== 15 ||
     !snapshot.leaderboards.every((board) => board.rankings?.length > 0)
   ) {
     throw new Error(
@@ -699,7 +758,7 @@ async function main() {
   );
   console.log(
     `HOOPSCONNECT_QA_FIXTURES_OK users=${roles.length * 2} ` +
-    `teams=${TEAM_FIXTURES.length} players=24 posts=2 publicGames=${publicSnapshot.schedule.length} ` +
+    `teams=${TEAM_FIXTURES.length} players=${TEAM_FIXTURES.length * 6} posts=2 publicGames=${publicSnapshot.schedule.length} ` +
     `leaderboards=${publicSnapshot.leaderboards.length} callable=true storage=true ` +
     `password=${PASSWORD}`,
   );

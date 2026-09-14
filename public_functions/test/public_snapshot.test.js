@@ -111,6 +111,33 @@ test('public snapshot exposes one versioned approved result and strips private s
   }
 });
 
+test('association mega sponsor and league-specific branding publish with division scope', () => {
+  const input = fixture();
+  input.association.brandingV1 = {
+    leagueName: 'Jamaica Basketball Association', shortName: 'JBA',
+    primaryColorHex: '#2e7d32',
+    sponsor: {enabled: true, name: 'Association Partner', label: 'Presented by'},
+  };
+  input.association.leagueCatalogV1 = {
+    schemaVersion: 1,
+    leagues: [{
+      leagueId: 'nbl', name: 'National Basketball League', shortName: 'NBL',
+      divisionIds: ['premier'], status: 'active', sortOrder: 0,
+      branding: {
+        primaryColorHex: '#123456',
+        sponsor: {enabled: true, name: 'League Partner', label: 'Title sponsor'},
+      },
+    }],
+  };
+
+  const snapshot = buildPublicSnapshot(input);
+  assert.equal(snapshot.association.sponsor.name, 'Association Partner');
+  assert.equal(snapshot.association.primaryColorHex, '#2E7D32');
+  assert.equal(snapshot.leagues[0].leagueId, 'nbl');
+  assert.deepEqual(snapshot.leagues[0].divisionIds, ['premier']);
+  assert.equal(snapshot.leagues[0].branding.sponsor.name, 'League Partner');
+});
+
 test('unapproved scores are never returned to guests', () => {
   const snapshot = buildPublicSnapshot({
     associationId: 'jba',

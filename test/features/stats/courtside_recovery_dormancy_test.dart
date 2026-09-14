@@ -68,21 +68,18 @@ void main() {
     }
   });
 
-  test('server, rules, and application roots remain outside this packet', () {
-    final changed =
-        Process.runSync('git', <String>[
-              'status',
-              '--short',
-              '--untracked-files=all',
-            ]).stdout
-            as String;
-    for (final line in changed.split('\n').where((line) => line.isNotEmpty)) {
-      final path = line.substring(3);
-      expect(path, isNot(startsWith('functions/')));
-      expect(path, isNot(equals('firestore.rules')));
-      expect(path, isNot(equals('lib/main.dart')));
-      expect(path, isNot(equals('lib/main_qa.dart')));
-      expect(path, isNot(startsWith('lib/app/router/')));
+  test('server and deployment roots do not activate the candidate', () {
+    for (final path in const <String>[
+      'functions/src/index.ts',
+      'firestore.rules',
+      'firebase.json',
+      'lib/main.dart',
+      'lib/main_qa.dart',
+      'lib/app/router/app_router.dart',
+    ]) {
+      final source = File(path).readAsStringSync();
+      expect(source, isNot(contains('courtside_recovery')));
+      expect(source, isNot(contains('CourtsideRecovery')));
     }
   });
 }

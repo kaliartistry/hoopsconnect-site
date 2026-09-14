@@ -8,11 +8,13 @@ class NotificationPrefs {
   final bool ackReminders;
   final bool statReminders;
   final bool newPosts;
+  final bool favoriteTeamUpdates;
 
   const NotificationPrefs({
     this.ackReminders = true,
     this.statReminders = true,
     this.newPosts = true,
+    this.favoriteTeamUpdates = true,
   });
 
   factory NotificationPrefs.fromMap(Map<String, dynamic>? map) {
@@ -24,6 +26,7 @@ class NotificationPrefs {
           (map['newPosts'] as bool?) ??
           (map['newPostNotifications'] as bool?) ??
           true,
+      favoriteTeamUpdates: map['favoriteTeamUpdates'] as bool? ?? true,
     );
   }
 
@@ -31,17 +34,20 @@ class NotificationPrefs {
     'ackReminders': ackReminders,
     'statReminders': statReminders,
     'newPosts': newPosts,
+    'favoriteTeamUpdates': favoriteTeamUpdates,
   };
 
   NotificationPrefs copyWith({
     bool? ackReminders,
     bool? statReminders,
     bool? newPosts,
+    bool? favoriteTeamUpdates,
   }) {
     return NotificationPrefs(
       ackReminders: ackReminders ?? this.ackReminders,
       statReminders: statReminders ?? this.statReminders,
       newPosts: newPosts ?? this.newPosts,
+      favoriteTeamUpdates: favoriteTeamUpdates ?? this.favoriteTeamUpdates,
     );
   }
 }
@@ -57,6 +63,8 @@ class UserModel {
   final String? divisionId;
   final List<String> fcmTokens;
   final NotificationPrefs notificationPrefs;
+  final List<String> favoriteLeagueIds;
+  final List<String> favoriteTeamIds;
   final Set<String> capabilities;
 
   const UserModel({
@@ -70,6 +78,8 @@ class UserModel {
     this.divisionId,
     this.fcmTokens = const [],
     this.notificationPrefs = const NotificationPrefs(),
+    this.favoriteLeagueIds = const [],
+    this.favoriteTeamIds = const [],
     this.capabilities = const {},
   });
 
@@ -88,6 +98,10 @@ class UserModel {
       notificationPrefs: NotificationPrefs.fromMap(
         data['notificationPrefs'] as Map<String, dynamic>?,
       ),
+      favoriteLeagueIds: List<String>.from(
+        data['favoriteLeagueIds'] ?? const [],
+      ),
+      favoriteTeamIds: List<String>.from(data['favoriteTeamIds'] ?? const []),
     );
   }
 
@@ -102,6 +116,8 @@ class UserModel {
       'divisionId': divisionId,
       'fcmTokens': fcmTokens,
       'notificationPrefs': notificationPrefs.toMap(),
+      'favoriteLeagueIds': favoriteLeagueIds,
+      'favoriteTeamIds': favoriteTeamIds,
     };
   }
 
@@ -116,6 +132,8 @@ class UserModel {
     String? divisionId,
     List<String>? fcmTokens,
     NotificationPrefs? notificationPrefs,
+    List<String>? favoriteLeagueIds,
+    List<String>? favoriteTeamIds,
     Set<String>? capabilities,
   }) {
     return UserModel(
@@ -129,6 +147,8 @@ class UserModel {
       divisionId: divisionId ?? this.divisionId,
       fcmTokens: fcmTokens ?? this.fcmTokens,
       notificationPrefs: notificationPrefs ?? this.notificationPrefs,
+      favoriteLeagueIds: favoriteLeagueIds ?? this.favoriteLeagueIds,
+      favoriteTeamIds: favoriteTeamIds ?? this.favoriteTeamIds,
       capabilities: capabilities ?? this.capabilities,
     );
   }

@@ -65,13 +65,25 @@ class _PublicGameDetailScreenState
   PublicArtifactBinding get _artifactBinding =>
       PublicArtifactBinding.game(widget.snapshot, game);
 
-  AssociationBrandingModel get branding =>
-      AssociationBrandingModel.jba(
-        associationId: widget.snapshot.associationId,
-      ).copyWith(
-        leagueName: widget.snapshot.leagueName,
-        shortName: widget.snapshot.leagueShortName,
-      );
+  AssociationBrandingModel get branding {
+    final league = widget.snapshot.leagueForDivision(game.divisionId);
+    return AssociationBrandingModel(
+      associationId: widget.snapshot.associationId,
+      leagueName: league.name,
+      shortName: league.shortName,
+      logoUrl: league.logoUrl,
+      primaryColorHex: league.primaryColorHex,
+      secondaryColorHex: league.secondaryColorHex,
+      accentColorHex: league.accentColorHex,
+      sponsor: SponsorBrandingModel(
+        enabled: league.sponsor.enabled,
+        name: league.sponsor.name,
+        label: league.sponsor.label,
+        logoUrl: league.sponsor.logoUrl,
+        websiteUrl: league.sponsor.websiteUrl,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {

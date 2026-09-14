@@ -99,6 +99,109 @@ function publicationState(association: Record<string, unknown>): PublicState {
   return "unavailable";
 }
 
+function httpsUrl(value: unknown): string | null {
+  const candidate = nullableText(value);
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "https:" && url.hostname.length > 0 ? url.toString() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function colorHex(value: unknown, fallback: string): string {
+  const candidate = nullableText(value);
+  return candidate && /^#[0-9a-fA-F]{6}$/.test(candidate) ?
+    candidate.toUpperCase() : fallback;
+}
+
+function publicSponsor(value: unknown) {
+  const sponsor = objectValue(value);
+  const name = text(sponsor.name);
+  return {
+    enabled: sponsor.enabled === true && name.length > 0,
+    name,
+    label: text(sponsor.label, "Presented by"),
+    logoUrl: httpsUrl(sponsor.logoUrl),
+    websiteUrl: httpsUrl(sponsor.websiteUrl),
+  };
+}
+
+function publicBrand(
+  value: unknown,
+  fallback: {name: string; shortName: string},
+) {
+  const brand = objectValue(value);
+  return {
+    name: text(brand.leagueName ?? brand.name, fallback.name),
+    shortName: text(brand.shortName, fallback.shortName),
+    logoUrl: httpsUrl(brand.logoUrl),
+    primaryColorHex: colorHex(brand.primaryColorHex ?? brand.primaryColor, "#2E7D32"),
+    secondaryColorHex: colorHex(brand.secondaryColorHex ?? brand.secondaryColor, "#1B5E20"),
+    accentColorHex: colorHex(brand.accentColorHex ?? brand.accentColor, "#F9A825"),
+    sponsor: publicSponsor(brand.sponsor),
+  };
+}
+
+function publicLeagueCatalog(
+  association: Record<string, unknown>,
+  divisionIds: Set<string>,
+  fallbackBrand: ReturnType<typeof publicBrand>,
+) {
+  const catalog = objectValue(association.leagueCatalogV1);
+  if (catalog.schemaVersion !== 1) return [];
+  const assignedDivisions = new Set<string>();
+  const leagueIds = new Set<string>();
+  const result = objectList(catalog.leagues)
+    .filter((entry) => text(entry.status, "active") === "active")
+    .sort((a, b) => {
+      const left = nullableInteger(a.sortOrder) ?? 0;
+      const right = nullableInteger(b.sortOrder) ?? 0;
+      return left - right || text(a.name).localeCompare(text(b.name));
+    })
+    .map((entry) => {
+      const leagueId = text(entry.leagueId);
+      if (!leagueId || leagueIds.has(leagueId)) {
+        throw new Error(`Public league catalog has an invalid or duplicate league ID: ${leagueId}.`);
+      }
+      leagueIds.add(leagueId);
+      const leagueDivisionIds = Array.isArray(entry.divisionIds) ?
+        entry.divisionIds.map((value) => text(value)).filter((value) => value.length > 0) : [];
+      for (const divisionId of leagueDivisionIds) {
+        if (!divisionIds.has(divisionId)) {
+          throw new Error(`League ${leagueId} references unknown division ${divisionId}.`);
+        }
+        if (assignedDivisions.has(divisionId)) {
+          throw new Error(`Division ${divisionId} is assigned to more than one public league.`);
+        }
+        assignedDivisions.add(divisionId);
+      }
+      const branding = publicBrand(entry.branding, {
+        name: text(entry.name, "League"),
+        shortName: text(entry.shortName, text(entry.name, "League")),
+      });
+      return {
+        leagueId,
+        name: text(entry.name, branding.name),
+        shortName: text(entry.shortName, branding.shortName),
+        description: nullableText(entry.description),
+        divisionIds: leagueDivisionIds,
+        branding,
+      };
+    });
+  if (result.length > 100) throw new Error("Public league catalog exceeds 100 leagues.");
+  if (result.length > 0) return result;
+  return [{
+    leagueId: "all",
+    name: fallbackBrand.name,
+    shortName: fallbackBrand.shortName,
+    description: null,
+    divisionIds: [...divisionIds],
+    branding: fallbackBrand,
+  }];
+}
+
 function publicPeriodScores(stats: Record<string, unknown> | undefined) {
   const home = objectValue(stats?.homeQuarterScores);
   const away = objectValue(stats?.awayQuarterScores);
@@ -428,6 +531,15 @@ export function buildPublicSnapshot(input: {
     sponsorName: nullableText(input.association.sponsorName),
     sponsorLogoUrl: nullableText(input.association.sponsorLogoUrl),
   };
+  const association = publicBrand(input.association.brandingV1, {
+    name: league.name,
+    shortName: league.shortName,
+  });
+  const publicLeagues = publicLeagueCatalog(
+    input.association,
+    new Set(divisions.map((division) => division.divisionId)),
+    association,
+  );
 
   const publishedContent = state === "published" ? {
     divisions,
@@ -451,6 +563,8 @@ export function buildPublicSnapshot(input: {
     standingsPolicyLabel: nullableText(input.association.standingsPolicyLabel),
     privacyEpoch,
     league,
+    association,
+    leagues: publicLeagues,
     ...publishedContent,
   });
 
@@ -473,6 +587,8 @@ export function buildPublicSnapshot(input: {
       generatedAt,
     },
     league,
+    association,
+    leagues: publicLeagues,
     seasonId,
     season: {seasonId, name: text(input.season?.data.name, seasonId)},
     standingsPolicyLabel: nullableText(input.association.standingsPolicyLabel),

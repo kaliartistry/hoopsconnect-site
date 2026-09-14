@@ -139,6 +139,11 @@ abstract final class AppRouteContract {
       anyCapabilities: {'association.manage'},
     ),
     AppRouteRule(
+      pattern: '/admin/leagues',
+      session: AppRouteSession.activeMembership,
+      anyCapabilities: {'association.manage'},
+    ),
+    AppRouteRule(
       pattern: '/admin/invite-codes',
       session: AppRouteSession.activeMembership,
       anyCapabilities: {'invites.manage'},

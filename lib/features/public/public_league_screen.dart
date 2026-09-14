@@ -96,21 +96,51 @@ class PublicLeagueScreen extends ConsumerWidget {
   }
 }
 
-class _PublishedLeague extends StatelessWidget {
+class _PublishedLeague extends StatefulWidget {
   final PublicLeagueSnapshot snapshot;
 
   const _PublishedLeague({required this.snapshot});
 
   @override
+  State<_PublishedLeague> createState() => _PublishedLeagueState();
+}
+
+class _PublishedLeagueState extends State<_PublishedLeague> {
+  String? _selectedLeagueId;
+
+  PublicLeagueDefinition get _selectedLeague {
+    final available = widget.snapshot.availableLeagues;
+    return widget.snapshot.leagueById(
+      _selectedLeagueId ?? available.first.leagueId,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _PublishedLeague oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_selectedLeagueId != null &&
+        !widget.snapshot.availableLeagues.any(
+          (league) => league.leagueId == _selectedLeagueId,
+        )) {
+      _selectedLeagueId = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) => Column(
     children: [
-      _PublicHeader(snapshot: snapshot),
+      _PublicHeader(snapshot: widget.snapshot),
+      _LeagueSwitcher(
+        snapshot: widget.snapshot,
+        selected: _selectedLeague,
+        onChanged: (leagueId) => setState(() => _selectedLeagueId = leagueId),
+      ),
       Expanded(
         child: TabBarView(
           children: [
-            _GamesTab(snapshot: snapshot),
-            _StandingsTab(snapshot: snapshot),
-            _LeadersTab(snapshot: snapshot),
+            _GamesTab(snapshot: widget.snapshot, league: _selectedLeague),
+            _StandingsTab(snapshot: widget.snapshot, league: _selectedLeague),
+            _LeadersTab(snapshot: widget.snapshot, league: _selectedLeague),
           ],
         ),
       ),
@@ -137,7 +167,7 @@ class _PublicHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                snapshot.leagueName,
+                snapshot.effectiveAssociationBrand.name,
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
@@ -150,6 +180,16 @@ class _PublicHeader extends StatelessWidget {
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
                 ),
               ),
+              if (snapshot.effectiveAssociationBrand.sponsor.isActive) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '${snapshot.effectiveAssociationBrand.sponsor.label} ${snapshot.effectiveAssociationBrand.sponsor.name}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
               const SizedBox(height: 2),
               Text(
                 snapshot.version.isVersioned
@@ -167,12 +207,125 @@ class _PublicHeader extends StatelessWidget {
   );
 }
 
+class _LeagueSwitcher extends StatelessWidget {
+  const _LeagueSwitcher({
+    required this.snapshot,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final PublicLeagueSnapshot snapshot;
+  final PublicLeagueDefinition selected;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = _publicColor(
+      selected.primaryColorHex,
+      theme.colorScheme.primary,
+    );
+    final sponsor = selected.sponsor;
+    return Material(
+      color: theme.colorScheme.surface,
+      elevation: 1,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1120),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final league in snapshot.availableLeagues) ...[
+                        ChoiceChip(
+                          key: Key('public-league-${league.leagueId}'),
+                          selected: league.leagueId == selected.leagueId,
+                          selectedColor: _publicColor(
+                            league.primaryColorHex,
+                            primary,
+                          ).withValues(alpha: 0.18),
+                          avatar: Icon(
+                            Icons.sports_basketball,
+                            size: 17,
+                            color: league.leagueId == selected.leagueId
+                                ? _publicColor(league.primaryColorHex, primary)
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                          label: Text(league.name),
+                          onSelected: (_) => onChanged(league.leagueId),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Container(
+                      width: 5,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: primary,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            selected.name,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            sponsor.isActive
+                                ? '${sponsor.label} ${sponsor.name}'
+                                : '${selected.divisionIds.length} ${selected.divisionIds.length == 1 ? 'division' : 'divisions'}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => context.go('/login'),
+                      icon: const Icon(Icons.notifications_active_outlined),
+                      label: const Text('Follow teams'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Color _publicColor(String value, Color fallback) {
+  final normalized = value.trim();
+  if (!RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(normalized)) return fallback;
+  return Color(int.parse('FF${normalized.substring(1)}', radix: 16));
+}
+
 enum _GamesViewMode { schedule, calendar }
 
 class _GamesTab extends ConsumerStatefulWidget {
   final PublicLeagueSnapshot snapshot;
+  final PublicLeagueDefinition league;
 
-  const _GamesTab({required this.snapshot});
+  const _GamesTab({required this.snapshot, required this.league});
 
   @override
   ConsumerState<_GamesTab> createState() => _GamesTabState();
@@ -188,10 +341,13 @@ class _GamesTabState extends ConsumerState<_GamesTab> {
   @override
   void didUpdateWidget(covariant _GamesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_divisionId != null &&
-        !widget.snapshot.divisions.any(
-          (division) => division.divisionId == _divisionId,
-        )) {
+    if (oldWidget.league.leagueId != widget.league.leagueId) {
+      _divisionId = null;
+      _visibleCount = _pageSize;
+      _selectedDay = null;
+    }
+    final leagueDivisions = widget.league.divisionIds.toSet();
+    if (_divisionId != null && !leagueDivisions.contains(_divisionId)) {
       _divisionId = null;
       _visibleCount = _pageSize;
     }
@@ -202,7 +358,12 @@ class _GamesTabState extends ConsumerState<_GamesTab> {
     final filtered =
         widget.snapshot.schedule
             .where(
-              (game) => _divisionId == null || game.divisionId == _divisionId,
+              (game) =>
+                  widget.snapshot.gameBelongsToLeague(
+                    game,
+                    widget.league.leagueId,
+                  ) &&
+                  (_divisionId == null || game.divisionId == _divisionId),
             )
             .toList(growable: false)
           ..sort((a, b) => b.startTime.compareTo(a.startTime));
@@ -290,14 +451,23 @@ class _GamesTabState extends ConsumerState<_GamesTab> {
               }),
             );
             final division = _DivisionFilter(
-              snapshot: widget.snapshot,
+              divisions: widget.snapshot.divisionsForLeague(
+                widget.league.leagueId,
+              ),
               value: _divisionId,
               padding: EdgeInsets.zero,
               onChanged: (value) => setState(() {
                 _divisionId = value;
                 _visibleCount = _pageSize;
                 final scoped = widget.snapshot.schedule
-                    .where((game) => value == null || game.divisionId == value)
+                    .where(
+                      (game) =>
+                          widget.snapshot.gameBelongsToLeague(
+                            game,
+                            widget.league.leagueId,
+                          ) &&
+                          (value == null || game.divisionId == value),
+                    )
                     .toList(growable: false);
                 _selectedDay = _defaultCalendarDay(scoped);
               }),
@@ -972,8 +1142,9 @@ class _StatusChip extends StatelessWidget {
 
 class _StandingsTab extends StatefulWidget {
   final PublicLeagueSnapshot snapshot;
+  final PublicLeagueDefinition league;
 
-  const _StandingsTab({required this.snapshot});
+  const _StandingsTab({required this.snapshot, required this.league});
 
   @override
   State<_StandingsTab> createState() => _StandingsTabState();
@@ -985,10 +1156,11 @@ class _StandingsTabState extends State<_StandingsTab> {
   @override
   void didUpdateWidget(covariant _StandingsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.league.leagueId != widget.league.leagueId) {
+      _divisionId = null;
+    }
     if (_divisionId != null &&
-        !widget.snapshot.divisions.any(
-          (division) => division.divisionId == _divisionId,
-        )) {
+        !widget.league.divisionIds.contains(_divisionId)) {
       _divisionId = null;
     }
   }
@@ -998,7 +1170,8 @@ class _StandingsTabState extends State<_StandingsTab> {
     final standings = widget.snapshot.standings
         .where(
           (standing) =>
-              _divisionId == null || standing.divisionId == _divisionId,
+              widget.league.divisionIds.contains(standing.divisionId) &&
+              (_divisionId == null || standing.divisionId == _divisionId),
         )
         .toList(growable: false);
     final standingSections = <String?, List<PublicStanding>>{};
@@ -1019,7 +1192,9 @@ class _StandingsTabState extends State<_StandingsTab> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _DivisionFilter(
-                    snapshot: widget.snapshot,
+                    divisions: widget.snapshot.divisionsForLeague(
+                      widget.league.leagueId,
+                    ),
                     value: _divisionId,
                     onChanged: (value) => setState(() => _divisionId = value),
                   ),
@@ -1117,8 +1292,9 @@ class _StandingsTabState extends State<_StandingsTab> {
 
 class _LeadersTab extends StatefulWidget {
   final PublicLeagueSnapshot snapshot;
+  final PublicLeagueDefinition league;
 
-  const _LeadersTab({required this.snapshot});
+  const _LeadersTab({required this.snapshot, required this.league});
 
   @override
   State<_LeadersTab> createState() => _LeadersTabState();
@@ -1131,10 +1307,12 @@ class _LeadersTabState extends State<_LeadersTab> {
   @override
   void didUpdateWidget(covariant _LeadersTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.league.leagueId != widget.league.leagueId) {
+      _divisionId = null;
+      _selected = 0;
+    }
     if (_divisionId != null &&
-        !widget.snapshot.divisions.any(
-          (division) => division.divisionId == _divisionId,
-        )) {
+        !widget.league.divisionIds.contains(_divisionId)) {
       _divisionId = null;
       _selected = 0;
     }
@@ -1144,7 +1322,9 @@ class _LeadersTabState extends State<_LeadersTab> {
   Widget build(BuildContext context) {
     final boards = widget.snapshot.leaderboards
         .where(
-          (board) => _divisionId == null || board.divisionId == _divisionId,
+          (board) =>
+              widget.league.divisionIds.contains(board.divisionId) &&
+              (_divisionId == null || board.divisionId == _divisionId),
         )
         .toList(growable: false);
     final safeIndex = boards.isEmpty
@@ -1163,7 +1343,9 @@ class _LeadersTabState extends State<_LeadersTab> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
                 child: _DivisionFilter(
-                  snapshot: widget.snapshot,
+                  divisions: widget.snapshot.divisionsForLeague(
+                    widget.league.leagueId,
+                  ),
                   value: _divisionId,
                   onChanged: (value) => setState(() {
                     _divisionId = value;
@@ -1272,13 +1454,13 @@ class _LeadersTabState extends State<_LeadersTab> {
 }
 
 class _DivisionFilter extends StatelessWidget {
-  final PublicLeagueSnapshot snapshot;
+  final List<PublicDivision> divisions;
   final String? value;
   final ValueChanged<String?> onChanged;
   final EdgeInsetsGeometry padding;
 
   const _DivisionFilter({
-    required this.snapshot,
+    required this.divisions,
     required this.value,
     required this.onChanged,
     this.padding = const EdgeInsets.only(bottom: 12),
@@ -1286,7 +1468,7 @@ class _DivisionFilter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (snapshot.divisions.isEmpty) return const SizedBox.shrink();
+    if (divisions.length <= 1) return const SizedBox.shrink();
     return Padding(
       padding: padding,
       child: DropdownButtonFormField<String?>(
@@ -1300,7 +1482,7 @@ class _DivisionFilter extends StatelessWidget {
             value: null,
             child: Text('All divisions'),
           ),
-          ...snapshot.divisions.map(
+          ...divisions.map(
             (division) => DropdownMenuItem<String?>(
               value: division.divisionId,
               child: Text(division.name),

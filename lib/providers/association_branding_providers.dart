@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/constants/app_constants.dart';
 import '../models/association_branding_model.dart';
+import '../models/league_catalog_model.dart';
 import '../services/repositories/association_repository.dart';
 import 'auth_providers.dart';
 
@@ -29,3 +30,11 @@ final effectiveAssociationBrandingProvider = Provider<AssociationBrandingModel>(
         );
   },
 );
+
+final leagueCatalogProvider = StreamProvider<LeagueCatalogModel>((ref) {
+  final associationId = ref.watch(currentAssociationIdProvider);
+  if (associationId == null) return Stream.value(const LeagueCatalogModel());
+  return ref
+      .watch(associationRepositoryProvider)
+      .watchLeagueCatalog(associationId);
+});

@@ -660,6 +660,123 @@ class PublicPlayerDetail {
   });
 }
 
+class PublicSponsor {
+  const PublicSponsor({
+    this.enabled = false,
+    this.name = '',
+    this.label = 'Presented by',
+    this.logoUrl,
+    this.websiteUrl,
+  });
+
+  final bool enabled;
+  final String name;
+  final String label;
+  final String? logoUrl;
+  final String? websiteUrl;
+
+  bool get isActive => enabled && name.isNotEmpty;
+
+  factory PublicSponsor.fromMap(Map<String, dynamic> map) => PublicSponsor(
+    enabled: map['enabled'] as bool? ?? false,
+    name: _optionalText(map['name']) ?? '',
+    label: _optionalText(map['label']) ?? 'Presented by',
+    logoUrl: _httpsUrl(map['logoUrl']),
+    websiteUrl: _httpsUrl(map['websiteUrl']),
+  );
+}
+
+class PublicBrandIdentity {
+  const PublicBrandIdentity({
+    required this.name,
+    required this.shortName,
+    this.logoUrl,
+    this.primaryColorHex = '#2E7D32',
+    this.secondaryColorHex = '#1B5E20',
+    this.accentColorHex = '#F9A825',
+    this.sponsor = const PublicSponsor(),
+  });
+
+  final String name;
+  final String shortName;
+  final String? logoUrl;
+  final String primaryColorHex;
+  final String secondaryColorHex;
+  final String accentColorHex;
+  final PublicSponsor sponsor;
+
+  factory PublicBrandIdentity.fromMap(
+    Map<String, dynamic> map, {
+    required String fallbackName,
+    required String fallbackShortName,
+  }) {
+    final sponsor = _optionalMap(map['sponsor']);
+    return PublicBrandIdentity(
+      name: _optionalText(map['name']) ?? fallbackName,
+      shortName: _optionalText(map['shortName']) ?? fallbackShortName,
+      logoUrl: _httpsUrl(map['logoUrl']),
+      primaryColorHex: _colorHex(map['primaryColorHex'] ?? map['primaryColor']),
+      secondaryColorHex: _colorHex(
+        map['secondaryColorHex'] ?? map['secondaryColor'],
+        fallback: '#1B5E20',
+      ),
+      accentColorHex: _colorHex(
+        map['accentColorHex'] ?? map['accentColor'],
+        fallback: '#F9A825',
+      ),
+      sponsor: PublicSponsor.fromMap(sponsor),
+    );
+  }
+}
+
+class PublicLeagueDefinition extends PublicBrandIdentity {
+  const PublicLeagueDefinition({
+    required this.leagueId,
+    required super.name,
+    required super.shortName,
+    this.description,
+    this.divisionIds = const [],
+    super.logoUrl,
+    super.primaryColorHex,
+    super.secondaryColorHex,
+    super.accentColorHex,
+    super.sponsor,
+  });
+
+  final String leagueId;
+  final String? description;
+  final List<String> divisionIds;
+
+  factory PublicLeagueDefinition.fromMap(Map<String, dynamic> map) {
+    final branding = _optionalMap(map['branding']);
+    final identity = PublicBrandIdentity.fromMap(
+      {...branding, 'name': map['name'], 'shortName': map['shortName']},
+      fallbackName: 'League',
+      fallbackShortName: 'League',
+    );
+    final rawDivisions = map['divisionIds'];
+    if (rawDivisions is! List) {
+      throw const FormatException('Public league divisionIds must be a list.');
+    }
+    final divisionIds = rawDivisions
+        .map((value) => _requiredText(value, 'league divisionId'))
+        .toSet()
+        .toList(growable: false);
+    return PublicLeagueDefinition(
+      leagueId: _requiredText(map['leagueId'], 'leagueId'),
+      name: identity.name,
+      shortName: identity.shortName,
+      description: _optionalText(map['description']),
+      divisionIds: List.unmodifiable(divisionIds),
+      logoUrl: identity.logoUrl,
+      primaryColorHex: identity.primaryColorHex,
+      secondaryColorHex: identity.secondaryColorHex,
+      accentColorHex: identity.accentColorHex,
+      sponsor: identity.sponsor,
+    );
+  }
+}
+
 class PublicLeagueSnapshot {
   final String associationId;
   final String leagueName;
@@ -673,6 +790,8 @@ class PublicLeagueSnapshot {
   final List<PublicGame> schedule;
   final List<PublicStanding> standings;
   final List<PublicLeaderboard> leaderboards;
+  final PublicBrandIdentity? associationBrand;
+  final List<PublicLeagueDefinition> leagues;
 
   const PublicLeagueSnapshot({
     this.associationId = 'jba',
@@ -684,6 +803,8 @@ class PublicLeagueSnapshot {
     required this.version,
     this.divisions = const [],
     this.teams = const [],
+    this.associationBrand,
+    this.leagues = const [],
     required this.schedule,
     required this.standings,
     required this.leaderboards,
@@ -696,10 +817,38 @@ class PublicLeagueSnapshot {
       version.isVersioned &&
       version.isCompatibilityArtifactEligible;
 
+  PublicBrandIdentity get effectiveAssociationBrand =>
+      associationBrand ??
+      PublicBrandIdentity(name: leagueName, shortName: leagueShortName);
+
+  List<PublicLeagueDefinition> get availableLeagues {
+    if (leagues.isNotEmpty) return leagues;
+    return [
+      PublicLeagueDefinition(
+        leagueId: 'all',
+        name: leagueName,
+        shortName: leagueShortName,
+        divisionIds: divisions
+            .map((division) => division.divisionId)
+            .toList(growable: false),
+      ),
+    ];
+  }
+
   factory PublicLeagueSnapshot.fromMap(Map<String, dynamic> map) {
     final version = PublicSnapshotVersion.fromMap(map);
     final league = _optionalMap(map['league']);
+    final association = _optionalMap(map['association']);
     final season = _optionalMap(map['season']);
+    final associationIdentity = PublicBrandIdentity.fromMap(
+      association.isEmpty ? league : association,
+      fallbackName: 'Jamaica Basketball Association',
+      fallbackShortName: 'JBA',
+    );
+    final leagues = _mapList(
+      map['leagues'],
+      'leagues',
+    ).map(PublicLeagueDefinition.fromMap).toList(growable: false);
 
     if (!version.isPublished) {
       return PublicLeagueSnapshot(
@@ -707,6 +856,8 @@ class PublicLeagueSnapshot {
         leagueName:
             _optionalText(league['name']) ?? 'Jamaica Basketball Association',
         leagueShortName: _optionalText(league['shortName']) ?? 'JBA',
+        associationBrand: associationIdentity,
+        leagues: List.unmodifiable(leagues),
         seasonId: _optionalText(season['seasonId'] ?? map['seasonId']) ?? '',
         seasonName:
             _optionalText(season['name']) ??
@@ -819,6 +970,8 @@ class PublicLeagueSnapshot {
           _requiredText(season['seasonId'] ?? map['seasonId'], 'seasonId'),
       standingsPolicyLabel: _optionalText(map['standingsPolicyLabel']),
       version: version,
+      associationBrand: associationIdentity,
+      leagues: List.unmodifiable(leagues),
       divisions: List.unmodifiable(
         _mapList(map['divisions'], 'divisions').map(PublicDivision.fromMap),
       ),
@@ -839,6 +992,31 @@ class PublicLeagueSnapshot {
     }
     return 'Division unavailable';
   }
+
+  PublicLeagueDefinition leagueById(String leagueId) =>
+      availableLeagues.firstWhere(
+        (league) => league.leagueId == leagueId,
+        orElse: () => availableLeagues.first,
+      );
+
+  PublicLeagueDefinition leagueForDivision(String? divisionId) {
+    if (divisionId != null) {
+      for (final league in availableLeagues) {
+        if (league.divisionIds.contains(divisionId)) return league;
+      }
+    }
+    return availableLeagues.first;
+  }
+
+  List<PublicDivision> divisionsForLeague(String leagueId) {
+    final allowed = leagueById(leagueId).divisionIds.toSet();
+    return divisions
+        .where((division) => allowed.contains(division.divisionId))
+        .toList(growable: false);
+  }
+
+  bool gameBelongsToLeague(PublicGame game, String leagueId) =>
+      leagueById(leagueId).divisionIds.contains(game.divisionId);
 
   PublicGameDetail? gameDetail(String gameId) {
     for (final game in schedule) {
@@ -943,6 +1121,22 @@ String? _optionalText(Object? value) {
   if (value is! String) throw const FormatException('Expected text value.');
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+String? _httpsUrl(Object? value) {
+  final text = _optionalText(value);
+  if (text == null) return null;
+  final uri = Uri.tryParse(text);
+  return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty
+      ? uri.toString()
+      : null;
+}
+
+String _colorHex(Object? value, {String fallback = '#2E7D32'}) {
+  final text = _optionalText(value);
+  return text != null && RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(text)
+      ? text.toUpperCase()
+      : fallback;
 }
 
 DateTime _dateTime(Object? value, String field) {

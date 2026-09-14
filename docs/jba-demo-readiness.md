@@ -12,8 +12,8 @@ public launch, and live JBA data remain approval-gated.
 - The isolated presentation environment builds the release-mode web app,
   starts Auth, Firestore, Functions, Storage, and Hosting emulators, and refuses
   production credentials.
-- The deterministic fixture contains 14 role accounts, four teams, 24 players,
-  six games across useful lifecycle states, standings, five leaderboard
+- The deterministic fixture contains 14 role accounts, six teams, 36 players,
+  nine games across three leagues and useful lifecycle states, standings, five leaderboard
   categories, a public announcement, and an acknowledgment-required operations
   post.
 - Public visitors immediately see the latest published final score and next

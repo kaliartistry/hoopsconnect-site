@@ -126,8 +126,15 @@ service cloud.firestore {
       allow update: if isAuthenticated()
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'displayName', 'phone', 'fcmTokens', 'notificationPrefs', 'updatedAt'
-        ]);
+          'displayName', 'phone', 'fcmTokens', 'notificationPrefs',
+          'favoriteLeagueIds', 'favoriteTeamIds', 'updatedAt'
+        ])
+        && (!('favoriteLeagueIds' in request.resource.data)
+          || (request.resource.data.favoriteLeagueIds is list
+            && request.resource.data.favoriteLeagueIds.size() <= 100))
+        && (!('favoriteTeamIds' in request.resource.data)
+          || (request.resource.data.favoriteTeamIds is list
+            && request.resource.data.favoriteTeamIds.size() <= 50));
       allow delete: if false;
     }
 

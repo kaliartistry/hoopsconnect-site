@@ -64,18 +64,24 @@ The matching empty-state accounts add `-empty` before `@`, for example
 Start on the login page and point out the signed-out score preview. Select the
 no-sign-in league option, then show:
 
-1. Games: point out the Latest result and Next game cards first. Open the next
-   game to show its public details, return to the date-grouped Schedule, then
-   switch to Calendar and choose a game day. Published regulation and overtime
-   finals plus the upcoming schedule are available. Submitted,
+1. Games: switch between National Basketball League, Women’s League, and School
+   Leagues. Each league has its own colors, title sponsor, divisions, Latest
+   result, and Next game. The association mega sponsor stays visible above all
+   three. Open a game to show its public details, return to the date-grouped
+   Schedule, then switch to Calendar and choose a game day. Published regulation
+   and overtime finals plus the upcoming schedule are available. Submitted,
    changes-requested, and in-progress states stay inside the signed-in
    operations views.
 2. Game details: quarter scoring, box score, source/version label, and sharing.
-3. Standings: Premier and Development are grouped separately so ranks restart
-   clearly inside each division.
+3. Standings: each league shows only its own divisions. School Leagues can hold
+   Schoolboy A, B, C, and Schoolgirls without flattening them into separate
+   top-level leagues.
 4. Leaders: switch PTS, REB, AST, STL, and BLK, then open a player.
 5. Privacy boundary: the player page explicitly uses only cleared public fields
    and exposes no account, contact, school, or guardian data.
+6. Fan reason to sign in: select Follow teams. Scores remain public. After a fan
+   signs in, Settings lets them follow individual teams or every team in a league
+   and opt into final-score alerts.
 
 ### 2. League operations
 
@@ -83,15 +89,22 @@ Sign in as `superadmin@hoopsconnect.test`.
 
 1. Board: show the pinned public welcome post and the urgent internal
    game-day operations check-in.
-2. Admin: show the active synthetic season, four teams, two divisions, games
+2. Admin: show the active synthetic season, six teams, six divisions, games
    needing review/stats, and the acknowledgment tracker.
 3. Open the acknowledgment tracker. The expected recipient is the assigned
    Kingston Lions representative and the UI displays the team name, never its
    internal ID.
-4. Briefly show Teams & Rosters, User Management, Divisions / Leagues, Game
-   Schedule, Branding & Sponsor, and role preview. Do not save presentation-time
-   changes unless the walkthrough specifically needs them. Restarting the runner
-   restores the exact seed.
+4. Open Association Brand & Mega Sponsor, then Leagues & Sponsors. The first
+   controls identity and sponsor recognition across the whole association. The
+   second gives a three-step workflow to create divisions, add a league, then
+   assign its divisions, color, and own title sponsor. Show that a division
+   already assigned elsewhere is clearly unavailable. Leagues can be removed
+   without deleting their divisions, teams, games, or scores. The catalog is
+   bounded at 100 leagues per association, rather than a fixed set of
+   hard-coded competitions.
+5. Briefly show Teams & Rosters, User Management, Divisions, Game Schedule, and
+   role preview. Do not save presentation-time changes unless the walkthrough
+   specifically needs them. Restarting the runner restores the exact seed.
 
 ### 3. Assigned work
 
@@ -115,6 +128,13 @@ Safe description:
 > demonstrates the public league experience and the role-based operations app
 > without touching production. Build 13 was previously uploaded to the private
 > iOS and Android test tracks, but the app has not been publicly launched.
+
+The sponsor names in the local presentation are deliberately synthetic. The
+three named leagues are also presentation fixtures, not product defaults. An
+administrator creates the association's actual leagues and may remove or rename
+the fixture examples. The
+favorite-team final-score delivery path is implemented and emulator-tested, but
+no real fan push is sent until the separately approved production deployment.
 
 Do not say that production Hosting, website integration, public store release,
 or every physical-device path is live. The official-stat v2, courtside recovery,

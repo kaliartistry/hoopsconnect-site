@@ -8,6 +8,7 @@ import * as admin from "firebase-admin";
 import {capabilities} from "./authorization";
 import {
   loadAuthorizedRecipients,
+  loadFavoriteTeamRecipients,
   loadTeamAcknowledgmentRecipients,
 } from "./notification_authorization";
 
@@ -410,10 +411,39 @@ interface NotificationPayload {
   data?: Record<string, string>;
 }
 
+export async function notifyFavoriteTeamFans(input: {
+  db: admin.firestore.Firestore;
+  associationId: string;
+  gameId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore: number;
+  awayScore: number;
+}): Promise<number> {
+  const recipients = await loadFavoriteTeamRecipients(
+    input.db,
+    input.associationId,
+    [input.homeTeamId, input.awayTeamId],
+  );
+  const tokens = recipients.flatMap((recipient) => recipient.fcmTokens);
+  await sendMulticast(tokens, {
+    title: `Final: ${input.homeTeamName} ${input.homeScore}, ${input.awayTeamName} ${input.awayScore}`,
+    body: "The final score is ready. Open HoopsConnect for the game details.",
+    data: {
+      type: "favorite_team_final",
+      assocId: input.associationId,
+      gameId: input.gameId,
+    },
+  });
+  return recipients.length;
+}
+
 /**
  * Send multicast FCM message, handling token cleanup for invalid tokens.
  */
-async function sendMulticast(
+export async function sendMulticast(
   tokens: string[],
   payload: NotificationPayload
 ): Promise<void> {

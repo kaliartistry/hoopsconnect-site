@@ -124,9 +124,16 @@ class AdminPanelScreen extends ConsumerWidget {
       if (canManageAssociation)
         _AdminMenuItem(
           icon: Icons.palette_outlined,
-          title: 'Branding & Sponsor',
-          subtitle: 'League identity and title sponsor',
+          title: 'Association Brand & Mega Sponsor',
+          subtitle: 'Branding shown across every league',
           onTap: () => context.push('/admin/branding'),
+        ),
+      if (canManageAssociation)
+        _AdminMenuItem(
+          icon: Icons.account_tree_outlined,
+          title: 'Leagues & Sponsors',
+          subtitle: 'League brands, divisions, and title sponsors',
+          onTap: () => context.push('/admin/leagues'),
         ),
       if (displayAllows('teams.manage'))
         _AdminMenuItem(
@@ -145,8 +152,8 @@ class AdminPanelScreen extends ConsumerWidget {
       if (displayAllows('association.manage'))
         _AdminMenuItem(
           icon: Icons.category,
-          title: 'Divisions / Leagues',
-          subtitle: 'Manage divisions',
+          title: 'Divisions',
+          subtitle: 'Manage competition divisions',
           onTap: () => context.push('/admin/divisions'),
         ),
       if (displayAllows('invites.manage'))

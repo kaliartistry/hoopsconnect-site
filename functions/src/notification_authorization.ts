@@ -21,6 +21,54 @@ interface RecipientOptions {
   preference?: "ackReminders" | "statReminders" | "newPosts";
 }
 
+export async function loadFavoriteTeamRecipients(
+  db: admin.firestore.Firestore,
+  associationId: string,
+  teamIds: readonly string[],
+): Promise<AuthorizedRecipient[]> {
+  const followedTeams = new Set(teamIds.filter((teamId) => teamId.length > 0));
+  if (followedTeams.size === 0) return [];
+  const memberships = await db
+    .collection("memberships")
+    .where("associationId", "==", associationId)
+    .get();
+  const active = memberships.docs.filter((doc) => {
+    const data = doc.data();
+    return data.authorizationSchemaVersion === AUTHORIZATION_SCHEMA_VERSION &&
+      data.status === "active";
+  });
+  if (active.length === 0) return [];
+  const profiles = await db.getAll(...active.map((doc) => db.doc(`users/${doc.id}`)));
+  const result: AuthorizedRecipient[] = [];
+  for (let index = 0; index < active.length; index += 1) {
+    const profile = profiles[index];
+    const user = profile.data() ?? {};
+    const favorites = Array.isArray(user.favoriteTeamIds) ?
+      user.favoriteTeamIds.filter((value): value is string => typeof value === "string") : [];
+    const prefs = user.notificationPrefs && typeof user.notificationPrefs === "object" ?
+      user.notificationPrefs as Record<string, unknown> : {};
+    if (!profile.exists ||
+      user.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION ||
+      user.associationId !== associationId ||
+      typeof user.displayName !== "string" ||
+      prefs.favoriteTeamUpdates === false ||
+      !favorites.some((teamId) => followedTeams.has(teamId))) {
+      continue;
+    }
+    result.push({
+      uid: active[index].id,
+      displayName: user.displayName,
+      teamId: null,
+      divisionId: null,
+      fcmTokens: Array.isArray(user.fcmTokens) ?
+        user.fcmTokens.filter((token): token is string =>
+          typeof token === "string" && token.length > 0) : [],
+      notificationPrefs: prefs,
+    });
+  }
+  return result;
+}
+
 /**
  * Resolve notification recipients from server-owned membership authority.
  * The user document is joined only for presentation and delivery data.

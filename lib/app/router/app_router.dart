@@ -31,6 +31,7 @@ import '../../features/admin/schedule_hub_screen.dart';
 import '../../features/admin/schedule_generator_screen.dart';
 import '../../features/admin/invite_code_management_screen.dart';
 import '../../features/admin/association_branding_screen.dart';
+import '../../features/admin/league_management_screen.dart';
 import '../../features/board/edit_post_screen.dart';
 import '../../features/ack/ack_tracker_screen.dart';
 import '../../features/ack/ack_detail_screen.dart';
@@ -540,6 +541,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/branding',
         builder: (context, state) => const AssociationBrandingScreen(),
+      ),
+      GoRoute(
+        path: '/admin/leagues',
+        builder: (context, state) => const LeagueManagementScreen(),
       ),
 
       // Press sub-screens (pushed on top, no bottom nav)
