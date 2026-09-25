@@ -10,6 +10,8 @@ import '../providers/connectivity_providers.dart';
 import '../providers/auth_providers.dart';
 import '../providers/division_providers.dart';
 import '../providers/role_preview_provider.dart';
+import '../providers/team_providers.dart';
+import '../features/notifications/notifications_screen.dart';
 import 'router/app_route_contract.dart';
 
 /// Represents a tab entry with its branch index, icons, and label.
@@ -201,7 +203,16 @@ class AppShell extends ConsumerWidget {
                         OfflineBanner(isOffline: !isOnline),
                         if (isPreviewActive)
                           RolePreviewBanner(role: previewRole),
-                        if (showLeagueScope) const _LeagueScopeBar(),
+                        if (actualUser?.isRep == true &&
+                            actualUser?.teamId != null)
+                          _MyTeamLink(teamId: actualUser!.teamId!),
+                        if (showLeagueScope)
+                          const _LeagueScopeBar()
+                        else
+                          const Align(
+                            alignment: Alignment.centerRight,
+                            child: NotificationBell(),
+                          ),
                         const SponsorBanner(),
                       ],
                     ),
@@ -232,7 +243,15 @@ class AppShell extends ConsumerWidget {
               children: [
                 OfflineBanner(isOffline: !isOnline),
                 if (isPreviewActive) RolePreviewBanner(role: previewRole),
-                if (showLeagueScope) const _LeagueScopeBar(),
+                if (actualUser?.isRep == true && actualUser?.teamId != null)
+                  _MyTeamLink(teamId: actualUser!.teamId!),
+                if (showLeagueScope)
+                  const _LeagueScopeBar()
+                else
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: NotificationBell(),
+                  ),
                 const SponsorBanner(),
               ],
             ),
@@ -269,6 +288,34 @@ class AppShell extends ConsumerWidget {
   }
 }
 
+class _MyTeamLink extends ConsumerWidget {
+  const _MyTeamLink({required this.teamId});
+
+  final String teamId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final teamName = ref
+        .watch(teamsStreamProvider)
+        .valueOrNull
+        ?.where((team) => team.id == teamId)
+        .map((team) => team.name)
+        .firstOrNull;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: ActionChip(
+          key: const Key('my-team-link'),
+          avatar: const Icon(Icons.groups_outlined, size: 18),
+          label: Text(teamName == null ? 'My Team' : 'My Team: $teamName'),
+          onPressed: () => context.push('/team/${Uri.encodeComponent(teamId)}'),
+        ),
+      ),
+    );
+  }
+}
+
 class _LeagueScopeBar extends ConsumerWidget {
   const _LeagueScopeBar();
 
@@ -279,7 +326,12 @@ class _LeagueScopeBar extends ConsumerWidget {
     final selectedDivisionId = ref.watch(selectedDivisionIdProvider);
     final selectedDivision = ref.watch(selectedDivisionProvider);
 
-    if (divisions.isEmpty) return const SizedBox.shrink();
+    if (divisions.isEmpty) {
+      return const Align(
+        alignment: Alignment.centerRight,
+        child: NotificationBell(),
+      );
+    }
 
     final accentColor = AppColors.divisionColor(selectedDivisionId);
 
@@ -362,6 +414,7 @@ class _LeagueScopeBar extends ConsumerWidget {
                 child: const Text('All'),
               ),
             ],
+            const NotificationBell(),
           ],
         ),
       ),

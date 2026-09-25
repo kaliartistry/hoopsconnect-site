@@ -65,6 +65,7 @@ class UserModel {
   final NotificationPrefs notificationPrefs;
   final List<String> favoriteLeagueIds;
   final List<String> favoriteTeamIds;
+  final List<String> favoritePlayerIds;
   final Set<String> capabilities;
 
   const UserModel({
@@ -80,6 +81,7 @@ class UserModel {
     this.notificationPrefs = const NotificationPrefs(),
     this.favoriteLeagueIds = const [],
     this.favoriteTeamIds = const [],
+    this.favoritePlayerIds = const [],
     this.capabilities = const {},
   });
 
@@ -102,6 +104,9 @@ class UserModel {
         data['favoriteLeagueIds'] ?? const [],
       ),
       favoriteTeamIds: List<String>.from(data['favoriteTeamIds'] ?? const []),
+      favoritePlayerIds: List<String>.from(
+        data['favoritePlayerIds'] ?? const [],
+      ),
     );
   }
 
@@ -118,6 +123,7 @@ class UserModel {
       'notificationPrefs': notificationPrefs.toMap(),
       'favoriteLeagueIds': favoriteLeagueIds,
       'favoriteTeamIds': favoriteTeamIds,
+      'favoritePlayerIds': favoritePlayerIds,
     };
   }
 
@@ -134,6 +140,7 @@ class UserModel {
     NotificationPrefs? notificationPrefs,
     List<String>? favoriteLeagueIds,
     List<String>? favoriteTeamIds,
+    List<String>? favoritePlayerIds,
     Set<String>? capabilities,
   }) {
     return UserModel(
@@ -149,6 +156,7 @@ class UserModel {
       notificationPrefs: notificationPrefs ?? this.notificationPrefs,
       favoriteLeagueIds: favoriteLeagueIds ?? this.favoriteLeagueIds,
       favoriteTeamIds: favoriteTeamIds ?? this.favoriteTeamIds,
+      favoritePlayerIds: favoritePlayerIds ?? this.favoritePlayerIds,
       capabilities: capabilities ?? this.capabilities,
     );
   }

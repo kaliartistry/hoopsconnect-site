@@ -25,9 +25,11 @@ export async function loadFavoriteTeamRecipients(
   db: admin.firestore.Firestore,
   associationId: string,
   teamIds: readonly string[],
+  leagueIds: readonly string[] = [],
 ): Promise<AuthorizedRecipient[]> {
   const followedTeams = new Set(teamIds.filter((teamId) => teamId.length > 0));
-  if (followedTeams.size === 0) return [];
+  const followedLeagues = new Set(leagueIds.filter((leagueId) => leagueId.length > 0));
+  if (followedTeams.size === 0 && followedLeagues.size === 0) return [];
   const memberships = await db
     .collection("memberships")
     .where("associationId", "==", associationId)
@@ -45,14 +47,16 @@ export async function loadFavoriteTeamRecipients(
     const user = profile.data() ?? {};
     const favorites = Array.isArray(user.favoriteTeamIds) ?
       user.favoriteTeamIds.filter((value): value is string => typeof value === "string") : [];
+    const favoriteLeagues = Array.isArray(user.favoriteLeagueIds) ?
+      user.favoriteLeagueIds.filter((value): value is string => typeof value === "string") : [];
     const prefs = user.notificationPrefs && typeof user.notificationPrefs === "object" ?
       user.notificationPrefs as Record<string, unknown> : {};
     if (!profile.exists ||
       user.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION ||
       user.associationId !== associationId ||
       typeof user.displayName !== "string" ||
-      prefs.favoriteTeamUpdates === false ||
-      !favorites.some((teamId) => followedTeams.has(teamId))) {
+      !favorites.some((teamId) => followedTeams.has(teamId)) &&
+      !favoriteLeagues.some((leagueId) => followedLeagues.has(leagueId))) {
       continue;
     }
     result.push({

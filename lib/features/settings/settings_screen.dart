@@ -190,6 +190,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 24),
 
+              _buildSectionHeader('Favorite Players'),
+              const SizedBox(height: 8),
+              Card(
+                child: user.favoritePlayerIds.isEmpty
+                    ? ListTile(
+                        leading: const Icon(Icons.person_add_alt_1),
+                        title: const Text('Find a player to follow'),
+                        subtitle: const Text(
+                          'Open Leaders, choose a player, then tap Follow.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => context.push(PublicRoutePaths.leaders),
+                      )
+                    : Column(
+                        children: [
+                          for (final playerId in user.favoritePlayerIds)
+                            Builder(
+                              builder: (context) {
+                                final player = publicSnapshot?.playerDetail(
+                                  playerId,
+                                );
+                                return ListTile(
+                                  leading: const Icon(Icons.person_outline),
+                                  title: Text(
+                                    player?.displayName ??
+                                        'Player unavailable in current release',
+                                  ),
+                                  subtitle: player == null
+                                      ? null
+                                      : Text(player.teamName),
+                                  trailing: player == null
+                                      ? null
+                                      : const Icon(Icons.chevron_right),
+                                  onTap: player == null
+                                      ? null
+                                      : () => context.push(
+                                          PublicRoutePaths.player(playerId),
+                                        ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 24),
+
               // Notifications section
               _buildSectionHeader('Notifications'),
               const SizedBox(height: 8),
@@ -204,7 +250,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     SwitchListTile(
                       title: const Text('Favorite Team Updates'),
                       subtitle: const Text(
-                        'Get final scores and schedule updates for teams you follow',
+                        'Push final scores and schedule changes for teams you follow. Your bell keeps the updates even when push is off.',
                       ),
                       value: _favoriteTeamUpdates,
                       activeTrackColor: AppColors.primary,

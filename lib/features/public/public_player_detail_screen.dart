@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../providers/auth_providers.dart';
 
-class PublicPlayerDetailScreen extends StatelessWidget {
+class PublicPlayerDetailScreen extends ConsumerStatefulWidget {
   final PublicLeagueSnapshot snapshot;
   final PublicPlayerDetail detail;
 
@@ -16,7 +19,19 @@ class PublicPlayerDetailScreen extends StatelessWidget {
   });
 
   @override
+  ConsumerState<PublicPlayerDetailScreen> createState() =>
+      _PublicPlayerDetailScreenState();
+}
+
+class _PublicPlayerDetailScreenState
+    extends ConsumerState<PublicPlayerDetailScreen> {
+  bool _saving = false;
+
+  @override
   Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final isFollowing =
+        user?.favoritePlayerIds.contains(widget.detail.playerId) ?? false;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -25,6 +40,50 @@ class PublicPlayerDetailScreen extends StatelessWidget {
           icon: const Icon(Icons.arrow_back),
         ),
         title: const Text('Player details'),
+        actions: [
+          TextButton.icon(
+            key: const Key('follow-player-button'),
+            onPressed: _saving
+                ? null
+                : () async {
+                    if (user == null) {
+                      context.go(
+                        AppRouteContract.loginFor(
+                          Uri.parse(
+                            PublicRoutePaths.player(widget.detail.playerId),
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    setState(() => _saving = true);
+                    try {
+                      await ref.read(authRepositoryProvider).updateUser(
+                        user.id,
+                        {
+                          'favoritePlayerIds': isFollowing
+                              ? FieldValue.arrayRemove([widget.detail.playerId])
+                              : FieldValue.arrayUnion([widget.detail.playerId]),
+                        },
+                      );
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Could not update player follow. Try again.',
+                            ),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => _saving = false);
+                    }
+                  },
+            icon: Icon(isFollowing ? Icons.check : Icons.person_add_alt_1),
+            label: Text(isFollowing ? 'Following' : 'Follow'),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(AppSizes.paddingMd),
@@ -32,21 +91,21 @@ class PublicPlayerDetailScreen extends StatelessWidget {
           CircleAvatar(
             radius: 34,
             child: Text(
-              detail.displayName.trim().isEmpty
+              widget.detail.displayName.trim().isEmpty
                   ? '?'
-                  : detail.displayName.trim()[0].toUpperCase(),
+                  : widget.detail.displayName.trim()[0].toUpperCase(),
               style: Theme.of(context).textTheme.headlineMedium,
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            detail.displayName,
+            widget.detail.displayName,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 4),
           Text(
-            detail.teamName,
+            widget.detail.teamName,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -60,12 +119,12 @@ class PublicPlayerDetailScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Card(
             child: Column(
-              children: detail.categories
+              children: widget.detail.categories
                   .map(
                     (entry) => ListTile(
                       title: Text(_categoryLabel(entry.category)),
                       subtitle: Text(
-                        '${snapshot.divisionName(entry.divisionId)} · ${_gamesPlayed(entry.value.gamesPlayed)}',
+                        '${widget.snapshot.divisionName(entry.divisionId)} · ${_gamesPlayed(entry.value.gamesPlayed)}',
                       ),
                       trailing: Text(
                         _metric(entry.value.value),

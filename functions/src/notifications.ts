@@ -5,6 +5,7 @@ import {
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import * as admin from "firebase-admin";
+import {createHash} from "node:crypto";
 import {capabilities} from "./authorization";
 import {
   loadAuthorizedRecipients,
@@ -405,6 +406,138 @@ export const statDeadlineReminder = onSchedule(
 
 // ── FCM Helper ──────────────────────────────────────────────────────
 
+type PublicTeamUpdate = {
+  type: "favorite_team_final" | "favorite_team_schedule";
+  gameId: string;
+  divisionId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore?: number;
+  awayScore?: number;
+  resultVersion?: string;
+  scheduleRevision?: string;
+  scheduleMessage?: string;
+};
+
+function isCertifiedPublicRelease(data: Record<string, unknown> | undefined): boolean {
+  return data?.schemaVersion === 1 && data.published === true &&
+    data.certificationStatus === "certified" &&
+    (data.publication === undefined ||
+      (typeof data.publication === "object" && data.publication !== null &&
+        ((data.publication as Record<string, unknown>).state === undefined ||
+          (data.publication as Record<string, unknown>).state === "published")));
+}
+
+function publicGame(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const game = value as Record<string, unknown>;
+  return typeof game.gameId === "string" && typeof game.divisionId === "string" &&
+    typeof game.homeTeamId === "string" && typeof game.awayTeamId === "string" &&
+    typeof game.homeTeamName === "string" && typeof game.awayTeamName === "string" ? game : null;
+}
+
+function gameTimeMillis(value: unknown): number | null {
+  if (value instanceof admin.firestore.Timestamp) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function scheduleFingerprint(game: Record<string, unknown>): string {
+  return createHash("sha256").update(JSON.stringify([
+    game.status, gameTimeMillis(game.startTime), game.venue ?? null,
+    game.homeTeamId, game.awayTeamId,
+  ])).digest("hex");
+}
+
+/** Changes in a certified public release only; never alert from private stats. */
+export function publicTeamUpdateCandidates(
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined,
+): PublicTeamUpdate[] {
+  if (!isCertifiedPublicRelease(before) || !isCertifiedPublicRelease(after) ||
+    !Array.isArray(before?.schedule) || !Array.isArray(after?.schedule)) return [];
+  const oldGames = new Map<string, Record<string, unknown>>();
+  for (const raw of before.schedule) {
+    const game = publicGame(raw);
+    if (game) oldGames.set(game.gameId as string, game);
+  }
+  const changes: PublicTeamUpdate[] = [];
+  for (const raw of after.schedule) {
+    const game = publicGame(raw);
+    if (!game) continue;
+    const old = oldGames.get(game.gameId as string);
+    const base = {
+      gameId: game.gameId as string,
+      divisionId: game.divisionId as string,
+      homeTeamId: game.homeTeamId as string,
+      awayTeamId: game.awayTeamId as string,
+      homeTeamName: game.homeTeamName as string,
+      awayTeamName: game.awayTeamName as string,
+    };
+    if (game.status === "final" && typeof game.homeScore === "number" &&
+      typeof game.awayScore === "number") {
+      if (!old || old.status !== "final" || old.homeScore !== game.homeScore ||
+        old.awayScore !== game.awayScore) {
+        changes.push({
+          ...base, type: "favorite_team_final",
+          homeScore: game.homeScore, awayScore: game.awayScore,
+          resultVersion: typeof game.resultVersion === "string" ? game.resultVersion : undefined,
+        });
+      }
+      continue;
+    }
+    if (!["scheduled", "postponed", "canceled", "cancelled"].includes(String(game.status))) {
+      continue;
+    }
+    const time = gameTimeMillis(game.startTime);
+    if (time === null || (!old && time <= Date.now()) || old?.status === "final") continue;
+    const revision = scheduleFingerprint(game);
+    if (old && scheduleFingerprint(old) === revision) continue;
+    changes.push({
+      ...base, type: "favorite_team_schedule", scheduleRevision: revision,
+      scheduleMessage: !old ? "New game scheduled." :
+        game.status === "postponed" ? "Game postponed." :
+        game.status === "canceled" || game.status === "cancelled" ? "Game canceled." :
+        "Game schedule updated.",
+    });
+  }
+  return changes;
+}
+
+export const onPublicSnapshotPublished = onDocumentUpdated(
+  "publicData/{assocId}/snapshots/current",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (after?.associationId !== event.params.assocId) return;
+    const changes = publicTeamUpdateCandidates(before, after);
+    if (changes.length === 0) return;
+    const db = admin.firestore();
+    for (const change of changes) {
+      const leagueIds = leaguesForDivision(after?.leagues, change.divisionId);
+      if (change.type === "favorite_team_final") {
+        await notifyFavoriteTeamFans({
+          db, associationId: event.params.assocId, ...change,
+          homeScore: change.homeScore!, awayScore: change.awayScore!, leagueIds,
+        });
+      } else {
+        await notifyFavoriteTeamScheduleFans({
+          db, associationId: event.params.assocId, ...change,
+          title: `Schedule: ${change.homeTeamName} vs ${change.awayTeamName}`,
+          body: `${change.scheduleMessage} Open HoopsConnect for game details.`,
+          scheduleRevision: change.scheduleRevision!, leagueIds,
+        });
+      }
+    }
+  }
+);
+
 interface NotificationPayload {
   title: string;
   body: string;
@@ -415,29 +548,128 @@ export async function notifyFavoriteTeamFans(input: {
   db: admin.firestore.Firestore;
   associationId: string;
   gameId: string;
+  divisionId: string;
   homeTeamId: string;
   awayTeamId: string;
   homeTeamName: string;
   awayTeamName: string;
   homeScore: number;
   awayScore: number;
+  resultVersion?: string;
+  leagueIds?: string[];
 }): Promise<number> {
+  const title = `Final: ${input.homeTeamName} ${input.homeScore}, ${input.awayTeamName} ${input.awayScore}`;
+  const body = "The final score is ready. Open HoopsConnect for the game details.";
+  const revision = input.resultVersion ?? createHash("sha256")
+    .update(`${input.homeScore}:${input.awayScore}`)
+    .digest("hex");
+  return deliverFavoriteTeamUpdate({
+    ...input,
+    type: "favorite_team_final",
+    notificationId: `favorite_team_final_${input.gameId}_${revision}`,
+    title,
+    body,
+  });
+}
+
+export async function notifyFavoriteTeamScheduleFans(input: {
+  db: admin.firestore.Firestore;
+  associationId: string;
+  gameId: string;
+  divisionId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  title: string;
+  body: string;
+  scheduleRevision: string;
+  leagueIds?: string[];
+}): Promise<number> {
+  return deliverFavoriteTeamUpdate({
+    ...input,
+    type: "favorite_team_schedule",
+    notificationId: `favorite_team_schedule_${input.gameId}_${input.scheduleRevision}`,
+  });
+}
+
+async function deliverFavoriteTeamUpdate(input: {
+  db: admin.firestore.Firestore;
+  associationId: string;
+  gameId: string;
+  divisionId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  leagueIds?: string[];
+  type: "favorite_team_final" | "favorite_team_schedule";
+  notificationId: string;
+  title: string;
+  body: string;
+}): Promise<number> {
+  let leagueIds = input.leagueIds;
+  if (leagueIds === undefined) {
+    const release = await input.db.doc(
+      `publicData/${input.associationId}/snapshots/current`
+    ).get();
+    leagueIds = leaguesForDivision(release.data()?.leagues, input.divisionId);
+  }
   const recipients = await loadFavoriteTeamRecipients(
     input.db,
     input.associationId,
     [input.homeTeamId, input.awayTeamId],
+    leagueIds,
   );
-  const tokens = recipients.flatMap((recipient) => recipient.fcmTokens);
+  const newlyCreated = [] as typeof recipients;
+  // The inbox is durable even when a fan has disabled push or denied device
+  // permission. A stable document ID prevents retries from duplicating alerts
+  // or resetting a notification that the fan already read.
+  for (let offset = 0; offset < recipients.length; offset += 50) {
+    const page = recipients.slice(offset, offset + 50);
+    const created = await Promise.all(page.map(async (recipient) => {
+      const ref = input.db.doc(
+        `users/${recipient.uid}/notifications/${input.notificationId}`
+      );
+      return input.db.runTransaction(async (transaction) => {
+        const existing = await transaction.get(ref);
+        if (existing.exists) return false;
+        transaction.create(ref, {
+          type: input.type,
+          associationId: input.associationId,
+          gameId: input.gameId,
+          title: input.title,
+          body: input.body,
+          createdAt: admin.firestore.Timestamp.now(),
+          readAt: null,
+        });
+        return true;
+      });
+    }));
+    for (let index = 0; index < page.length; index += 1) {
+      if (created[index]) newlyCreated.push(page[index]);
+    }
+  }
+  const tokens = newlyCreated
+    .filter((recipient) => recipient.notificationPrefs.favoriteTeamUpdates !== false)
+    .flatMap((recipient) => recipient.fcmTokens);
   await sendMulticast(tokens, {
-    title: `Final: ${input.homeTeamName} ${input.homeScore}, ${input.awayTeamName} ${input.awayScore}`,
-    body: "The final score is ready. Open HoopsConnect for the game details.",
+    title: input.title,
+    body: input.body,
     data: {
-      type: "favorite_team_final",
+      type: input.type,
       assocId: input.associationId,
       gameId: input.gameId,
     },
   });
   return recipients.length;
+}
+
+function leaguesForDivision(rawLeagues: unknown, divisionId: string): string[] {
+  if (!Array.isArray(rawLeagues)) return ["all"];
+  return ["all", ...rawLeagues
+    .filter((league): league is Record<string, unknown> =>
+      league !== null && typeof league === "object" && !Array.isArray(league))
+    .filter((league) =>
+      Array.isArray(league.divisionIds) && league.divisionIds.includes(divisionId))
+    .map((league) => league.leagueId)
+    .filter((value): value is string => typeof value === "string" && value.length > 0)];
 }
 
 /**
