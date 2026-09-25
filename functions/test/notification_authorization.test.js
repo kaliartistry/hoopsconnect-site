@@ -19,6 +19,7 @@ const {
   notifyFavoriteTeamScheduleFans,
   notifyFavoriteTeamScheduleDigestFans,
   publicTeamUpdateCandidates,
+  currentPublicTeamUpdates,
 } = require('../lib/notifications');
 const db = admin.firestore();
 
@@ -171,6 +172,9 @@ test('bulk schedule release creates one digest for a follower, not one item per 
   };
   assert.equal(await notifyFavoriteTeamScheduleDigestFans(input), 1);
   assert.equal(await notifyFavoriteTeamScheduleDigestFans(input), 1);
+  assert.equal(await notifyFavoriteTeamScheduleDigestFans({
+    ...input, changes: changes.slice(0, 4), idChanges: changes,
+  }), 1);
   const inbox = await db.collection('users/league-fan/notifications').get();
   assert.equal(inbox.size, 1);
   assert.equal(inbox.docs[0].data().gameId, undefined);
@@ -217,6 +221,25 @@ test('public release diff alerts only certified new results and meaningful sched
   assert.deepEqual(publicTeamUpdateCandidates(release, {
     ...release, certificationStatus: 'pending', schedule: [final],
   }), []);
+});
+
+test('delayed release keeps unchanged finals and drops superseded outcomes', () => {
+  const game = {
+    gameId: 'g1', divisionId: 'premier', homeTeamId: 'home', awayTeamId: 'away',
+    homeTeamName: 'Home', awayTeamName: 'Away', status: 'scheduled',
+    startTime: '2027-01-01T20:00:00.000Z', venue: 'Arena',
+  };
+  const release = {schemaVersion: 1, associationId: 'jba', published: true,
+    certificationStatus: 'certified', schedule: [game]};
+  const final = {...game, status: 'final', homeScore: 70, awayScore: 68,
+    resultVersion: 'a'.repeat(64)};
+  const changes = publicTeamUpdateCandidates(release, {...release, schedule: [final]});
+  assert.equal(changes.length, 1);
+  const laterUnrelatedUpdate = {...release, schedule: [final], seasonName: 'Revised'};
+  assert.equal(currentPublicTeamUpdates(changes, laterUnrelatedUpdate).length, 1);
+  const corrected = {...final, homeScore: 71, resultVersion: 'b'.repeat(64)};
+  assert.deepEqual(currentPublicTeamUpdates(changes, {...release, schedule: [corrected]}), []);
+  assert.deepEqual(currentPublicTeamUpdates(changes, {...release, schedule: []}), []);
 });
 
 test('acknowledgment audiences contain only team-assigned reps with team names', async () => {

@@ -516,6 +516,29 @@ export function publicTeamUpdateCandidates(
   return changes;
 }
 
+/** Keep a delayed event only when its public outcome is still the current one. */
+export function currentPublicTeamUpdates(
+  changes: PublicTeamUpdate[],
+  current: Record<string, unknown> | undefined,
+): PublicTeamUpdate[] {
+  if (!isCertifiedPublicRelease(current) || !Array.isArray(current?.schedule)) return [];
+  const currentGames = new Map<string, Record<string, unknown>>();
+  for (const raw of current.schedule) {
+    const game = publicGame(raw);
+    if (game) currentGames.set(game.gameId as string, game);
+  }
+  return changes.filter((change) => {
+    const game = currentGames.get(change.gameId);
+    if (!game) return false;
+    if (change.type === "favorite_team_final") {
+      return game.status === "final" &&
+        game.homeScore === change.homeScore && game.awayScore === change.awayScore &&
+        (change.resultVersion === undefined || game.resultVersion === change.resultVersion);
+    }
+    return scheduleFingerprint(game) === change.scheduleRevision;
+  });
+}
+
 export const onPublicSnapshotPublished = onDocumentUpdated(
   {
     document: "publicData/{assocId}/snapshots/current",
@@ -533,29 +556,32 @@ export const onPublicSnapshotPublished = onDocumentUpdated(
       logger.error("Public snapshot update has no server update time; refusing alerts.");
       return;
     }
-    const changes = publicTeamUpdateCandidates(before, after, releasedAt.toMillis());
-    if (changes.length === 0) return;
+    const releaseChanges = publicTeamUpdateCandidates(before, after, releasedAt.toMillis());
+    if (releaseChanges.length === 0) return;
     const db = admin.firestore();
     const current = await snapshotChange.after.ref.get();
-    if (!current.updateTime?.isEqual(releasedAt)) {
-      logger.info("Skipping superseded public snapshot notification event.");
-      return;
-    }
+    const currentRelease = current.data();
+    if (currentRelease?.associationId !== event.params.assocId) return;
+    const changes = currentPublicTeamUpdates(releaseChanges, currentRelease);
+    if (changes.length === 0) return;
     const audience = await loadFavoriteTeamAudience(db, event.params.assocId);
+    const releaseNewGames = releaseChanges.filter((change) =>
+      change.type === "favorite_team_schedule" && change.isNewSchedule);
     const newGames = changes.filter((change) =>
       change.type === "favorite_team_schedule" && change.isNewSchedule);
-    if (newGames.length > 5) {
+    if (releaseNewGames.length > 5 && newGames.length > 0) {
       await notifyFavoriteTeamScheduleDigestFans({
         db,
         associationId: event.params.assocId,
         changes: newGames,
-        leagues: after?.leagues,
+        idChanges: releaseNewGames,
+        leagues: currentRelease?.leagues,
         audience,
       });
     }
     for (const change of changes) {
-      if (newGames.length > 5 && change.isNewSchedule) continue;
-      const leagueIds = leaguesForDivision(after?.leagues, change.divisionId);
+      if (releaseNewGames.length > 5 && change.isNewSchedule) continue;
+      const leagueIds = leaguesForDivision(currentRelease?.leagues, change.divisionId);
       if (change.type === "favorite_team_final") {
         await notifyFavoriteTeamFans({
           db, associationId: event.params.assocId, ...change,
@@ -584,10 +610,11 @@ export async function notifyFavoriteTeamScheduleDigestFans(input: {
   db: admin.firestore.Firestore;
   associationId: string;
   changes: PublicTeamUpdate[];
+  idChanges?: PublicTeamUpdate[];
   leagues: unknown;
   audience: FavoriteTeamAudienceRecipient[];
 }): Promise<number> {
-  const revisions = input.changes
+  const revisions = (input.idChanges ?? input.changes)
     .map((change) => `${change.gameId}:${change.scheduleRevision}`)
     .sort();
   const digestId = createHash("sha256")
