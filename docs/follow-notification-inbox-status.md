@@ -18,7 +18,9 @@ New bulk schedule releases produce one digest instead of one alert per new game.
 Existing certified-to-certified changes are compared. A retraction followed by
 republishing cannot be compared to the previous certified version until a
 durable release-history source exists, so that transition currently sends no
-alert. Push remains best effort; the in-app inbox is the durable record.
+alert. Retries use the release's server update time and skip an event once a
+newer current snapshot supersedes it. Push remains best effort; the in-app
+inbox is the durable record.
 
 Account deletion remains dormant. Its AD05-C notification adapter is still
 `notApplicableOnly`, although `users/{uid}/notifications` now exists. Before

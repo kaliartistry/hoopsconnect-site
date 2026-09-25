@@ -187,6 +187,19 @@ test('public release diff alerts only certified new results and meaningful sched
     certificationStatus: 'certified', schedule: [game]};
   assert.deepEqual(publicTeamUpdateCandidates(undefined, release), []);
   assert.deepEqual(publicTeamUpdateCandidates(release, {...release, seasonName: 'New'}), []);
+  const emptyRelease = {...release, schedule: []};
+  assert.equal(
+    publicTeamUpdateCandidates(
+      emptyRelease, release, Date.parse('2026-12-31T00:00:00.000Z')
+    )[0].isNewSchedule,
+    true,
+  );
+  assert.deepEqual(
+    publicTeamUpdateCandidates(
+      emptyRelease, release, Date.parse('2027-01-02T00:00:00.000Z')
+    ),
+    [],
+  );
   const changed = {...game, startTime: '2027-01-02T20:00:00.000Z'};
   assert.deepEqual(
     publicTeamUpdateCandidates(release, {...release, schedule: [changed]}).map((x) => x.type),

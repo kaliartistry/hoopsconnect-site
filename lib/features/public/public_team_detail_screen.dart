@@ -34,6 +34,15 @@ class _PublicTeamDetailScreenState
     final user = ref.watch(currentUserProvider).valueOrNull;
     final isFollowing =
         user?.favoriteTeamIds.contains(widget.detail.team.teamId) ?? false;
+    final viaLeague =
+        user?.favoriteLeagueIds.any(
+          (leagueId) => widget.snapshot.availableLeagues.any(
+            (league) =>
+                league.leagueId == leagueId &&
+                league.divisionIds.contains(widget.detail.team.divisionId),
+          ),
+        ) ??
+        false;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -45,7 +54,7 @@ class _PublicTeamDetailScreenState
         actions: [
           TextButton.icon(
             key: const Key('follow-team-button'),
-            onPressed: _saving
+            onPressed: _saving || (viaLeague && !isFollowing)
                 ? null
                 : () async {
                     if (user == null) {
@@ -86,14 +95,28 @@ class _PublicTeamDetailScreenState
                       if (mounted) setState(() => _saving = false);
                     }
                   },
-            icon: Icon(isFollowing ? Icons.check : Icons.favorite_border),
-            label: Text(isFollowing ? 'Following' : 'Follow'),
+            icon: Icon(
+              isFollowing || viaLeague ? Icons.check : Icons.favorite_border,
+            ),
+            label: Text(
+              isFollowing
+                  ? 'Following team'
+                  : viaLeague
+                  ? 'Via league'
+                  : 'Follow',
+            ),
           ),
         ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(AppSizes.paddingMd),
         children: [
+          if (viaLeague)
+            const ListTile(
+              leading: Icon(Icons.notifications_active_outlined),
+              title: Text('Included through your league follow'),
+              subtitle: Text('Manage league follows in Settings.'),
+            ),
           Text(
             widget.detail.team.name,
             style: Theme.of(context).textTheme.headlineSmall,

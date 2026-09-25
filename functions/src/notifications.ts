@@ -463,6 +463,7 @@ function scheduleFingerprint(game: Record<string, unknown>): string {
 export function publicTeamUpdateCandidates(
   before: Record<string, unknown> | undefined,
   after: Record<string, unknown> | undefined,
+  releaseTimeMillis = Date.now(),
 ): PublicTeamUpdate[] {
   if (!isCertifiedPublicRelease(before) || !isCertifiedPublicRelease(after) ||
     !Array.isArray(before?.schedule) || !Array.isArray(after?.schedule)) return [];
@@ -500,7 +501,7 @@ export function publicTeamUpdateCandidates(
       continue;
     }
     const time = gameTimeMillis(game.startTime);
-    if (time === null || (!old && time <= Date.now()) || old?.status === "final") continue;
+    if (time === null || (!old && time <= releaseTimeMillis) || old?.status === "final") continue;
     const revision = scheduleFingerprint(game);
     if (old && scheduleFingerprint(old) === revision) continue;
     changes.push({
@@ -522,12 +523,24 @@ export const onPublicSnapshotPublished = onDocumentUpdated(
     timeoutSeconds: 540,
   },
   async (event) => {
-    const before = event.data?.before.data();
-    const after = event.data?.after.data();
+    const snapshotChange = event.data;
+    if (!snapshotChange) return;
+    const before = snapshotChange.before.data();
+    const after = snapshotChange.after.data();
     if (after?.associationId !== event.params.assocId) return;
-    const changes = publicTeamUpdateCandidates(before, after);
+    const releasedAt = snapshotChange.after.updateTime;
+    if (!releasedAt) {
+      logger.error("Public snapshot update has no server update time; refusing alerts.");
+      return;
+    }
+    const changes = publicTeamUpdateCandidates(before, after, releasedAt.toMillis());
     if (changes.length === 0) return;
     const db = admin.firestore();
+    const current = await snapshotChange.after.ref.get();
+    if (!current.updateTime?.isEqual(releasedAt)) {
+      logger.info("Skipping superseded public snapshot notification event.");
+      return;
+    }
     const audience = await loadFavoriteTeamAudience(db, event.params.assocId);
     const newGames = changes.filter((change) =>
       change.type === "favorite_team_schedule" && change.isNewSchedule);
