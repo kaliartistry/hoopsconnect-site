@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/constants/app_constants.dart';
 import '../../app/app_version.dart';
 import '../../app/router/app_route_contract.dart';
@@ -129,6 +130,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           'Your teams stay together across scores and alerts',
                         ),
                         children: [
+                          if (_favoriteLeagueIds.contains('all') &&
+                              publicSnapshot.leagues.isNotEmpty)
+                            CheckboxListTile(
+                              value: true,
+                              title: const Text('All teams (older follow)'),
+                              subtitle: const Text(
+                                'Turn off to clear this and the older team selections.',
+                              ),
+                              onChanged: (_) => setState(() {
+                                _favoriteLeagueIds.remove('all');
+                                _favoriteTeamIds.clear();
+                              }),
+                            ),
                           for (final league
                               in publicSnapshot.availableLeagues) ...[
                             CheckboxListTile(
@@ -143,19 +157,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ),
                               subtitle: const Text('Follow every team'),
                               onChanged: (selected) => setState(() {
-                                final teamIds = publicSnapshot.teams
-                                    .where(
-                                      (team) => league.divisionIds.contains(
-                                        team.divisionId,
-                                      ),
-                                    )
-                                    .map((team) => team.teamId);
                                 if (selected == true) {
                                   _favoriteLeagueIds.add(league.leagueId);
-                                  _favoriteTeamIds.addAll(teamIds);
                                 } else {
                                   _favoriteLeagueIds.remove(league.leagueId);
-                                  _favoriteTeamIds.removeAll(teamIds);
                                 }
                               }),
                             ),
@@ -169,22 +174,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   left: 48,
                                   right: 16,
                                 ),
-                                value: _favoriteTeamIds.contains(team.teamId),
+                                value:
+                                    _favoriteTeamIds.contains(team.teamId) ||
+                                    _favoriteLeagueIds.contains(
+                                      league.leagueId,
+                                    ),
                                 title: Text(team.name),
                                 subtitle: Text(
-                                  publicSnapshot.divisionName(team.divisionId),
+                                  _favoriteLeagueIds.contains(league.leagueId)
+                                      ? 'Included through league follow'
+                                      : publicSnapshot.divisionName(
+                                          team.divisionId,
+                                        ),
                                 ),
-                                onChanged: (selected) => setState(() {
-                                  if (selected == true) {
-                                    _favoriteTeamIds.add(team.teamId);
-                                  } else {
-                                    _favoriteTeamIds.remove(team.teamId);
-                                    _favoriteLeagueIds.remove(league.leagueId);
-                                  }
-                                }),
+                                onChanged:
+                                    _favoriteLeagueIds.contains(league.leagueId)
+                                    ? null
+                                    : (selected) => setState(() {
+                                        if (selected == true) {
+                                          _favoriteTeamIds.add(team.teamId);
+                                        } else {
+                                          _favoriteTeamIds.remove(team.teamId);
+                                        }
+                                      }),
                               ),
                             const Divider(height: 1),
                           ],
+                          if (_favoriteLeagueIds.isNotEmpty ||
+                              _favoriteTeamIds.isNotEmpty)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: () => setState(() {
+                                  _favoriteLeagueIds.clear();
+                                  _favoriteTeamIds.clear();
+                                }),
+                                child: const Text(
+                                  'Clear team and league follows',
+                                ),
+                              ),
+                            ),
                         ],
                       ),
               ),
@@ -221,7 +250,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                       ? null
                                       : Text(player.teamName),
                                   trailing: player == null
-                                      ? null
+                                      ? IconButton(
+                                          tooltip:
+                                              'Unfollow unavailable player',
+                                          icon: const Icon(Icons.person_remove),
+                                          onPressed: () async {
+                                            try {
+                                              await ref
+                                                  .read(authRepositoryProvider)
+                                                  .updateUser(user.id, {
+                                                    'favoritePlayerIds':
+                                                        FieldValue.arrayRemove([
+                                                          playerId,
+                                                        ]),
+                                                  });
+                                            } catch (_) {
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Could not unfollow player. Try again.',
+                                                    ),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          },
+                                        )
                                       : const Icon(Icons.chevron_right),
                                   onTap: player == null
                                       ? null

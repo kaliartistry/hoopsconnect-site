@@ -64,4 +64,51 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('schedule digest opens the public games list', (tester) async {
+    final router = GoRouter(
+      initialLocation: '/notifications',
+      routes: [
+        GoRoute(
+          path: '/notifications',
+          builder: (_, _) => const NotificationsScreen(),
+        ),
+        GoRoute(
+          path: '/public/games',
+          builder: (_, _) => const Scaffold(body: Text('Public games')),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    const fan = UserModel(
+      id: 'fan',
+      email: 'fan@example.com',
+      displayName: 'Fan',
+      associationId: 'jba',
+      role: UserRole.fan,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWith((ref) => const AsyncValue.data(fan)),
+          inboxNotificationsProvider.overrideWith(
+            (ref) => Stream.value([
+              InboxNotification(
+                id: 'schedule-digest',
+                type: 'favorite_team_schedule',
+                title: 'New games scheduled',
+                body: 'Open the schedule for details.',
+                readAt: DateTime.utc(2026),
+              ),
+            ]),
+          ),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New games scheduled'));
+    await tester.pumpAndSettle();
+    expect(find.text('Public games'), findsOneWidget);
+  });
 }

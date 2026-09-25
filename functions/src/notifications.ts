@@ -8,9 +8,12 @@ import * as admin from "firebase-admin";
 import {createHash} from "node:crypto";
 import {capabilities} from "./authorization";
 import {
+  FavoriteTeamAudienceRecipient,
   loadAuthorizedRecipients,
+  loadFavoriteTeamAudience,
   loadFavoriteTeamRecipients,
   loadTeamAcknowledgmentRecipients,
+  selectFavoriteTeamRecipients,
 } from "./notification_authorization";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -419,6 +422,7 @@ type PublicTeamUpdate = {
   resultVersion?: string;
   scheduleRevision?: string;
   scheduleMessage?: string;
+  isNewSchedule?: boolean;
 };
 
 function isCertifiedPublicRelease(data: Record<string, unknown> | undefined): boolean {
@@ -501,6 +505,7 @@ export function publicTeamUpdateCandidates(
     if (old && scheduleFingerprint(old) === revision) continue;
     changes.push({
       ...base, type: "favorite_team_schedule", scheduleRevision: revision,
+      isNewSchedule: !old,
       scheduleMessage: !old ? "New game scheduled." :
         game.status === "postponed" ? "Game postponed." :
         game.status === "canceled" || game.status === "cancelled" ? "Game canceled." :
@@ -511,7 +516,11 @@ export function publicTeamUpdateCandidates(
 }
 
 export const onPublicSnapshotPublished = onDocumentUpdated(
-  "publicData/{assocId}/snapshots/current",
+  {
+    document: "publicData/{assocId}/snapshots/current",
+    retry: true,
+    timeoutSeconds: 540,
+  },
   async (event) => {
     const before = event.data?.before.data();
     const after = event.data?.after.data();
@@ -519,19 +528,33 @@ export const onPublicSnapshotPublished = onDocumentUpdated(
     const changes = publicTeamUpdateCandidates(before, after);
     if (changes.length === 0) return;
     const db = admin.firestore();
+    const audience = await loadFavoriteTeamAudience(db, event.params.assocId);
+    const newGames = changes.filter((change) =>
+      change.type === "favorite_team_schedule" && change.isNewSchedule);
+    if (newGames.length > 5) {
+      await notifyFavoriteTeamScheduleDigestFans({
+        db,
+        associationId: event.params.assocId,
+        changes: newGames,
+        leagues: after?.leagues,
+        audience,
+      });
+    }
     for (const change of changes) {
+      if (newGames.length > 5 && change.isNewSchedule) continue;
       const leagueIds = leaguesForDivision(after?.leagues, change.divisionId);
       if (change.type === "favorite_team_final") {
         await notifyFavoriteTeamFans({
           db, associationId: event.params.assocId, ...change,
           homeScore: change.homeScore!, awayScore: change.awayScore!, leagueIds,
+          audience,
         });
       } else {
         await notifyFavoriteTeamScheduleFans({
           db, associationId: event.params.assocId, ...change,
           title: `Schedule: ${change.homeTeamName} vs ${change.awayTeamName}`,
           body: `${change.scheduleMessage} Open HoopsConnect for game details.`,
-          scheduleRevision: change.scheduleRevision!, leagueIds,
+          scheduleRevision: change.scheduleRevision!, leagueIds, audience,
         });
       }
     }
@@ -542,6 +565,35 @@ interface NotificationPayload {
   title: string;
   body: string;
   data?: Record<string, string>;
+}
+
+export async function notifyFavoriteTeamScheduleDigestFans(input: {
+  db: admin.firestore.Firestore;
+  associationId: string;
+  changes: PublicTeamUpdate[];
+  leagues: unknown;
+  audience: FavoriteTeamAudienceRecipient[];
+}): Promise<number> {
+  const revisions = input.changes
+    .map((change) => `${change.gameId}:${change.scheduleRevision}`)
+    .sort();
+  const digestId = createHash("sha256")
+    .update(JSON.stringify(revisions)).digest("hex");
+  const teamIds = [...new Set(input.changes.flatMap((change) =>
+    [change.homeTeamId, change.awayTeamId]))];
+  const leagueIds = [...new Set(input.changes.flatMap((change) =>
+    leaguesForDivision(input.leagues, change.divisionId)))];
+  return deliverFavoriteTeamUpdate({
+    db: input.db,
+    associationId: input.associationId,
+    teamIds,
+    leagueIds,
+    audience: input.audience,
+    type: "favorite_team_schedule",
+    notificationId: `favorite_team_schedule_digest_${digestId}`,
+    title: "New games scheduled",
+    body: "Teams or leagues you follow have new games. Open the schedule for details.",
+  });
 }
 
 export async function notifyFavoriteTeamFans(input: {
@@ -557,6 +609,7 @@ export async function notifyFavoriteTeamFans(input: {
   awayScore: number;
   resultVersion?: string;
   leagueIds?: string[];
+  audience?: FavoriteTeamAudienceRecipient[];
 }): Promise<number> {
   const title = `Final: ${input.homeTeamName} ${input.homeScore}, ${input.awayTeamName} ${input.awayScore}`;
   const body = "The final score is ready. Open HoopsConnect for the game details.";
@@ -565,6 +618,7 @@ export async function notifyFavoriteTeamFans(input: {
     .digest("hex");
   return deliverFavoriteTeamUpdate({
     ...input,
+    teamIds: [input.homeTeamId, input.awayTeamId],
     type: "favorite_team_final",
     notificationId: `favorite_team_final_${input.gameId}_${revision}`,
     title,
@@ -583,9 +637,11 @@ export async function notifyFavoriteTeamScheduleFans(input: {
   body: string;
   scheduleRevision: string;
   leagueIds?: string[];
+  audience?: FavoriteTeamAudienceRecipient[];
 }): Promise<number> {
   return deliverFavoriteTeamUpdate({
     ...input,
+    teamIds: [input.homeTeamId, input.awayTeamId],
     type: "favorite_team_schedule",
     notificationId: `favorite_team_schedule_${input.gameId}_${input.scheduleRevision}`,
   });
@@ -594,11 +650,11 @@ export async function notifyFavoriteTeamScheduleFans(input: {
 async function deliverFavoriteTeamUpdate(input: {
   db: admin.firestore.Firestore;
   associationId: string;
-  gameId: string;
-  divisionId: string;
-  homeTeamId: string;
-  awayTeamId: string;
+  gameId?: string;
+  divisionId?: string;
+  teamIds: string[];
   leagueIds?: string[];
+  audience?: FavoriteTeamAudienceRecipient[];
   type: "favorite_team_final" | "favorite_team_schedule";
   notificationId: string;
   title: string;
@@ -609,14 +665,17 @@ async function deliverFavoriteTeamUpdate(input: {
     const release = await input.db.doc(
       `publicData/${input.associationId}/snapshots/current`
     ).get();
-    leagueIds = leaguesForDivision(release.data()?.leagues, input.divisionId);
+    leagueIds = input.divisionId === undefined ? [] :
+      leaguesForDivision(release.data()?.leagues, input.divisionId);
   }
-  const recipients = await loadFavoriteTeamRecipients(
-    input.db,
-    input.associationId,
-    [input.homeTeamId, input.awayTeamId],
-    leagueIds,
-  );
+  const recipients = input.audience === undefined
+    ? await loadFavoriteTeamRecipients(
+      input.db, input.associationId,
+      input.teamIds, leagueIds,
+    )
+    : selectFavoriteTeamRecipients(
+      input.audience, input.teamIds, leagueIds,
+    );
   const newlyCreated = [] as typeof recipients;
   // The inbox is durable even when a fan has disabled push or denied device
   // permission. A stable document ID prevents retries from duplicating alerts
@@ -633,7 +692,7 @@ async function deliverFavoriteTeamUpdate(input: {
         transaction.create(ref, {
           type: input.type,
           associationId: input.associationId,
-          gameId: input.gameId,
+          ...(input.gameId ? {gameId: input.gameId} : {}),
           title: input.title,
           body: input.body,
           createdAt: admin.firestore.Timestamp.now(),
@@ -655,21 +714,21 @@ async function deliverFavoriteTeamUpdate(input: {
     data: {
       type: input.type,
       assocId: input.associationId,
-      gameId: input.gameId,
+      ...(input.gameId ? {gameId: input.gameId} : {}),
     },
   });
   return recipients.length;
 }
 
 function leaguesForDivision(rawLeagues: unknown, divisionId: string): string[] {
-  if (!Array.isArray(rawLeagues)) return ["all"];
-  return ["all", ...rawLeagues
+  if (!Array.isArray(rawLeagues) || rawLeagues.length === 0) return ["all"];
+  return rawLeagues
     .filter((league): league is Record<string, unknown> =>
       league !== null && typeof league === "object" && !Array.isArray(league))
     .filter((league) =>
       Array.isArray(league.divisionIds) && league.divisionIds.includes(divisionId))
     .map((league) => league.leagueId)
-    .filter((value): value is string => typeof value === "string" && value.length > 0)];
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
 /**

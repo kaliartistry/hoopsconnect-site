@@ -107,9 +107,12 @@ class NotificationsScreen extends ConsumerWidget {
     }
     if (context.mounted &&
         (item.type == 'favorite_team_final' ||
-            item.type == 'favorite_team_schedule') &&
-        item.gameId != null) {
-      context.push(PublicRoutePaths.game(item.gameId!));
+            item.type == 'favorite_team_schedule')) {
+      context.push(
+        item.gameId == null
+            ? PublicRoutePaths.games
+            : PublicRoutePaths.game(item.gameId!),
+      );
     }
   }
 }

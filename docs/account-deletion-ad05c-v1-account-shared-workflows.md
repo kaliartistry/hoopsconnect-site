@@ -24,7 +24,7 @@ and provenance. It never treats a display name, email, role, `authorId`, or
 | Firebase Auth identity | R | Verify exact-generation absence; never call Auth |
 | User profile | T | Erase only a synthetic field-owned record; reject live mixed documents |
 | Memberships/capabilities | T | Revoke only after AD03 custody proof |
-| Notification inbox | R | Verified not applicable until a real schema exists |
+| Notification inbox | R | This candidate still reports not applicable; activation is blocked now that an inbox schema exists |
 | Team assignments | T | Detach account binding after AD03 custody proof |
 | Pending invites | T | Revoke only an exact-generation pending invite |
 | Historical invites | R | Preserve redeemed invite history as non-granting evidence |
@@ -35,8 +35,11 @@ and provenance. It never treats a display name, email, role, `authorId`, or
 | Event attribution | R | Detach attribution while preserving the shared event |
 
 T means an exact-once transactional document effect is mechanically supported.
-R means evidence-only verification. Notification inbox is stricter: it can only
-be represented as positively verified not applicable.
+R means evidence-only verification. The AD05-C notification adapter still only
+accepts a positively verified not-applicable result. The follow-notification
+feature now creates `users/{uid}/notifications/{notificationId}`. Account
+deletion must remain dormant until that adapter can erase this subcollection
+with terminal evidence; deleting the parent user document does not erase it.
 
 ## Non-negotiable protections
 

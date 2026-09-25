@@ -198,8 +198,8 @@ class NotificationService {
       case 'favorite_team_final':
       case 'favorite_team_schedule':
         final gameId = data['gameId'] as String?;
-        return gameId == null
-            ? '/notifications'
+        return gameId == null || gameId.isEmpty
+            ? PublicRoutePaths.games
             : PublicRoutePaths.game(gameId);
 
       default:

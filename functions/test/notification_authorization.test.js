@@ -11,11 +11,13 @@ if (admin.apps.length === 0) admin.initializeApp({projectId: 'demo-hoopsconnect'
 const {
   loadAuthorizedRecipients,
   loadFavoriteTeamRecipients,
+  loadFavoriteTeamAudience,
   loadTeamAcknowledgmentRecipients,
 } = require('../lib/notification_authorization');
 const {
   notifyFavoriteTeamFans,
   notifyFavoriteTeamScheduleFans,
+  notifyFavoriteTeamScheduleDigestFans,
   publicTeamUpdateCandidates,
 } = require('../lib/notifications');
 const db = admin.firestore();
@@ -148,6 +150,31 @@ test('schedule update creates one inbox item for a league follower with push off
   const inbox = await db.collection('users/league-fan/notifications').get();
   assert.equal(inbox.size, 1);
   assert.equal(inbox.docs[0].data().type, 'favorite_team_schedule');
+});
+
+test('bulk schedule release creates one digest for a follower, not one item per game', async () => {
+  await seed('league-fan', {
+    favoriteLeagueIds: ['nbl'], prefs: {favoriteTeamUpdates: false},
+  });
+  await seed('other-fan', {
+    favoriteLeagueIds: ['school'], prefs: {favoriteTeamUpdates: false},
+  });
+  const changes = Array.from({length: 6}, (_, index) => ({
+    type: 'favorite_team_schedule', gameId: `g${index}`,
+    divisionId: 'premier', homeTeamId: 'home', awayTeamId: 'away',
+    scheduleRevision: `r${index}`,
+  }));
+  const input = {
+    db, associationId: 'jba', changes,
+    leagues: [{leagueId: 'nbl', divisionIds: ['premier']}],
+    audience: await loadFavoriteTeamAudience(db, 'jba'),
+  };
+  assert.equal(await notifyFavoriteTeamScheduleDigestFans(input), 1);
+  assert.equal(await notifyFavoriteTeamScheduleDigestFans(input), 1);
+  const inbox = await db.collection('users/league-fan/notifications').get();
+  assert.equal(inbox.size, 1);
+  assert.equal(inbox.docs[0].data().gameId, undefined);
+  assert.equal((await db.collection('users/other-fan/notifications').get()).empty, true);
 });
 
 test('public release diff alerts only certified new results and meaningful schedule changes', () => {

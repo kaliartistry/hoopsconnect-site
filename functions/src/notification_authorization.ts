@@ -15,6 +15,11 @@ export interface TeamAcknowledgmentRecipient extends AuthorizedRecipient {
   teamName: string;
 }
 
+export interface FavoriteTeamAudienceRecipient extends AuthorizedRecipient {
+  favoriteTeamIds: string[];
+  favoriteLeagueIds: string[];
+}
+
 interface RecipientOptions {
   divisionId?: string | null;
   userIds?: string[];
@@ -27,9 +32,29 @@ export async function loadFavoriteTeamRecipients(
   teamIds: readonly string[],
   leagueIds: readonly string[] = [],
 ): Promise<AuthorizedRecipient[]> {
+  return selectFavoriteTeamRecipients(
+    await loadFavoriteTeamAudience(db, associationId), teamIds, leagueIds,
+  );
+}
+
+export function selectFavoriteTeamRecipients(
+  audience: readonly FavoriteTeamAudienceRecipient[],
+  teamIds: readonly string[],
+  leagueIds: readonly string[] = [],
+): FavoriteTeamAudienceRecipient[] {
   const followedTeams = new Set(teamIds.filter((teamId) => teamId.length > 0));
   const followedLeagues = new Set(leagueIds.filter((leagueId) => leagueId.length > 0));
   if (followedTeams.size === 0 && followedLeagues.size === 0) return [];
+  return audience.filter((recipient) =>
+    recipient.favoriteTeamIds.some((teamId) => followedTeams.has(teamId)) ||
+    recipient.favoriteLeagueIds.some((leagueId) => followedLeagues.has(leagueId))
+  );
+}
+
+export async function loadFavoriteTeamAudience(
+  db: admin.firestore.Firestore,
+  associationId: string,
+): Promise<FavoriteTeamAudienceRecipient[]> {
   const memberships = await db
     .collection("memberships")
     .where("associationId", "==", associationId)
@@ -41,7 +66,7 @@ export async function loadFavoriteTeamRecipients(
   });
   if (active.length === 0) return [];
   const profiles = await db.getAll(...active.map((doc) => db.doc(`users/${doc.id}`)));
-  const result: AuthorizedRecipient[] = [];
+  const result: FavoriteTeamAudienceRecipient[] = [];
   for (let index = 0; index < active.length; index += 1) {
     const profile = profiles[index];
     const user = profile.data() ?? {};
@@ -55,8 +80,7 @@ export async function loadFavoriteTeamRecipients(
       user.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION ||
       user.associationId !== associationId ||
       typeof user.displayName !== "string" ||
-      !favorites.some((teamId) => followedTeams.has(teamId)) &&
-      !favoriteLeagues.some((leagueId) => followedLeagues.has(leagueId))) {
+      (favorites.length === 0 && favoriteLeagues.length === 0)) {
       continue;
     }
     result.push({
@@ -68,6 +92,8 @@ export async function loadFavoriteTeamRecipients(
         user.fcmTokens.filter((token): token is string =>
           typeof token === "string" && token.length > 0) : [],
       notificationPrefs: prefs,
+      favoriteTeamIds: favorites,
+      favoriteLeagueIds: favoriteLeagues,
     });
   }
   return result;
