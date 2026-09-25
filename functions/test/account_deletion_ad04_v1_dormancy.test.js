@@ -19,9 +19,9 @@ const fixturePath =
   'contracts/account_deletion/ad04/lifecycle_cleanup_fixtures_v1.json';
 
 const pinnedBaseBlobs = Object.freeze({
-  // Reviewed callable-only season lifecycle transition; AD04 stays absent.
-  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
-  'firestore.rules': '366dfece2fe30a5a8e81184f2e3e587311bd0d44',
+  // Reviewed follow-inbox integration; AD04 stays absent.
+  'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
+  'firestore.rules': '9fbd6d900fa97d630e27045fa886bc883e5989b4',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
   'functions/src/domain/account_deletion_contract.ts':
