@@ -532,8 +532,7 @@ export function currentPublicTeamUpdates(
     if (!game) return false;
     if (change.type === "favorite_team_final") {
       return game.status === "final" &&
-        game.homeScore === change.homeScore && game.awayScore === change.awayScore &&
-        (change.resultVersion === undefined || game.resultVersion === change.resultVersion);
+        game.homeScore === change.homeScore && game.awayScore === change.awayScore;
     }
     return scheduleFingerprint(game) === change.scheduleRevision;
   });

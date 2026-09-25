@@ -237,6 +237,10 @@ test('delayed release keeps unchanged finals and drops superseded outcomes', () 
   assert.equal(changes.length, 1);
   const laterUnrelatedUpdate = {...release, schedule: [final], seasonName: 'Revised'};
   assert.equal(currentPublicTeamUpdates(changes, laterUnrelatedUpdate).length, 1);
+  const sameScoreNewVersion = {...final, resultVersion: 'b'.repeat(64)};
+  assert.equal(currentPublicTeamUpdates(changes, {
+    ...release, schedule: [sameScoreNewVersion],
+  }).length, 1);
   const corrected = {...final, homeScore: 71, resultVersion: 'b'.repeat(64)};
   assert.deepEqual(currentPublicTeamUpdates(changes, {...release, schedule: [corrected]}), []);
   assert.deepEqual(currentPublicTeamUpdates(changes, {...release, schedule: []}), []);
