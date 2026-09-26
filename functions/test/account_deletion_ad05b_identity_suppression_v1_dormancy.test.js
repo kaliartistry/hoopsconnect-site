@@ -17,10 +17,10 @@ const fixturePath =
   'contracts/account_deletion/ad05/identity_suppression_fixtures_v1.json';
 
 const pinnedBaseBlobs = Object.freeze({
-  // Reviewed follow-inbox integration; AD05-B stays absent.
+  // Reconciled native/follow-inbox production roots; AD05-B stays absent.
   'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
-  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
-  'firestore.rules': '9fbd6d900fa97d630e27045fa886bc883e5989b4',
+  'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
+  'firestore.rules': '2c1554fd7623fb9cbeb9423b192b1bdd3b674143',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/domain/official_stats_contract.ts':
     'c6879439091b72088bcef2659490eaff72ddd5f0',

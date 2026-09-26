@@ -13,11 +13,11 @@ const candidateRules =
 const fixturePath = 'contracts/account_deletion/ad03/ownership_fixtures_v2.json';
 
 const pinnedMergedMainBlobs = Object.freeze({
-  // Reviewed follow-inbox integration; AD03 stays absent.
+  // Reconciled native/follow-inbox production roots; AD03 stays absent.
   'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
-  'firestore.rules': '9fbd6d900fa97d630e27045fa886bc883e5989b4',
+  'firestore.rules': '2c1554fd7623fb9cbeb9423b192b1bdd3b674143',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
+  'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
   'functions/src/domain/account_deletion_contract.ts':
     '39a76af7b7fc2b76389cbf31defa0aab60c6e5fe',
   'functions/src/domain/account_lifecycle_ad02_v2.ts':
@@ -34,10 +34,10 @@ const pinnedMergedMainBlobs = Object.freeze({
   'docs/planning/local-game-journal-v1.md':
     'd63191edfe1de6ec26da2e2029c6260d255e9bcf',
   // Reviewed public deep-link transition: URL strategy only; AD03 stays absent.
-  'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
+  'lib/main.dart': '44069fb8be78b6bef7c30dbac812b3b1ae673ba9',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; AD03 candidate imports stay excluded.
-  'lib/app/router/app_router.dart': '08a3f8c17c92b9857d419d235974bcd644c4b9d5',
+  'lib/app/router/app_router.dart': '8005df8d18dec38fc6f64bf7bd1c47bad128f5f9',
 });
 
 function read(relativePath) {

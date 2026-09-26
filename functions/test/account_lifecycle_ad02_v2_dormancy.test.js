@@ -8,20 +8,20 @@ const test = require('node:test');
 
 const repositoryRoot = path.resolve(__dirname, '../..');
 const baselineGitBlobHashes = Object.freeze({
-  // Reviewed follow-inbox integration; AD02 stays absent.
+  // Reconciled native/follow-inbox production roots; AD02 stays absent.
   'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
   // Reviewed bounded fan-favorites update; AD02 stays absent.
-  'firestore.rules': '9fbd6d900fa97d630e27045fa886bc883e5989b4',
+  'firestore.rules': '2c1554fd7623fb9cbeb9423b192b1bdd3b674143',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
-  'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
+  'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
   // Reviewed public deep-link transition: URL strategy only; AD02 stays absent.
-  'lib/main.dart': '087bf8e6fa37f3c005d5000821e406018f0cdade',
+  'lib/main.dart': '44069fb8be78b6bef7c30dbac812b3b1ae673ba9',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; AD02 candidate imports stay excluded.
   // Reviewed league-management route; AD02 candidate imports stay excluded.
-  'lib/app/router/app_router.dart': '08a3f8c17c92b9857d419d235974bcd644c4b9d5',
+  'lib/app/router/app_router.dart': '8005df8d18dec38fc6f64bf7bd1c47bad128f5f9',
   'lib/services/notification_service.dart': '923d67b6823b64af8edf17f1362a6dd298b24a00',
-  'lib/services/repositories/auth_repository.dart': '533f850d12b4b7d50428149f5c2af0c816717c0f',
+  'lib/services/repositories/auth_repository.dart': '3ac1870e9f078090c8c1f2ebe857b4c9f76ef564',
   'lib/core/constants/firestore_paths.dart': '6523b5f6b2fe01619e6e8d67a273930f070c99a7',
 });
 const candidateSources = [
