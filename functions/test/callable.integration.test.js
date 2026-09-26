@@ -1093,7 +1093,7 @@ test('division deletion resumes persisted operations and inventories canonical j
   assert.equal(recovered.data.status, 'deleted');
   assert.equal((await operationRef.get()).get('status'), 'deleted');
   assert.deepEqual(
-    (await adminDb.doc('associations/jba').get()).get('leagueCatalogV1.leagues.0.divisionIds'),
+    (await adminDb.doc('associations/jba').get()).get('leagueCatalogV1').leagues[0].divisionIds,
     ['premier'],
   );
 
