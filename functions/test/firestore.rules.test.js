@@ -403,6 +403,7 @@ test('fans can save bounded favorites but cannot change authority fields', async
       role: 'fan',
       favoriteLeagueIds: [],
       favoriteTeamIds: [],
+      favoritePlayerIds: [],
       notificationPrefs: {favoriteTeamUpdates: true},
     });
   });
@@ -410,12 +411,59 @@ test('fans can save bounded favorites but cannot change authority fields', async
   await assertSucceeds(updateDoc(doc(fan, 'users/fan-favorites'), {
     favoriteLeagueIds: ['nbl', 'schools'],
     favoriteTeamIds: ['team-a', 'team-b'],
+    favoritePlayerIds: ['player-a'],
     notificationPrefs: {favoriteTeamUpdates: false},
   }));
   await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {
     favoriteTeamIds: Array.from({length: 51}, (_, index) => `team-${index}`),
   }));
+  await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {
+    favoritePlayerIds: Array.from({length: 101}, (_, index) => `player-${index}`),
+  }));
   await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {role: 'admin'}));
+});
+
+test('inbox is owner-only and clients can only mark an unread item read', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'users/fan-inbox'), {
+      email: 'inbox@example.com', displayName: 'Inbox Fan', associationId: 'jba', role: 'fan',
+    });
+    await setDoc(doc(db, 'memberships/fan-inbox'), {
+      associationId: 'jba', status: 'active', authorizationSchemaVersion: 1,
+      role: 'fan', capabilities: ['association.read'],
+    });
+    await setDoc(doc(db, 'users/other-inbox'), {
+      email: 'other@example.com', displayName: 'Other', associationId: 'jba', role: 'fan',
+    });
+    await setDoc(doc(db, 'memberships/other-inbox'), {
+      associationId: 'jba', status: 'active', authorizationSchemaVersion: 1,
+      role: 'fan', capabilities: ['association.read'],
+    });
+    await setDoc(doc(db, 'users/fan-inbox/notifications/final-game-1'), {
+      associationId: 'jba', type: 'favorite_team_final', gameId: 'game-1',
+      title: 'Final', body: 'Score', createdAt: new Date(), readAt: null,
+    });
+  });
+  const own = authed('fan-inbox', 'inbox@example.com');
+  const other = authed('other-inbox', 'other@example.com');
+  const inboxRef = doc(own, 'users/fan-inbox/notifications/final-game-1');
+  await assertSucceeds(getDoc(inboxRef));
+  await assertSucceeds(getDocs(query(
+    collection(own, 'users/fan-inbox/notifications'),
+    orderBy('createdAt', 'desc'),
+  )));
+  await assertSucceeds(getDocs(query(
+    collection(own, 'users/fan-inbox/notifications'),
+    where('readAt', '==', null),
+  )));
+  await assertFails(getDoc(doc(other, 'users/fan-inbox/notifications/final-game-1')));
+  await assertFails(setDoc(doc(own, 'users/fan-inbox/notifications/forged'), {
+    associationId: 'jba', type: 'favorite_team_final', readAt: null,
+  }));
+  await assertFails(updateDoc(inboxRef, {title: 'Forged'}));
+  await assertSucceeds(updateDoc(inboxRef, {readAt: serverTimestamp()}));
+  await assertFails(updateDoc(inboxRef, {readAt: serverTimestamp()}));
+  await assertFails(deleteDoc(inboxRef));
 });
 
 test('fan query proves public non-ack visibility and internal reads fail', async () => {

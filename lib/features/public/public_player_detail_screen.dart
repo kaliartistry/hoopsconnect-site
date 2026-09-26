@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,11 +10,12 @@ import '../../core/sharing/branded_share_sheet.dart';
 import '../../core/sharing/public_share_branding.dart';
 import '../../core/widgets/public_brand_context.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../services/public_artifact_release_validator.dart';
 import 'public_team_identity.dart';
 
-class PublicPlayerDetailScreen extends ConsumerWidget {
+class PublicPlayerDetailScreen extends ConsumerStatefulWidget {
   final PublicLeagueSnapshot snapshot;
   final PublicPlayerDetail detail;
   final Uri? canonicalUri;
@@ -26,7 +28,22 @@ class PublicPlayerDetailScreen extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PublicPlayerDetailScreen> createState() =>
+      _PublicPlayerDetailScreenState();
+}
+
+class _PublicPlayerDetailScreenState
+    extends ConsumerState<PublicPlayerDetailScreen> {
+  PublicLeagueSnapshot get snapshot => widget.snapshot;
+  PublicPlayerDetail get detail => widget.detail;
+  Uri? get canonicalUri => widget.canonicalUri;
+  bool _saving = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final isFollowing =
+        user?.favoritePlayerIds.contains(widget.detail.playerId) ?? false;
     final divisionId = detail.categories.isEmpty
         ? null
         : detail.categories.first.divisionId;
@@ -52,6 +69,49 @@ class PublicPlayerDetailScreen extends ConsumerWidget {
         ),
         title: const Text('Player details'),
         actions: [
+          TextButton.icon(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            key: const Key('follow-player-button'),
+            onPressed: _saving
+                ? null
+                : () async {
+                    if (user == null) {
+                      context.go(
+                        AppRouteContract.loginFor(
+                          Uri.parse(
+                            PublicRoutePaths.player(widget.detail.playerId),
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    setState(() => _saving = true);
+                    try {
+                      await ref.read(authRepositoryProvider).updateUser(
+                        user.id,
+                        {
+                          'favoritePlayerIds': isFollowing
+                              ? FieldValue.arrayRemove([widget.detail.playerId])
+                              : FieldValue.arrayUnion([widget.detail.playerId]),
+                        },
+                      );
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Could not update player follow. Try again.',
+                            ),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => _saving = false);
+                    }
+                  },
+            icon: Icon(isFollowing ? Icons.check : Icons.person_add_alt_1),
+            label: Text(isFollowing ? 'Following' : 'Follow'),
+          ),
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
             icon: const Icon(Icons.compare_arrows, size: 20),

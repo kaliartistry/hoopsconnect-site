@@ -41,6 +41,7 @@ import '../../features/info/about_screen.dart';
 import '../../features/legal/legal_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/settings/settings_screen.dart';
+import '../../features/notifications/notifications_screen.dart';
 import '../../features/press/press_dashboard_screen.dart';
 import '../../features/press/game_summary_screen.dart';
 import '../../features/press/head_to_head_screen.dart';
@@ -683,6 +684,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
 
       // Profile & Settings
+      GoRoute(
+        path: '/notifications',
+        builder: (context, state) => const NotificationsScreen(),
+      ),
       GoRoute(
         path: '/profile',
         builder: (context, state) => const ProfileScreen(),

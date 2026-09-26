@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'public_team_identity.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +14,7 @@ import '../../core/widgets/app_state_message.dart';
 import '../../core/widgets/public_brand_context.dart';
 import '../../core/widgets/sponsor_banner.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../services/public_artifact_release_validator.dart';
 import 'historical_league_standings.dart';
@@ -39,12 +41,25 @@ class _PublicTeamDetailScreenState
   PublicLeagueSnapshot get snapshot => widget.snapshot;
   PublicTeamDetail get detail => widget.detail;
   Uri? get canonicalUri => widget.canonicalUri;
+  bool _saving = false;
   String _category = 'ppg';
   bool _perGame = true;
   bool _gamesView = true;
 
   @override
   Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final isFollowing =
+        user?.favoriteTeamIds.contains(widget.detail.team.teamId) ?? false;
+    final viaLeague =
+        user?.favoriteLeagueIds.any(
+          (leagueId) => snapshot.availableLeagues.any(
+            (league) =>
+                league.leagueId == leagueId &&
+                league.divisionIds.contains(detail.team.divisionId),
+          ),
+        ) ??
+        false;
     final league = snapshot.leagueForDivision(detail.team.divisionId);
     return Scaffold(
       backgroundColor: publicSportsCanvas,
@@ -140,6 +155,61 @@ class _PublicTeamDetailScreenState
           ),
         ),
         actions: [
+          TextButton.icon(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            key: const Key('follow-team-button'),
+            onPressed: _saving || (viaLeague && !isFollowing)
+                ? null
+                : () async {
+                    if (user == null) {
+                      context.go(
+                        AppRouteContract.loginFor(
+                          Uri.parse(
+                            PublicRoutePaths.team(widget.detail.team.teamId),
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    setState(() => _saving = true);
+                    try {
+                      await ref.read(authRepositoryProvider).updateUser(
+                        user.id,
+                        {
+                          'favoriteTeamIds': isFollowing
+                              ? FieldValue.arrayRemove([
+                                  widget.detail.team.teamId,
+                                ])
+                              : FieldValue.arrayUnion([
+                                  widget.detail.team.teamId,
+                                ]),
+                        },
+                      );
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Could not update team follow. Try again.',
+                            ),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => _saving = false);
+                    }
+                  },
+            icon: Icon(
+              isFollowing || viaLeague ? Icons.check : Icons.favorite_border,
+            ),
+            label: Text(
+              isFollowing
+                  ? 'Following team'
+                  : viaLeague
+                  ? 'Via league'
+                  : 'Follow',
+            ),
+          ),
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
             icon: const Icon(Icons.compare_arrows, size: 20),

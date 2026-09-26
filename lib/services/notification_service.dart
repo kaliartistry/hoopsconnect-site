@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/constants/firestore_paths.dart';
+import '../app/router/app_route_contract.dart';
 
 const _webVapidKey = String.fromEnvironment('FIREBASE_MESSAGING_WEB_VAPID_KEY');
 
@@ -193,6 +194,13 @@ class NotificationService {
 
       case 'post':
         return '/board';
+
+      case 'favorite_team_final':
+      case 'favorite_team_schedule':
+        final gameId = data['gameId'] as String?;
+        return gameId == null || gameId.isEmpty
+            ? PublicRoutePaths.games
+            : PublicRoutePaths.game(gameId);
 
       default:
         dev.log(

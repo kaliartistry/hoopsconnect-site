@@ -128,15 +128,35 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'displayName', 'phone', 'fcmTokens', 'notificationPrefs',
-          'favoriteLeagueIds', 'favoriteTeamIds', 'updatedAt'
+          'favoriteLeagueIds', 'favoriteTeamIds', 'favoritePlayerIds', 'updatedAt'
         ])
         && (!('favoriteLeagueIds' in request.resource.data)
           || (request.resource.data.favoriteLeagueIds is list
             && request.resource.data.favoriteLeagueIds.size() <= 100))
         && (!('favoriteTeamIds' in request.resource.data)
           || (request.resource.data.favoriteTeamIds is list
-            && request.resource.data.favoriteTeamIds.size() <= 50));
+            && request.resource.data.favoriteTeamIds.size() <= 50))
+        && (!('favoritePlayerIds' in request.resource.data)
+          || (request.resource.data.favoritePlayerIds is list
+            && request.resource.data.favoritePlayerIds.size() <= 100));
       allow delete: if false;
+
+      match /notifications/{notificationId} {
+        allow get, list: if isAuthenticated()
+          && request.auth.uid == userId
+          && hasMembershipDoc()
+          && getMembershipDoc().status == 'active'
+          && getMembershipDoc().authorizationSchemaVersion == 1;
+        allow update: if isAuthenticated()
+          && request.auth.uid == userId
+          && hasMembershipDoc()
+          && getMembershipDoc().status == 'active'
+          && getMembershipDoc().authorizationSchemaVersion == 1
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt'])
+          && resource.data.readAt == null
+          && request.resource.data.readAt == request.time;
+        allow create, delete: if false;
+      }
     }
 
     match /memberships/{userId} {

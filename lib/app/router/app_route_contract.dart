@@ -83,6 +83,10 @@ abstract final class AppRouteContract {
     ),
     AppRouteRule(pattern: '/about', session: AppRouteSession.public),
     AppRouteRule(
+      pattern: '/notifications',
+      session: AppRouteSession.activeMembership,
+    ),
+    AppRouteRule(
       pattern: PublicRoutePaths.root,
       prefix: true,
       session: AppRouteSession.public,

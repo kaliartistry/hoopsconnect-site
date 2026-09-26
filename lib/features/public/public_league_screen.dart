@@ -16,6 +16,7 @@ import '../../models/public_league_snapshot.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../services/public_artifact_release_validator.dart';
+import '../notifications/notifications_screen.dart';
 import 'historical_league_overview.dart';
 import 'historical_league_standings.dart';
 import 'public_stats_navigation.dart';
@@ -78,6 +79,8 @@ class PublicLeagueScreen extends ConsumerWidget {
           ),
           foregroundColor: Colors.white,
           actions: [
+            if (signedInUser != null)
+              const NotificationBell(color: Colors.white),
             if (signedInUser == null)
               TextButton(
                 onPressed: () => context.go('/login'),
