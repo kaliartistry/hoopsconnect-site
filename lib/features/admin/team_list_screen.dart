@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +9,7 @@ import '../../core/utils/error_mapper.dart';
 import '../../core/widgets/app_constrained_content.dart';
 import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
+import '../../core/widgets/sponsor_banner.dart';
 import '../../models/division_model.dart';
 import '../../models/team_model.dart';
 import '../../providers/auth_providers.dart';
@@ -72,7 +76,14 @@ class TeamListScreen extends ConsumerWidget {
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
-                  leading: const Icon(Icons.groups),
+                  leading: team.logoUrl == null
+                      ? const CircleAvatar(child: Icon(Icons.groups))
+                      : SponsorLogo(
+                          reference: team.logoUrl!,
+                          semanticLabel: '${team.name} logo',
+                          width: 44,
+                          height: 44,
+                        ),
                   title: Text(
                     team.name,
                     style: const TextStyle(fontWeight: FontWeight.bold),
@@ -177,6 +188,9 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
   String? _divisionId;
+  Uint8List? _selectedLogoBytes;
+  String? _selectedLogoName;
+  String? _createdTeamId;
   bool _saving = false;
   String? _formError;
 
@@ -193,6 +207,38 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
     super.dispose();
   }
 
+  Future<void> _chooseLogo() async {
+    const images = XTypeGroup(
+      label: 'Team logo',
+      extensions: ['png', 'jpg', 'jpeg', 'webp'],
+      mimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+      uniformTypeIdentifiers: [
+        'public.png',
+        'public.jpeg',
+        'org.webmproject.webp',
+      ],
+      webWildCards: ['image/*'],
+    );
+    final file = await openFile(acceptedTypeGroups: const [images]);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty || bytes.lengthInBytes > 2 * 1024 * 1024) {
+      if (mounted) {
+        setState(() {
+          _formError = 'Choose a PNG, JPG, or WebP logo smaller than 2 MB.';
+        });
+      }
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _selectedLogoBytes = bytes;
+        _selectedLogoName = file.name;
+        _formError = null;
+      });
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     final name = _nameController.text.trim();
@@ -200,7 +246,7 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
       teams: widget.teams,
       candidateName: name,
       seasonId: widget.seasonId,
-      excludingTeamId: widget.existing?.id,
+      excludingTeamId: widget.existing?.id ?? _createdTeamId,
     );
     if (conflicts.isNotEmpty) {
       final divisionNames = {
@@ -228,8 +274,9 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
     });
     try {
       final repository = ref.read(teamRepositoryProvider);
-      if (widget.existing == null) {
-        await repository.createTeam(
+      var teamId = widget.existing?.id ?? _createdTeamId;
+      if (teamId == null) {
+        teamId = await repository.createTeam(
           assocId,
           TeamModel(
             id: '',
@@ -238,14 +285,26 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
             seasonId: widget.seasonId,
           ),
         );
-      } else {
-        await repository.updateTeamIdentity(
-          assocId: assocId,
-          teamId: widget.existing!.id,
-          name: name,
-          divisionId: _divisionId!,
-        );
+        _createdTeamId = teamId;
       }
+      var logoUrl = widget.existing?.logoUrl;
+      if (_selectedLogoBytes != null && _selectedLogoName != null) {
+        logoUrl = await ref
+            .read(teamLogoStorageProvider)
+            .upload(
+              associationId: assocId,
+              teamId: teamId,
+              bytes: _selectedLogoBytes!,
+              fileName: _selectedLogoName!,
+            );
+      }
+      await repository.updateTeamIdentity(
+        assocId: assocId,
+        teamId: teamId,
+        name: name,
+        divisionId: _divisionId!,
+        logoUrl: logoUrl,
+      );
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (mounted) {
@@ -294,6 +353,80 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
                   onChanged: (_) {
                     if (_formError != null) setState(() => _formError = null);
                   },
+                ),
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Team logo',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                      child: _selectedLogoBytes != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(11),
+                              child: Image.memory(
+                                _selectedLogoBytes!,
+                                width: 70,
+                                height: 70,
+                                fit: BoxFit.contain,
+                              ),
+                            )
+                          : widget.existing?.logoUrl != null
+                          ? SponsorLogo(
+                              reference: widget.existing!.logoUrl!,
+                              semanticLabel: '${widget.existing!.name} logo',
+                              width: 70,
+                              height: 70,
+                            )
+                          : const Icon(Icons.shield_outlined, size: 34),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          OutlinedButton.icon(
+                            key: const Key('choose-team-logo'),
+                            onPressed: _saving ? null : _chooseLogo,
+                            icon: const Icon(Icons.upload_outlined),
+                            label: Text(
+                              _selectedLogoBytes == null
+                                  ? 'Choose logo'
+                                  : 'Choose another',
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _selectedLogoName ??
+                                'PNG, JPG, or WebP. Maximum 2 MB.',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(

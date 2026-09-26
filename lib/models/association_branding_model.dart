@@ -21,7 +21,7 @@ class SponsorBrandingModel {
       enabled: data['enabled'] as bool? ?? false,
       name: (data['name'] as String? ?? '').trim(),
       label: (data['label'] as String? ?? 'Presented by').trim(),
-      logoUrl: _httpsUrlOrNull(data['logoUrl']),
+      logoUrl: _imageReferenceOrNull(data['logoUrl']),
       websiteUrl: _httpsUrlOrNull(data['websiteUrl']),
     );
   }
@@ -32,7 +32,7 @@ class SponsorBrandingModel {
     'enabled': enabled,
     'name': name.trim(),
     'label': label.trim().isEmpty ? 'Presented by' : label.trim(),
-    'logoUrl': _httpsUrlOrNull(logoUrl),
+    'logoUrl': _imageReferenceOrNull(logoUrl),
     'websiteUrl': _httpsUrlOrNull(websiteUrl),
   };
 
@@ -108,7 +108,7 @@ class AssociationBrandingModel {
         branding['shortName'] ?? data['shortName'],
         defaults.shortName,
       ),
-      logoUrl: _httpsUrlOrNull(branding['logoUrl'] ?? data['logoUrl']),
+      logoUrl: _imageReferenceOrNull(branding['logoUrl'] ?? data['logoUrl']),
       primaryColorHex: _colorOrFallback(
         branding['primaryColorHex'],
         defaults.primaryColorHex,
@@ -129,7 +129,7 @@ class AssociationBrandingModel {
     'schemaVersion': 1,
     'leagueName': leagueName.trim(),
     'shortName': shortName.trim(),
-    'logoUrl': _httpsUrlOrNull(logoUrl),
+    'logoUrl': _imageReferenceOrNull(logoUrl),
     'primaryColorHex': _colorOrFallback(primaryColorHex, '#2E7D32'),
     'secondaryColorHex': _colorOrFallback(secondaryColorHex, '#1B5E20'),
     'accentColorHex': _colorOrFallback(accentColorHex, '#F9A825'),
@@ -187,4 +187,20 @@ String? _httpsUrlOrNull(Object? value) {
   final uri = Uri.tryParse(value.trim());
   if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
   return uri.toString();
+}
+
+String? _imageReferenceOrNull(Object? value) {
+  if (value is! String || value.trim().isEmpty) return null;
+  final candidate = value.trim();
+  final bundledPresentationAsset =
+      candidate == 'asset:assets/images/nbl_jamaica_logo.png' ||
+      RegExp(
+        r'^asset:assets/images/jbl_(full|sub|foska|tivoli|slayers|warriors|raptors|flames|eagles|knights|celtics|rebels|spartans)\.png$',
+      ).hasMatch(candidate) ||
+      (candidate.startsWith('asset:assets/images/sponsor_') &&
+          candidate.endsWith('.png'));
+  if (bundledPresentationAsset && !candidate.contains('..')) {
+    return candidate;
+  }
+  return _httpsUrlOrNull(candidate);
 }

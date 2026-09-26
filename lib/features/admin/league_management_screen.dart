@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/widgets/app_state_message.dart';
+import '../../core/widgets/sponsor_banner.dart';
 import '../../models/association_branding_model.dart';
 import '../../models/division_model.dart';
 import '../../models/league_catalog_model.dart';
+import '../../platform/qa_environment.dart';
 import '../../providers/association_branding_providers.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
@@ -17,13 +19,34 @@ class LeagueManagementScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final catalog = ref.watch(leagueCatalogProvider);
     final divisions = ref.watch(activeDivisionsProvider);
+    final compact = MediaQuery.sizeOf(context).width < 700;
+    void addLeague() => _editLeague(context, ref, null);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Leagues & Sponsors')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _editLeague(context, ref, null, divisions),
-        icon: const Icon(Icons.add),
-        label: const Text('Add league'),
-      ),
+      floatingActionButton: compact
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: addLeague,
+              icon: const Icon(Icons.add),
+              label: const Text('Add league'),
+            ),
+      bottomNavigationBar: compact
+          ? SafeArea(
+              minimum: EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                QaEnvironment.enabled ? 48 : 12,
+              ),
+              child: FilledButton.icon(
+                key: const Key('add-league-mobile-button'),
+                onPressed: addLeague,
+                icon: const Icon(Icons.add),
+                label: const Text('Add league'),
+              ),
+            )
+          : null,
       body: catalog.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Padding(
@@ -35,12 +58,12 @@ class LeagueManagementScreen extends ConsumerWidget {
           ),
         ),
         data: (value) => ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+          padding: EdgeInsets.fromLTRB(16, 16, 16, compact ? 24 : 96),
           children: [
             const AppStateMessage(
-              title: 'Set up a league in 3 steps',
+              title: 'Set up the league hierarchy in 3 steps',
               message:
-                  '1. Create the divisions you need.\n2. Add a league.\n3. Assign its divisions, colors, and optional title sponsor.\n\nAssociation-wide branding and the mega sponsor are managed separately.',
+                  '1. Create the parent league.\n2. Add divisions beneath that league.\n3. Add its colors and optional title sponsor.\n\nA division can belong to only one league. Association-wide branding and the mega sponsor are managed separately.',
               icon: Icons.account_tree_outlined,
               compact: true,
             ),
@@ -53,7 +76,7 @@ class LeagueManagementScreen extends ConsumerWidget {
                 OutlinedButton.icon(
                   onPressed: () => context.push('/admin/divisions'),
                   icon: const Icon(Icons.account_tree_outlined),
-                  label: const Text('Manage divisions'),
+                  label: const Text('View league hierarchy'),
                 ),
                 Text(
                   '${value.leagues.length} of ${LeagueCatalogModel.maxLeagues} leagues configured',
@@ -74,7 +97,7 @@ class LeagueManagementScreen extends ConsumerWidget {
                 _LeagueCard(
                   league: league,
                   divisions: divisions,
-                  onEdit: () => _editLeague(context, ref, league, divisions),
+                  onEdit: () => _editLeague(context, ref, league),
                   onDelete: () => _deleteLeague(context, ref, league, value),
                 ),
                 const SizedBox(height: 12),
@@ -91,12 +114,30 @@ class LeagueManagementScreen extends ConsumerWidget {
     LeagueProfileModel league,
     LeagueCatalogModel catalog,
   ) async {
+    if (league.divisionIds.isNotEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('${league.name} still owns divisions'),
+          content: Text(
+            'A parent league cannot be removed while ${league.divisionIds.length} ${league.divisionIds.length == 1 ? 'division is' : 'divisions are'} beneath it. Permanently delete those child divisions first.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Got it'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Remove ${league.name}?'),
         content: const Text(
-          'This removes the league grouping and branding. It does not delete its divisions, teams, games, or scores.',
+          'This removes the empty league grouping and its branding.',
         ),
         actions: [
           TextButton(
@@ -126,7 +167,6 @@ class LeagueManagementScreen extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     LeagueProfileModel? existing,
-    List<DivisionModel> divisions,
   ) async {
     final currentCatalog =
         ref.read(leagueCatalogProvider).valueOrNull ??
@@ -142,11 +182,6 @@ class LeagueManagementScreen extends ConsumerWidget {
       );
       return;
     }
-    final assignedLeagueByDivision = <String, String>{
-      for (final league in currentCatalog.leagues)
-        if (league.id != existing?.id)
-          for (final divisionId in league.divisionIds) divisionId: league.name,
-    };
     final name = TextEditingController(text: existing?.name);
     final shortName = TextEditingController(text: existing?.shortName);
     final description = TextEditingController(text: existing?.description);
@@ -154,10 +189,15 @@ class LeagueManagementScreen extends ConsumerWidget {
     final sponsorLabel = TextEditingController(
       text: existing?.sponsor.label ?? 'Title sponsor',
     );
+    final sponsorLogoUrl = TextEditingController(
+      text: existing?.sponsor.logoUrl,
+    );
+    final sponsorWebsiteUrl = TextEditingController(
+      text: existing?.sponsor.websiteUrl,
+    );
     final primaryColor = TextEditingController(
       text: existing?.primaryColorHex ?? '#2E7D32',
     );
-    final selectedDivisions = <String>{...existing?.divisionIds ?? const []};
     var sponsorEnabled = existing?.sponsor.enabled ?? false;
     final saved = await showDialog<LeagueProfileModel>(
       context: context,
@@ -196,38 +236,21 @@ class LeagueManagementScreen extends ConsumerWidget {
                   const SizedBox(height: 16),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Divisions',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  for (final division in divisions)
-                    CheckboxListTile(
+                    child: ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(division.name),
-                      subtitle: assignedLeagueByDivision[division.id] == null
-                          ? null
-                          : Text(
-                              'Already assigned to ${assignedLeagueByDivision[division.id]}',
-                            ),
-                      value: selectedDivisions.contains(division.id),
-                      onChanged: assignedLeagueByDivision[division.id] != null
-                          ? null
-                          : (selected) => setDialogState(() {
-                              if (selected == true) {
-                                selectedDivisions.add(division.id);
-                              } else {
-                                selectedDivisions.remove(division.id);
-                              }
-                            }),
-                    ),
-                  if (divisions.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Text(
-                        'No active divisions are available. Create divisions first, then return here to assign them.',
+                      leading: const Icon(Icons.account_tree_outlined),
+                      title: Text(
+                        existing == null
+                            ? 'Divisions come after the league'
+                            : '${existing.divisionIds.length} ${existing.divisionIds.length == 1 ? 'division' : 'divisions'} beneath this league',
+                      ),
+                      subtitle: Text(
+                        existing == null
+                            ? 'Save the parent league, then open the league hierarchy to add Division A, Premier, Community League, or any other child division.'
+                            : 'Use View league hierarchy to add or manage child divisions. Divisions cannot be assigned at the association level.',
                       ),
                     ),
+                  ),
                   const Divider(),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -251,6 +274,32 @@ class LeagueManagementScreen extends ConsumerWidget {
                         hintText: 'Title sponsor',
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: sponsorLogoUrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Sponsor logo (HTTPS URL or bundled asset)',
+                        hintText: 'https://… or asset:assets/images/…',
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    if (sponsorLogoUrl.text.trim().isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      _SponsorLogoPreview(
+                        name: sponsorName.text.trim().isEmpty
+                            ? 'Sponsor'
+                            : sponsorName.text.trim(),
+                        reference: sponsorLogoUrl.text.trim(),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: sponsorWebsiteUrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Sponsor website (optional)',
+                        hintText: 'https://…',
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -267,11 +316,13 @@ class LeagueManagementScreen extends ConsumerWidget {
                 final color = primaryColor.text.trim();
                 if (trimmedName.isEmpty ||
                     !AssociationBrandingModel.isValidColorHex(color) ||
-                    (sponsorEnabled && sponsorName.text.trim().isEmpty)) {
+                    (sponsorEnabled && sponsorName.text.trim().isEmpty) ||
+                    !_validImageReferenceOrEmpty(sponsorLogoUrl.text) ||
+                    !_validHttpsOrEmpty(sponsorWebsiteUrl.text)) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text(
-                        'Add a league name, valid color, and sponsor name when enabled.',
+                        'Add a league name, valid color, sponsor name when enabled, and valid logo or website references.',
                       ),
                     ),
                   );
@@ -304,7 +355,7 @@ class LeagueManagementScreen extends ConsumerWidget {
                     description: description.text.trim().isEmpty
                         ? null
                         : description.text.trim(),
-                    divisionIds: selectedDivisions.toList(growable: false),
+                    divisionIds: existing?.divisionIds ?? const [],
                     primaryColorHex: color,
                     secondaryColorHex: existing?.secondaryColorHex ?? '#1B5E20',
                     accentColorHex: existing?.accentColorHex ?? '#F9A825',
@@ -314,6 +365,12 @@ class LeagueManagementScreen extends ConsumerWidget {
                       label: sponsorLabel.text.trim().isEmpty
                           ? 'Title sponsor'
                           : sponsorLabel.text.trim(),
+                      logoUrl: sponsorLogoUrl.text.trim().isEmpty
+                          ? null
+                          : sponsorLogoUrl.text.trim(),
+                      websiteUrl: sponsorWebsiteUrl.text.trim().isEmpty
+                          ? null
+                          : sponsorWebsiteUrl.text.trim(),
                     ),
                     sortOrder: existing?.sortOrder ?? 0,
                   ),
@@ -330,6 +387,8 @@ class LeagueManagementScreen extends ConsumerWidget {
     description.dispose();
     sponsorName.dispose();
     sponsorLabel.dispose();
+    sponsorLogoUrl.dispose();
+    sponsorWebsiteUrl.dispose();
     primaryColor.dispose();
     if (saved == null || !context.mounted) return;
     final current =
@@ -399,8 +458,35 @@ class _LeagueCard extends StatelessWidget {
           child: Text(league.shortName.characters.first.toUpperCase()),
         ),
         title: Text(league.name),
-        subtitle: Text(
-          '${names.isEmpty ? 'No divisions assigned' : names}\n${league.sponsor.isActive ? '${league.sponsor.label}: ${league.sponsor.name}' : 'No league sponsor shown'}',
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(names.isEmpty ? 'No divisions assigned' : names),
+            const SizedBox(height: 5),
+            if (league.sponsor.isActive)
+              Row(
+                children: [
+                  if (league.sponsor.logoUrl != null) ...[
+                    SponsorLogo(
+                      reference: league.sponsor.logoUrl!,
+                      semanticLabel: '${league.sponsor.name} logo',
+                      width: 72,
+                      height: 32,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Flexible(
+                    child: Text(
+                      'TITLE SPONSOR · ${league.sponsor.name}',
+                      maxLines: 2,
+                      overflow: TextOverflow.fade,
+                    ),
+                  ),
+                ],
+              )
+            else
+              const Text('No league sponsor shown'),
+          ],
         ),
         isThreeLine: true,
         trailing: PopupMenuButton<String>(
@@ -414,4 +500,76 @@ class _LeagueCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SponsorLogoPreview extends StatelessWidget {
+  const _SponsorLogoPreview({required this.name, required this.reference});
+
+  final String name;
+  final String reference;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_validImageReferenceOrEmpty(reference)) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Use a complete HTTPS URL or a bundled asset reference.',
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      );
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          SponsorLogo(
+            reference: reference,
+            semanticLabel: '$name logo preview',
+            width: 112,
+            height: 44,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'PUBLIC HEADER PREVIEW',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    letterSpacing: 0.7,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(name.isEmpty ? 'Sponsor name' : name),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+bool _validHttpsOrEmpty(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return true;
+  final uri = Uri.tryParse(trimmed);
+  return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
+}
+
+bool _validImageReferenceOrEmpty(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return true;
+  if (_validHttpsOrEmpty(trimmed)) return true;
+  if (!trimmed.startsWith('asset:assets/images/')) return false;
+  final path = trimmed.substring('asset:'.length);
+  return !path.contains('..') &&
+      RegExp(r'^assets/images/[A-Za-z0-9._/-]+$').hasMatch(path);
 }

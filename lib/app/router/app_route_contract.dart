@@ -4,11 +4,14 @@ import '../../models/user_model.dart';
 abstract final class PublicRoutePaths {
   static const root = '/public';
   static const games = '/public/games';
+  static const media = '/public/media';
   static const standings = '/public/standings';
   static const leaders = '/public/leaders';
 
   static String game(String eventId) =>
       '$games/${Uri.encodeComponent(eventId)}';
+  static String mediaItem(String mediaId) =>
+      '$media/${Uri.encodeComponent(mediaId)}';
   static String team(String teamId) =>
       '$root/teams/${Uri.encodeComponent(teamId)}';
   static String player(String playerId) =>
@@ -79,6 +82,10 @@ abstract final class AppRouteContract {
       session: AppRouteSession.public,
     ),
     AppRouteRule(pattern: '/about', session: AppRouteSession.public),
+    AppRouteRule(
+      pattern: '/notifications',
+      session: AppRouteSession.activeMembership,
+    ),
     AppRouteRule(
       pattern: PublicRoutePaths.root,
       prefix: true,

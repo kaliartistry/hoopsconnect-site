@@ -3,48 +3,43 @@ import 'package:flutter/material.dart';
 import '../core/constants/app_constants.dart';
 import '../models/association_branding_model.dart';
 
-/// Applies association branding without sacrificing readable controls.
-///
-/// Exact brand colors are retained for the ordinary light theme. Dark and
-/// high-contrast themes use tonal colors generated from the same seeds so
-/// controls remain readable on their surfaces.
+/// Keeps product chrome consistent while association artwork carries its own
+/// branding. This prevents green-and-gold logos from disappearing into green
+/// navigation and controls.
 ThemeData buildBrandedTheme(
   ThemeData base,
   AssociationBrandingModel branding, {
   bool highContrast = false,
 }) {
   final generated = ColorScheme.fromSeed(
-    seedColor: branding.primaryColor,
+    seedColor: AppColors.primary,
     brightness: base.brightness,
     contrastLevel: highContrast ? 1 : 0,
   );
   final generatedAccent = ColorScheme.fromSeed(
-    seedColor: branding.accentColor,
+    seedColor: AppColors.accent,
     brightness: base.brightness,
     contrastLevel: highContrast ? 1 : 0,
   );
-  final generatedSecondary = ColorScheme.fromSeed(
-    seedColor: branding.secondaryColor,
-    brightness: base.brightness,
-    contrastLevel: highContrast ? 1 : 0,
-  );
-  final preserveExactLightBrand =
+  final preserveExactLightChrome =
       base.brightness == Brightness.light && !highContrast;
-  final controlPrimary = preserveExactLightBrand
-      ? branding.primaryColor
+  final controlPrimary = preserveExactLightChrome
+      ? AppColors.primary
       : generated.primary;
-  final onControlPrimary = preserveExactLightBrand
+  final onControlPrimary = preserveExactLightChrome
       ? highestContrastForeground(controlPrimary)
       : generated.onPrimary;
-  final controlAccent = preserveExactLightBrand
-      ? branding.accentColor
+  final controlAccent = preserveExactLightChrome
+      ? AppColors.accent
       : generatedAccent.primary;
-  final onControlAccent = preserveExactLightBrand
+  final onControlAccent = preserveExactLightChrome
       ? highestContrastForeground(controlAccent)
       : generatedAccent.onPrimary;
   final appBarBackground = highContrast
-      ? generatedSecondary.primary
-      : branding.secondaryColor;
+      ? generated.primary
+      : (base.brightness == Brightness.dark
+            ? AppColors.primaryDark
+            : AppColors.primary);
   final appBarForeground = highestContrastForeground(appBarBackground);
   final colorScheme = generated.copyWith(
     primary: controlPrimary,
@@ -73,7 +68,9 @@ ThemeData buildBrandedTheme(
 
   return base.copyWith(
     colorScheme: colorScheme,
-    scaffoldBackgroundColor: colorScheme.surface,
+    scaffoldBackgroundColor: base.brightness == Brightness.dark
+        ? colorScheme.surface
+        : AppColors.surface,
     focusColor: interactionPrimary.withValues(
       alpha: base.brightness == Brightness.dark ? 0.28 : 0.16,
     ),

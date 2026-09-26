@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/widgets/responsive_layout.dart';
 import '../../core/widgets/skeleton_loader.dart';
@@ -232,6 +233,18 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
     final body = Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('board-public-scores-share'),
+              onPressed: () => context.push(PublicRoutePaths.games),
+              icon: const Icon(Icons.ios_share_outlined, size: 18),
+              label: const Text('Public scores and share cards'),
+            ),
+          ),
+        ),
         filterBar,
         Expanded(child: postList),
       ],

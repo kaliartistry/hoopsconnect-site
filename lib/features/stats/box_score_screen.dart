@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
-import '../../models/association_branding_model.dart';
+import '../../core/sharing/public_share_branding.dart';
 import '../../models/game_stats_model.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
@@ -1031,38 +1031,86 @@ class _ShareBoxScoreButton extends ConsumerWidget {
             .watch(publicLeagueSnapshotProvider)
             .valueOrNull;
         final publishedGame = publicSnapshot?.gameDetail(eventId)?.game;
+        if (publicSnapshot != null &&
+            publishedGame != null &&
+            isLegacyPublicScoreShareEligible(publicSnapshot, publishedGame)) {
+          return IconButton(
+            key: const Key('box-score-legacy-score-share'),
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'Share public final score',
+            onPressed: () async {
+              final validator = PublicLegacyGameShareValidator(
+                ref.read(publicLeagueRepositoryProvider),
+              );
+              try {
+                final current = await validator.requireCurrent(
+                  displayed: publicSnapshot,
+                  displayedGame: publishedGame,
+                );
+                if (!context.mounted) return;
+                final currentGame = current.game!;
+                final branding = publicShareBranding(
+                  current.snapshot,
+                  current.snapshot.leagueForDivision(currentGame.divisionId),
+                );
+                await showBrandedShareSheet(
+                  context: context,
+                  branding: branding,
+                  payload: BrandedSharePayload.legacyPublicGame(
+                    snapshot: current.snapshot,
+                    game: currentGame,
+                    branding: branding,
+                  ),
+                  validateCurrent: () async {
+                    await validator.requireCurrent(
+                      displayed: publicSnapshot,
+                      displayedGame: publishedGame,
+                    );
+                  },
+                );
+              } on PublicArtifactReleaseException catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error.message)));
+                }
+              }
+            },
+          );
+        }
         if (publicSnapshot == null ||
             publishedGame == null ||
             !publicSnapshot.canCreatePublishedArtifacts ||
             !publishedGame.hasVersionedResult) {
-          return const IconButton(
-            icon: Icon(Icons.share_outlined),
-            tooltip: 'Published result is not available to share',
-            onPressed: null,
-          );
+          return const SizedBox.shrink();
         }
-        final branding =
-            AssociationBrandingModel.jba(
-              associationId: publicSnapshot.associationId,
-            ).copyWith(
-              leagueName: publicSnapshot.leagueName,
-              shortName: publicSnapshot.leagueShortName,
-            );
+        final branding = publicShareBranding(
+          publicSnapshot,
+          publicSnapshot.leagueForDivision(publishedGame.divisionId),
+        );
         final releaseBinding = PublicArtifactBinding.game(
           publicSnapshot,
           publishedGame,
         );
         return IconButton(
           icon: const Icon(Icons.share_outlined),
-          tooltip: 'Share final result',
+          tooltip: publishedGame.playerLines.isNotEmpty
+              ? 'Share published box score'
+              : 'Share published final score',
           onPressed: () => showBrandedShareSheet(
             context: context,
             branding: branding,
-            payload: BrandedSharePayload.publicGame(
-              snapshot: publicSnapshot,
-              game: publishedGame,
-              branding: branding,
-            ),
+            payload: publishedGame.playerLines.isNotEmpty
+                ? BrandedSharePayload.publicBoxScore(
+                    snapshot: publicSnapshot,
+                    game: publishedGame,
+                    branding: branding,
+                  )
+                : BrandedSharePayload.publicGame(
+                    snapshot: publicSnapshot,
+                    game: publishedGame,
+                    branding: branding,
+                  ),
             validateCurrent: () async {
               await ref
                   .read(publicArtifactReleaseValidatorProvider)

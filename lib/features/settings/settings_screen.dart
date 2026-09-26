@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/constants/app_constants.dart';
 import '../../app/app_version.dart';
 import '../../app/router/app_route_contract.dart';
@@ -9,7 +10,10 @@ import '../../providers/public_league_provider.dart';
 import '../../providers/theme_providers.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.focusFavorites = false, this.leagueId});
+
+  final bool focusFavorites;
+  final String? leagueId;
 
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
@@ -31,7 +35,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final publicSnapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(
+        title: Text(widget.focusFavorites ? 'Follow teams' : 'Settings'),
+        leading: widget.focusFavorites
+            ? IconButton(
+                tooltip: 'Back to games',
+                onPressed: () => context.canPop()
+                    ? context.pop()
+                    : context.go(PublicRoutePaths.games),
+                icon: const Icon(Icons.arrow_back),
+              )
+            : null,
+        actions: [
+          if (widget.focusFavorites && userAsync.valueOrNull != null)
+            TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor:
+                    Theme.of(context).appBarTheme.foregroundColor ??
+                    Colors.white,
+              ),
+              onPressed: _saving
+                  ? null
+                  : () => _savePrefs(userAsync.valueOrNull!.id),
+              child: Text(_saving ? 'Saving…' : 'Save'),
+            ),
+        ],
+      ),
       body: userAsync.when(
         data: (user) {
           if (user == null) {
@@ -55,6 +84,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _loaded = true;
           }
 
+          final followedTeamCount = {
+            ..._favoriteTeamIds,
+            if (publicSnapshot != null)
+              for (final team in publicSnapshot.teams)
+                if (publicSnapshot.availableLeagues.any(
+                  (league) =>
+                      _favoriteLeagueIds.contains(league.leagueId) &&
+                      league.divisionIds.contains(team.divisionId),
+                ))
+                  team.teamId,
+          }.length;
           final themeMode = ref.watch(themeModeProvider);
           final version = ref.watch(appVersionInfoProvider);
           final cardColor =
@@ -67,42 +107,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             padding: const EdgeInsets.all(AppSizes.paddingLg),
             children: [
               // Appearance section
-              _buildSectionHeader('Appearance'),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  border: Border.all(color: borderColor),
-                  borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+              if (!widget.focusFavorites) ...[
+                _buildSectionHeader('Appearance'),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    border: Border.all(color: borderColor),
+                    borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                  ),
+                  child: Column(
+                    children: [
+                      for (final entry in [
+                        (ThemeMode.system, 'System', Icons.settings_brightness),
+                        (ThemeMode.light, 'Light', Icons.light_mode),
+                        (ThemeMode.dark, 'Dark', Icons.dark_mode),
+                      ])
+                        ListTile(
+                          leading: Icon(entry.$3),
+                          title: Text(entry.$2),
+                          trailing: themeMode == entry.$1
+                              ? const Icon(
+                                  Icons.check,
+                                  color: AppColors.primary,
+                                )
+                              : null,
+                          selected: themeMode == entry.$1,
+                          selectedColor: AppColors.primary,
+                          onTap: () {
+                            ref
+                                .read(themeModeProvider.notifier)
+                                .setThemeMode(entry.$1);
+                          },
+                        ),
+                    ],
+                  ),
                 ),
-                child: Column(
-                  children: [
-                    for (final entry in [
-                      (ThemeMode.system, 'System', Icons.settings_brightness),
-                      (ThemeMode.light, 'Light', Icons.light_mode),
-                      (ThemeMode.dark, 'Dark', Icons.dark_mode),
-                    ])
-                      ListTile(
-                        leading: Icon(entry.$3),
-                        title: Text(entry.$2),
-                        trailing: themeMode == entry.$1
-                            ? const Icon(Icons.check, color: AppColors.primary)
-                            : null,
-                        selected: themeMode == entry.$1,
-                        selectedColor: AppColors.primary,
-                        onTap: () {
-                          ref
-                              .read(themeModeProvider.notifier)
-                              .setThemeMode(entry.$1);
-                        },
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
+              ],
 
               _buildSectionHeader('Favorite Teams'),
               const SizedBox(height: 8),
+              const Text(
+                'Choose a league’s current teams or individual teams, then save your preferences.',
+              ),
+              const SizedBox(height: 8),
+              if (widget.focusFavorites) ...[
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Team notifications'),
+                  subtitle: const Text(
+                    'Final scores and schedule updates for followed teams. Notifications must also be allowed on your device.',
+                  ),
+                  value: _favoriteTeamUpdates,
+                  onChanged: (value) =>
+                      setState(() => _favoriteTeamUpdates = value),
+                ),
+                const SizedBox(height: 8),
+              ],
               Container(
                 decoration: BoxDecoration(
                   color: cardColor,
@@ -118,19 +180,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                       )
                     : ExpansionTile(
-                        initiallyExpanded: _favoriteTeamIds.isEmpty,
+                        initiallyExpanded:
+                            widget.focusFavorites || followedTeamCount == 0,
                         leading: const Icon(Icons.favorite_outline),
                         title: Text(
-                          _favoriteTeamIds.isEmpty
+                          followedTeamCount == 0
                               ? 'Choose teams to follow'
-                              : '${_favoriteTeamIds.length} team${_favoriteTeamIds.length == 1 ? '' : 's'} followed',
+                              : '$followedTeamCount team${followedTeamCount == 1 ? '' : 's'} followed',
                         ),
                         subtitle: const Text(
                           'Your teams stay together across scores and alerts',
                         ),
                         children: [
+                          if (_favoriteLeagueIds.contains('all') &&
+                              publicSnapshot.leagues.isNotEmpty)
+                            CheckboxListTile(
+                              value: true,
+                              title: const Text('All teams (older follow)'),
+                              subtitle: const Text(
+                                'Turn off to clear this and the older team selections.',
+                              ),
+                              onChanged: (_) => setState(() {
+                                _favoriteLeagueIds.remove('all');
+                                _favoriteTeamIds.clear();
+                              }),
+                            ),
                           for (final league
-                              in publicSnapshot.availableLeagues) ...[
+                              in [...publicSnapshot.availableLeagues]..sort(
+                                (a, b) => a.leagueId == widget.leagueId
+                                    ? -1
+                                    : b.leagueId == widget.leagueId
+                                    ? 1
+                                    : 0,
+                              )) ...[
                             CheckboxListTile(
                               value: _favoriteLeagueIds.contains(
                                 league.leagueId,
@@ -141,21 +223,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              subtitle: const Text('Follow every team'),
+                              subtitle: const Text(
+                                'Follow all current teams in this league',
+                              ),
                               onChanged: (selected) => setState(() {
-                                final teamIds = publicSnapshot.teams
-                                    .where(
-                                      (team) => league.divisionIds.contains(
-                                        team.divisionId,
-                                      ),
-                                    )
-                                    .map((team) => team.teamId);
                                 if (selected == true) {
                                   _favoriteLeagueIds.add(league.leagueId);
-                                  _favoriteTeamIds.addAll(teamIds);
                                 } else {
                                   _favoriteLeagueIds.remove(league.leagueId);
-                                  _favoriteTeamIds.removeAll(teamIds);
                                 }
                               }),
                             ),
@@ -169,80 +244,183 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   left: 48,
                                   right: 16,
                                 ),
-                                value: _favoriteTeamIds.contains(team.teamId),
+                                value:
+                                    _favoriteTeamIds.contains(team.teamId) ||
+                                    _favoriteLeagueIds.contains(
+                                      league.leagueId,
+                                    ),
                                 title: Text(team.name),
                                 subtitle: Text(
-                                  publicSnapshot.divisionName(team.divisionId),
+                                  _favoriteLeagueIds.contains(league.leagueId)
+                                      ? 'Included through league follow'
+                                      : publicSnapshot.divisionName(
+                                          team.divisionId,
+                                        ),
                                 ),
-                                onChanged: (selected) => setState(() {
-                                  if (selected == true) {
-                                    _favoriteTeamIds.add(team.teamId);
-                                  } else {
-                                    _favoriteTeamIds.remove(team.teamId);
-                                    _favoriteLeagueIds.remove(league.leagueId);
-                                  }
-                                }),
+                                onChanged:
+                                    _favoriteLeagueIds.contains(league.leagueId)
+                                    ? null
+                                    : (selected) => setState(() {
+                                        if (selected == true) {
+                                          _favoriteTeamIds.add(team.teamId);
+                                        } else {
+                                          _favoriteTeamIds.remove(team.teamId);
+                                        }
+                                      }),
                               ),
                             const Divider(height: 1),
                           ],
+                          if (_favoriteLeagueIds.isNotEmpty ||
+                              _favoriteTeamIds.isNotEmpty)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: () => setState(() {
+                                  _favoriteLeagueIds.clear();
+                                  _favoriteTeamIds.clear();
+                                }),
+                                child: const Text(
+                                  'Clear team and league follows',
+                                ),
+                              ),
+                            ),
                         ],
                       ),
               ),
               const SizedBox(height: 24),
 
-              // Notifications section
-              _buildSectionHeader('Notifications'),
+              _buildSectionHeader('Favorite Players'),
               const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  border: Border.all(color: borderColor),
-                  borderRadius: BorderRadius.circular(AppSizes.radiusMd),
-                ),
-                child: Column(
-                  children: [
-                    SwitchListTile(
-                      title: const Text('Favorite Team Updates'),
-                      subtitle: const Text(
-                        'Get final scores and schedule updates for teams you follow',
+              Card(
+                child: user.favoritePlayerIds.isEmpty
+                    ? ListTile(
+                        leading: const Icon(Icons.person_add_alt_1),
+                        title: const Text('Find a player to follow'),
+                        subtitle: const Text(
+                          'Open Leaders, choose a player, then tap Follow.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => context.push(PublicRoutePaths.leaders),
+                      )
+                    : Column(
+                        children: [
+                          for (final playerId in user.favoritePlayerIds)
+                            Builder(
+                              builder: (context) {
+                                final player = publicSnapshot?.playerDetail(
+                                  playerId,
+                                );
+                                return ListTile(
+                                  leading: const Icon(Icons.person_outline),
+                                  title: Text(
+                                    player?.displayName ??
+                                        'Player unavailable in current release',
+                                  ),
+                                  subtitle: player == null
+                                      ? null
+                                      : Text(player.teamName),
+                                  trailing: player == null
+                                      ? IconButton(
+                                          tooltip:
+                                              'Unfollow unavailable player',
+                                          icon: const Icon(Icons.person_remove),
+                                          onPressed: () async {
+                                            try {
+                                              await ref
+                                                  .read(authRepositoryProvider)
+                                                  .updateUser(user.id, {
+                                                    'favoritePlayerIds':
+                                                        FieldValue.arrayRemove([
+                                                          playerId,
+                                                        ]),
+                                                  });
+                                            } catch (_) {
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Could not unfollow player. Try again.',
+                                                    ),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          },
+                                        )
+                                      : const Icon(Icons.chevron_right),
+                                  onTap: player == null
+                                      ? null
+                                      : () => context.push(
+                                          PublicRoutePaths.player(playerId),
+                                        ),
+                                );
+                              },
+                            ),
+                        ],
                       ),
-                      value: _favoriteTeamUpdates,
-                      activeTrackColor: AppColors.primary,
-                      onChanged: (val) =>
-                          setState(() => _favoriteTeamUpdates = val),
-                    ),
-                    const Divider(height: 1, indent: 16, endIndent: 16),
-                    SwitchListTile(
-                      title: const Text('Acknowledgment Reminders'),
-                      subtitle: const Text(
-                        'Get reminded about pending acknowledgments',
-                      ),
-                      value: _ackReminders,
-                      activeTrackColor: AppColors.primary,
-                      onChanged: (val) => setState(() => _ackReminders = val),
-                    ),
-                    const Divider(height: 1, indent: 16, endIndent: 16),
-                    SwitchListTile(
-                      title: const Text('Stat Reminders'),
-                      subtitle: const Text('Get reminded to enter game stats'),
-                      value: _statReminders,
-                      activeTrackColor: AppColors.primary,
-                      onChanged: (val) => setState(() => _statReminders = val),
-                    ),
-                    const Divider(height: 1, indent: 16, endIndent: 16),
-                    SwitchListTile(
-                      title: const Text('New Post Notifications'),
-                      subtitle: const Text(
-                        'Get notified when new posts are published',
-                      ),
-                      value: _newPostNotifications,
-                      activeTrackColor: AppColors.primary,
-                      onChanged: (val) =>
-                          setState(() => _newPostNotifications = val),
-                    ),
-                  ],
-                ),
               ),
+              const SizedBox(height: 24),
+
+              if (!widget.focusFavorites) ...[
+                // Notifications section
+                _buildSectionHeader('Notifications'),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    border: Border.all(color: borderColor),
+                    borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                  ),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text('Favorite Team Updates'),
+                        subtitle: const Text(
+                          'Push final scores and schedule changes for teams you follow. Your bell keeps the updates even when push is off.',
+                        ),
+                        value: _favoriteTeamUpdates,
+                        activeTrackColor: AppColors.primary,
+                        onChanged: (val) =>
+                            setState(() => _favoriteTeamUpdates = val),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      SwitchListTile(
+                        title: const Text('Acknowledgment Reminders'),
+                        subtitle: const Text(
+                          'Get reminded about pending acknowledgments',
+                        ),
+                        value: _ackReminders,
+                        activeTrackColor: AppColors.primary,
+                        onChanged: (val) => setState(() => _ackReminders = val),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      SwitchListTile(
+                        title: const Text('Stat Reminders'),
+                        subtitle: const Text(
+                          'Get reminded to enter game stats',
+                        ),
+                        value: _statReminders,
+                        activeTrackColor: AppColors.primary,
+                        onChanged: (val) =>
+                            setState(() => _statReminders = val),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      SwitchListTile(
+                        title: const Text('New Post Notifications'),
+                        subtitle: const Text(
+                          'Get notified when new posts are published',
+                        ),
+                        value: _newPostNotifications,
+                        activeTrackColor: AppColors.primary,
+                        onChanged: (val) =>
+                            setState(() => _newPostNotifications = val),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,

@@ -99,8 +99,15 @@ function publicationState(association: Record<string, unknown>): PublicState {
   return "unavailable";
 }
 
+function urlText(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const candidate = value.trim();
+  if (candidate.length > 2048) throw new Error("Public URL exceeds the 2048-character limit.");
+  return candidate;
+}
+
 function httpsUrl(value: unknown): string | null {
-  const candidate = nullableText(value);
+  const candidate = urlText(value);
   if (!candidate) return null;
   try {
     const url = new URL(candidate);
@@ -108,6 +115,19 @@ function httpsUrl(value: unknown): string | null {
   } catch (_) {
     return null;
   }
+}
+
+function imageReference(value: unknown): string | null {
+  const candidate = urlText(value);
+  if (!candidate) return null;
+  const bundledPresentationAsset =
+    candidate === "asset:assets/images/nbl_jamaica_logo.png" ||
+    (candidate.startsWith("asset:assets/images/sponsor_") &&
+      candidate.endsWith(".png"));
+  if (bundledPresentationAsset && !candidate.includes("..")) {
+    return candidate;
+  }
+  return httpsUrl(candidate);
 }
 
 function colorHex(value: unknown, fallback: string): string {
@@ -123,7 +143,7 @@ function publicSponsor(value: unknown) {
     enabled: sponsor.enabled === true && name.length > 0,
     name,
     label: text(sponsor.label, "Presented by"),
-    logoUrl: httpsUrl(sponsor.logoUrl),
+    logoUrl: imageReference(sponsor.logoUrl),
     websiteUrl: httpsUrl(sponsor.websiteUrl),
   };
 }
@@ -136,7 +156,7 @@ function publicBrand(
   return {
     name: text(brand.leagueName ?? brand.name, fallback.name),
     shortName: text(brand.shortName, fallback.shortName),
-    logoUrl: httpsUrl(brand.logoUrl),
+    logoUrl: imageReference(brand.logoUrl),
     primaryColorHex: colorHex(brand.primaryColorHex ?? brand.primaryColor, "#2E7D32"),
     secondaryColorHex: colorHex(brand.secondaryColorHex ?? brand.secondaryColor, "#1B5E20"),
     accentColorHex: colorHex(brand.accentColorHex ?? brand.accentColor, "#F9A825"),
@@ -186,6 +206,15 @@ function publicLeagueCatalog(
         name: text(entry.name, branding.name),
         shortName: text(entry.shortName, branding.shortName),
         description: nullableText(entry.description),
+        seasonLabel: nullableText(entry.seasonLabel),
+        historicalStatistics: entry.historicalStatistics === true,
+        reportedStandings: entry.historicalStatistics === true && publicationState(association) === "published" ?
+          objectList(entry.reportedStandings).map((row) => ({
+            teamId: text(row.teamId),
+            leaguePoints: nullableInteger(row.leaguePoints),
+          })).filter((row) => row.teamId && row.leaguePoints !== null && row.leaguePoints >= 0) : [],
+        standingsAsOf: nullableText(entry.standingsAsOf),
+        standingsSourceUrl: httpsUrl(entry.standingsSourceUrl),
         divisionIds: leagueDivisionIds,
         branding,
       };
@@ -400,6 +429,7 @@ export function buildPublicSnapshot(input: {
   standings: RecordWithId[];
   leaderboards: RecordWithId[];
   teams: RecordWithId[];
+  posts?: RecordWithId[];
   generatedAt?: string;
 }) {
   const seasonId = text(input.association.currentSeasonId);
@@ -459,6 +489,7 @@ export function buildPublicSnapshot(input: {
         gameId: entry.id,
         title: `${teamNames.get(homeTeamId) || "Home"} vs ${teamNames.get(awayTeamId) || "Away"}`,
         startTime: timestampIso(entry.data.startTime),
+        dateOnly: entry.data.dateOnly === true,
         endTime: timestampIso(entry.data.endTime),
         venue: nullableText(entry.data.location),
         divisionId: nullableText(entry.data.divisionId),
@@ -504,13 +535,16 @@ export function buildPublicSnapshot(input: {
             divisionId: nullableText(row.divisionId) || divisionId,
             value: numberValue(row.value),
             gamesPlayed: nullableInteger(row.gp),
+            cumulativeTotal: nullableInteger(row.cumulativeTotal),
+            shootingMade: Object.fromEntries(["twoMade", "threeMade", "ftMade"].map((key) =>
+              [key, nullableInteger(objectValue(row.shootingMade)[key])])),
           };
         }).filter((row) => row.playerId && row.displayName && row.teamId),
       };
     })
     .filter((entry) => entry.category.length > 0)
     .sort((a, b) => leaderboardOrder(a.category) - leaderboardOrder(b.category) ||
-      a.category.localeCompare(b.category));
+      a.category.localeCompare(b.category) || (a.divisionId || "").localeCompare(b.divisionId || ""));
 
   const divisions = (input.divisions || [])
     .filter((entry) => entry.data.seasonId === seasonId)
@@ -521,8 +555,26 @@ export function buildPublicSnapshot(input: {
       teamId: entry.id,
       name: text(entry.data.name, "Team"),
       divisionId: nullableText(entry.data.divisionId),
+      logoUrl: imageReference(entry.data.logoUrl),
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.teamId.localeCompare(b.teamId));
+  const media = (input.posts || [])
+    .filter((entry) => entry.data.visibility === "public" && entry.data.archived !== true)
+    .map((entry) => ({
+      mediaId: entry.id,
+      title: text(entry.data.title),
+      summary: longText(entry.data.body),
+      type: text(entry.data.type, "general"),
+      divisionId: nullableText(entry.data.divisionFilter),
+      imageUrl: imageReference(entry.data.imageUrl),
+      publishedAt: timestampIso(entry.data.createdAt),
+      pinned: entry.data.pinned === true,
+    }))
+    .filter((entry) => entry.title.length > 0 && entry.summary !== null && entry.publishedAt !== null)
+    .sort((a, b) =>
+      b.publishedAt!.localeCompare(a.publishedAt!) ||
+      Number(b.pinned) - Number(a.pinned) ||
+      a.mediaId.localeCompare(b.mediaId));
   const league = {
     name: text(input.association.name, "Jamaica Basketball Association"),
     shortName: text(input.association.shortName, "JBA"),
@@ -547,12 +599,14 @@ export function buildPublicSnapshot(input: {
     schedule,
     standings,
     leaderboards,
+    media,
   } : {
     divisions: [],
     teams: [],
     schedule: [],
     standings: [],
     leaderboards: [],
+    media: [],
   };
   const snapshotVersion = fingerprint({
     associationId: input.associationId,
@@ -597,7 +651,7 @@ export function buildPublicSnapshot(input: {
 }
 
 type SnapshotDocument = ReturnType<typeof buildPublicSnapshot>;
-type ContentKey = "divisions" | "teams" | "schedule" | "standings" | "leaderboards";
+type ContentKey = "divisions" | "teams" | "schedule" | "standings" | "leaderboards" | "media";
 
 export type PublicReleasePage = {
   protocolVersion: string;
@@ -655,7 +709,7 @@ export function buildPublicReleasePackage(
   const pageRefs: Array<Record<string, unknown>> = [];
   const counts: Record<string, number> = {};
   const contentKeys: ContentKey[] = [
-    "divisions", "teams", "schedule", "standings", "leaderboards",
+    "divisions", "teams", "schedule", "standings", "leaderboards", "media",
   ];
 
   for (const contentType of contentKeys) {
@@ -818,6 +872,23 @@ async function readCurrentSeasonRecords(
   return records;
 }
 
+async function readAssociationRecords(
+  collection: admin.firestore.CollectionReference,
+): Promise<RecordWithId[]> {
+  const records: RecordWithId[] = [];
+  let cursor: admin.firestore.QueryDocumentSnapshot | undefined;
+  do {
+    let query: admin.firestore.Query = collection
+      .orderBy(FieldPath.documentId())
+      .limit(SOURCE_QUERY_PAGE_SIZE);
+    if (cursor) query = query.startAfter(cursor);
+    const page = await query.get();
+    for (const doc of page.docs) records.push({id: doc.id, data: doc.data()});
+    cursor = page.docs.length === SOURCE_QUERY_PAGE_SIZE ? page.docs.at(-1) : undefined;
+  } while (cursor);
+  return records;
+}
+
 async function createImmutablePageChunk(
   db: admin.firestore.Firestore,
   manifestRef: admin.firestore.DocumentReference,
@@ -900,7 +971,7 @@ export async function rebuildVersionedPublicRelease(
     throw new Error("Public projection protocol or exact source version is not ready.");
   }
 
-  const [season, divisions, events, gameStats, standings, leaderboards, teams] =
+  const [season, divisions, events, gameStats, standings, leaderboards, teams, posts] =
     await Promise.all([
       associationRef.collection("seasons").doc(seasonId).get(),
       readCurrentSeasonRecords(associationRef.collection("divisions"), seasonId),
@@ -909,6 +980,7 @@ export async function rebuildVersionedPublicRelease(
       readCurrentSeasonRecords(associationRef.collection("standings"), seasonId),
       readCurrentSeasonRecords(associationRef.collection("leaderboard"), seasonId),
       readCurrentSeasonRecords(associationRef.collection("teams"), seasonId),
+      readAssociationRecords(associationRef.collection("posts")),
     ]);
   const snapshot = buildPublicSnapshot({
     associationId,
@@ -920,6 +992,7 @@ export async function rebuildVersionedPublicRelease(
     standings,
     leaderboards,
     teams,
+    posts,
     generatedAt: sourceCommittedAt,
   });
   const release = buildPublicReleasePackage(

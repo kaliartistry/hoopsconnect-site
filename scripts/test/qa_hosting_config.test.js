@@ -11,6 +11,12 @@ const csp = config.hosting.headers
   .find((entry) => entry.source === '**').headers
   .find((header) => header.key === 'Content-Security-Policy').value;
 const bootstrap = fs.readFileSync(path.join(root, 'web/flutter_bootstrap.js'), 'utf8');
+const presentationConfig = JSON.parse(
+  fs.readFileSync(path.join(root, 'firebase.presentation.json'), 'utf8'),
+);
+const stagingConfig = JSON.parse(
+  fs.readFileSync(path.join(root, 'firebase.staging.json'), 'utf8'),
+);
 
 test('QA config isolates both Functions codebases and all data emulators', () => {
   assert.deepEqual(
@@ -39,8 +45,11 @@ test('QA config isolates both Functions codebases and all data emulators', () =>
 test('QA Hosting CSP permits exact startup dependencies without broad origins', () => {
   assert.match(csp, /script-src[^;]*https:\/\/www\.gstatic\.com\/firebasejs\//);
   assert.match(csp, /script-src[^;]*https:\/\/accounts\.google\.com\/gsi\/client/);
+  assert.match(csp, /script-src[^;]*https:\/\/apis\.google\.com\/js\/api\.js/);
   assert.match(csp, /connect-src[^;]*http:\/\/127\.0\.0\.1:18080/);
   assert.match(csp, /connect-src[^;]*http:\/\/127\.0\.0\.1:15001/);
+  assert.match(csp, /connect-src[^;]*blob:/);
+  assert.match(csp, /img-src[^;]*http:\/\/127\.0\.0\.1:19199/);
   assert.match(csp, /font-src[^;]*https:\/\/fonts\.gstatic\.com/);
   assert.match(csp, /connect-src[^;]*https:\/\/fonts\.gstatic\.com/);
   assert.doesNotMatch(csp, /(?:script-src|connect-src)[^;]*(?:\s\*|https:\/\/\*)/);
@@ -55,4 +64,50 @@ test('web bootstrap selects the engine-matched local renderer', () => {
   assert.match(bootstrap, /navigator\.serviceWorker\.register\('flutter_service_worker\.js'/);
   assert.match(bootstrap, /pathname\.endsWith\('\/flutter_service_worker\.js'/);
   assert.doesNotMatch(bootstrap, /if \(registrations\.length > 0\)/);
+});
+
+test('hosted presentation is explicitly excluded from search indexing', () => {
+  const headers = presentationConfig.hosting.headers.find(
+    (entry) => entry.source === '**',
+  ).headers;
+  assert.deepEqual(
+    headers.find((header) => header.key === 'X-Robots-Tag'),
+    {key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive'},
+  );
+  assert.deepEqual(
+    headers.find((header) => header.key === 'Cache-Control'),
+    {key: 'Cache-Control', value: 'no-store'},
+  );
+});
+
+test('hosted staging is isolated, interactive, and excluded from indexing', () => {
+  assert.equal(stagingConfig.auth.providers.emailPassword, true);
+  assert.equal(stagingConfig.firestore.rules, 'firestore.rules');
+  assert.deepEqual(
+    stagingConfig.functions.map(({source, codebase}) => ({source, codebase})),
+    [
+      {source: 'functions', codebase: 'default'},
+      {source: 'public_functions', codebase: 'public'},
+    ],
+  );
+  const headers = stagingConfig.hosting.headers.find(
+    (entry) => entry.source === '**',
+  ).headers;
+  assert.deepEqual(
+    headers.find((header) => header.key === 'X-Robots-Tag'),
+    {key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive'},
+  );
+  const stagingCsp = headers.find(
+    (header) => header.key === 'Content-Security-Policy',
+  ).value;
+  assert.match(
+    stagingCsp,
+    /https:\/\/us-central1-hoopsconnect-jba-staging\.cloudfunctions\.net/,
+  );
+  assert.match(
+    stagingCsp,
+    /https:\/\/hoopsconnect-jba-staging\.firebaseapp\.com/,
+  );
+  assert.match(stagingCsp, /script-src[^;]*https:\/\/apis\.google\.com\/js\/api\.js/);
+  assert.doesNotMatch(stagingCsp, /hoops-connect-jm/);
 });

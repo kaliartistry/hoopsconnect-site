@@ -81,6 +81,7 @@ void main() {
       ),
       throwsA(
         isA<PublicArtifactReleaseException>()
+            .having((error) => error.retryable, 'retryable', isTrue)
             .having((error) => error.message, 'message', contains('server'))
             .having(
               (error) => error.message,

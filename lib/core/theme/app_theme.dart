@@ -186,8 +186,8 @@ class AppTheme {
       contrastLevel: highContrast ? 1 : 0,
     );
 
-    // The canonical JBA green stays exact in light mode. Dark mode uses the
-    // generated lighter green so controls meet contrast on dark surfaces.
+    // Keep the product chrome on the exact royal primary in light mode. Dark
+    // mode uses the generated tonal value so controls retain contrast.
     if (!isDark) {
       scheme = scheme.copyWith(
         primary: AppColors.primary,
@@ -207,7 +207,7 @@ class AppTheme {
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
-      scaffoldBackgroundColor: scheme.surface,
+      scaffoldBackgroundColor: isDark ? scheme.surface : AppColors.surface,
       focusColor: scheme.primary.withValues(alpha: isDark ? 0.28 : 0.16),
       visualDensity: VisualDensity.standard,
       materialTapTargetSize: MaterialTapTargetSize.padded,

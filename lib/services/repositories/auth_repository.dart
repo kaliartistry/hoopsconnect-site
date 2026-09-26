@@ -146,6 +146,52 @@ class AuthRepository {
     return userCred;
   }
 
+  /// Add a web sign-in method to the currently authenticated account. Linking
+  /// preserves the Firebase UID (and therefore its existing server-owned role);
+  /// it must never sign in as a newly provisioned user or merge another UID.
+  Future<UserCredential> linkWebSignInMethod({
+    required String expectedUserId,
+    required String providerId,
+  }) async {
+    if (!kIsWeb) {
+      throw StateError('Account linking is available on the website only.');
+    }
+
+    final user = _auth.currentUser;
+    if (user == null || user.uid != expectedUserId) {
+      throw StateError(
+        'Sign in to your own account before connecting a method.',
+      );
+    }
+    if (user.providerData.any(
+      (provider) => provider.providerId == providerId,
+    )) {
+      throw StateError('That sign-in method is already connected.');
+    }
+
+    final AuthProvider provider;
+    switch (providerId) {
+      case 'google.com':
+        provider = GoogleAuthProvider()
+          ..addScope('email')
+          ..addScope('profile');
+      case 'apple.com':
+        provider = AppleAuthProvider()
+          ..addScope('email')
+          ..addScope('name');
+      default:
+        throw ArgumentError.value(providerId, 'providerId');
+    }
+
+    final credential = await user.linkWithPopup(provider);
+    if (credential.user?.uid != expectedUserId ||
+        _auth.currentUser?.uid != expectedUserId) {
+      throw StateError('Account identity changed while connecting the method.');
+    }
+    await credential.user!.reload();
+    return credential;
+  }
+
   /// Reconcile the server-owned profile/membership pair. The callable creates
   /// new public fans, repairs an authority-backed missing profile, and fails
   /// closed on conflicting or legacy records without changing privileges.

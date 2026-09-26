@@ -1,22 +1,31 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/time/league_time.dart';
 import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../platform/presentation_preview_environment.dart';
 import '../../providers/public_league_provider.dart';
 import 'auth_error_message.dart';
 import 'login_auth_actions.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({
+    super.key,
+    this.requestedLocation,
+    this.presentationPreview = PresentationPreviewEnvironment.enabled,
+  });
+
+  final String? requestedLocation;
+  final bool presentationPreview;
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
@@ -24,6 +33,8 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _memberAccessKey = GlobalKey();
+  final _scrollController = ScrollController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
@@ -38,8 +49,31 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   String? _error;
   bool _isSignUp = false;
 
+  bool get _openedForFollowingTeams =>
+      Uri.tryParse(
+        AppRouteContract.safeRequestedLocation(widget.requestedLocation) ?? '',
+      )?.path ==
+      '/settings';
+
+  @override
+  void initState() {
+    super.initState();
+    if (_openedForFollowingTeams) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final memberAccessContext = _memberAccessKey.currentContext;
+        if (!mounted || memberAccessContext == null) return;
+        Scrollable.ensureVisible(
+          memberAccessContext,
+          alignment: 0.08,
+          duration: Duration.zero,
+        );
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _scrollController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
@@ -68,7 +102,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _submitEmailPassword() async {
-    if (_loading || !(_formKey.currentState?.validate() ?? false)) return;
+    if (widget.presentationPreview ||
+        _loading ||
+        !(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
 
     setState(() {
       _loading = true;
@@ -99,7 +137,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _signInWithGoogle() async {
-    if (_loading) return;
+    if (widget.presentationPreview || _loading) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -116,7 +154,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _signInWithApple() async {
-    if (_loading) return;
+    if (widget.presentationPreview || _loading) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -137,305 +175,367 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final publicSnapshot = ref.watch(publicLeagueSnapshotProvider);
+    final followingTeams = _openedForFollowingTeams;
 
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.symmetric(
-              horizontal: ((MediaQuery.sizeOf(context).width - 480) / 2).clamp(
-                AppSizes.paddingLg,
-                double.infinity,
+    final overlayStyle = theme.brightness == Brightness.dark
+        ? SystemUiOverlayStyle.light
+        : SystemUiOverlayStyle.dark;
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle.copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              key: const Key('login-scroll-view'),
+              controller: _scrollController,
+              padding: EdgeInsets.symmetric(
+                horizontal: ((MediaQuery.sizeOf(context).width - 480) / 2)
+                    .clamp(AppSizes.paddingLg, double.infinity),
+                vertical: AppSizes.paddingLg,
               ),
-              vertical: AppSizes.paddingLg,
-            ),
-            child: Form(
-              key: _formKey,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              child: Column(
-                key: const Key('login-form-content'),
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Image.asset(
-                    'assets/images/jba_logo.png',
-                    width: 100,
-                    height: 100,
-                    semanticLabel: 'Jamaica Basketball Association logo',
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'HoopsConnect',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: context.semanticColors.warning,
-                      letterSpacing: 1.2,
+              child: Form(
+                key: _formKey,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                child: Column(
+                  key: const Key('login-form-content'),
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Image.asset(
+                      'assets/images/jba_logo.png',
+                      width: 100,
+                      height: 100,
+                      semanticLabel: 'Jamaica Basketball Association logo',
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Semantics(
-                    header: true,
-                    child: Text(
-                      'Jamaica HoopsConnect',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.headlineSmall?.copyWith(
+                    const SizedBox(height: 8),
+                    Text(
+                      'HoopsConnect',
+                      style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: colorScheme.onSurface,
+                        color: theme.brightness == Brightness.dark
+                            ? AppColors.accent
+                            : AppColors.primaryDark,
+                        letterSpacing: 1.2,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Stay connected with your league',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
+                    const SizedBox(height: 12),
+                    Semantics(
+                      header: true,
+                      child: Text(
+                        'Jamaica HoopsConnect',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  _LeagueSneakPeek(
-                    snapshot: publicSnapshot,
-                    enabled: !_loading,
-                    onBrowse: () => context.go(PublicRoutePaths.games),
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      const Expanded(child: Divider()),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          'member access',
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Stay connected with your league',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
                       ),
-                      const Expanded(child: Divider()),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _tabButton(
-                          'Sign In',
-                          !_isSignUp,
-                          () => _setSignUp(false),
-                          focusNode: _signInModeFocus,
-                          key: const Key('login-mode-sign-in'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _tabButton(
-                          'Create Account',
-                          _isSignUp,
-                          () => _setSignUp(true),
-                          focusNode: _createAccountModeFocus,
-                          key: const Key('login-mode-create-account'),
-                        ),
+                    ),
+                    if (followingTeams) ...[
+                      const SizedBox(height: 12),
+                      const AppStateMessage(
+                        key: Key('follow-teams-login-context'),
+                        title: 'Follow your teams',
+                        message:
+                            'Sign in or create a fan account, then choose teams and score notifications.',
+                        icon: Icons.notifications_active_outlined,
+                        compact: true,
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 24),
-                  AutofillGroup(
-                    child: Column(
+                    const SizedBox(height: 20),
+                    _LeagueSneakPeek(
+                      snapshot: publicSnapshot,
+                      enabled: !_loading,
+                      onBrowse: () => context.go(PublicRoutePaths.games),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      key: _memberAccessKey,
                       children: [
-                        if (_isSignUp) ...[
-                          TextFormField(
-                            key: const Key('login-name-field'),
-                            controller: _nameController,
-                            focusNode: _nameFocus,
-                            textInputAction: TextInputAction.next,
-                            autofillHints: const [AutofillHints.name],
-                            decoration: const InputDecoration(
-                              labelText: 'Full Name',
-                              prefixIcon: Icon(Icons.person_outlined),
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'member access',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
                             ),
-                            validator: (value) =>
-                                _isSignUp &&
-                                    (value == null || value.trim().isEmpty)
-                                ? 'Enter your name'
-                                : null,
-                            onChanged: (_) => _clearTransportError(),
-                            onFieldSubmitted: (_) => _emailFocus.requestFocus(),
                           ),
-                          const SizedBox(height: 12),
-                        ],
-                        TextFormField(
-                          key: const Key('login-email-field'),
-                          controller: _emailController,
-                          focusNode: _emailFocus,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          autofillHints: const [
-                            AutofillHints.username,
-                            AutofillHints.email,
-                          ],
-                          decoration: const InputDecoration(
-                            labelText: 'Email',
-                            prefixIcon: Icon(Icons.email_outlined),
-                          ),
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'Enter your email';
-                            }
-                            final emailRegex = RegExp(
-                              r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
-                            );
-                            if (!emailRegex.hasMatch(value.trim())) {
-                              return 'Enter a valid email address';
-                            }
-                            return null;
-                          },
-                          onChanged: (_) => _clearTransportError(),
-                          onFieldSubmitted: (_) =>
-                              _passwordFocus.requestFocus(),
                         ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          key: const Key('login-password-field'),
-                          controller: _passwordController,
-                          focusNode: _passwordFocus,
-                          obscureText: true,
-                          textInputAction: TextInputAction.done,
-                          autofillHints: [
-                            _isSignUp
-                                ? AutofillHints.newPassword
-                                : AutofillHints.password,
-                          ],
-                          decoration: const InputDecoration(
-                            labelText: 'Password',
-                            prefixIcon: Icon(Icons.lock_outlined),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    if (widget.presentationPreview) ...[
+                      const SizedBox(height: 12),
+                      const AppStateMessage(
+                        key: Key('presentation-preview-account-notice'),
+                        title: 'Presentation preview',
+                        message:
+                            'Member access is shown for review. Account actions are disabled on this public preview.',
+                        icon: Icons.visibility_outlined,
+                        compact: true,
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _tabButton(
+                            'Sign In',
+                            !_isSignUp,
+                            () => _setSignUp(false),
+                            focusNode: _signInModeFocus,
+                            key: const Key('login-mode-sign-in'),
                           ),
-                          validator: (value) => value == null || value.isEmpty
-                              ? 'Enter your password'
-                              : null,
-                          onChanged: (_) => _clearTransportError(),
-                          onFieldSubmitted: (_) {
-                            if (!_loading) unawaited(_submitEmailPassword());
-                          },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _tabButton(
+                            'Create Account',
+                            _isSignUp,
+                            () => _setSignUp(true),
+                            focusNode: _createAccountModeFocus,
+                            key: const Key('login-mode-create-account'),
+                          ),
                         ),
                       ],
                     ),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    AppStateMessage(
-                      title: _isSignUp
-                          ? 'We could not create your account'
-                          : 'We could not sign you in',
-                      message: _error!,
-                      tone: AppStateTone.error,
-                      compact: true,
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: AppAsyncActionButton(
-                      key: const Key('login-submit-button'),
-                      label: _isSignUp ? 'Create Account' : 'Sign In',
-                      busyLabel: _isSignUp ? 'Creating account' : 'Signing in',
-                      isBusy: _loading,
-                      onPressed: _submitEmailPassword,
-                    ),
-                  ),
-                  if (!_isSignUp) ...[
-                    const SizedBox(height: 4),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        key: const Key('forgot-password-link'),
-                        onPressed: _loading
-                            ? null
-                            : () {
-                                final email = _emailController.text.trim();
-                                context.push(
-                                  Uri(
-                                    path: '/recover-password',
-                                    queryParameters: email.isEmpty
-                                        ? null
-                                        : {'email': email},
-                                  ).toString(),
-                                );
-                              },
-                        child: const Text('Forgot password?'),
+                    const SizedBox(height: 24),
+                    AutofillGroup(
+                      child: Column(
+                        children: [
+                          if (_isSignUp) ...[
+                            TextFormField(
+                              key: const Key('login-name-field'),
+                              controller: _nameController,
+                              enabled: !widget.presentationPreview,
+                              focusNode: _nameFocus,
+                              textInputAction: TextInputAction.next,
+                              autofillHints: const [AutofillHints.name],
+                              decoration: const InputDecoration(
+                                labelText: 'Full Name',
+                                prefixIcon: Icon(Icons.person_outlined),
+                              ),
+                              validator: (value) =>
+                                  _isSignUp &&
+                                      (value == null || value.trim().isEmpty)
+                                  ? 'Enter your name'
+                                  : null,
+                              onChanged: (_) => _clearTransportError(),
+                              onFieldSubmitted: (_) =>
+                                  _emailFocus.requestFocus(),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          TextFormField(
+                            key: const Key('login-email-field'),
+                            controller: _emailController,
+                            enabled: !widget.presentationPreview,
+                            focusNode: _emailFocus,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            autofillHints: const [
+                              AutofillHints.username,
+                              AutofillHints.email,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Email',
+                              prefixIcon: Icon(Icons.email_outlined),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Enter your email';
+                              }
+                              final emailRegex = RegExp(
+                                r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                              );
+                              if (!emailRegex.hasMatch(value.trim())) {
+                                return 'Enter a valid email address';
+                              }
+                              return null;
+                            },
+                            onChanged: (_) => _clearTransportError(),
+                            onFieldSubmitted: (_) =>
+                                _passwordFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            key: const Key('login-password-field'),
+                            controller: _passwordController,
+                            enabled: !widget.presentationPreview,
+                            focusNode: _passwordFocus,
+                            obscureText: true,
+                            textInputAction: TextInputAction.done,
+                            autofillHints: [
+                              _isSignUp
+                                  ? AutofillHints.newPassword
+                                  : AutofillHints.password,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Password',
+                              prefixIcon: Icon(Icons.lock_outlined),
+                            ),
+                            validator: (value) => value == null || value.isEmpty
+                                ? 'Enter your password'
+                                : null,
+                            onChanged: (_) => _clearTransportError(),
+                            onFieldSubmitted: (_) {
+                              if (!_loading) unawaited(_submitEmailPassword());
+                            },
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      const Expanded(child: Divider()),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          'or continue with',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      AppStateMessage(
+                        title: _isSignUp
+                            ? 'We could not create your account'
+                            : 'We could not sign you in',
+                        message: _error!,
+                        tone: AppStateTone.error,
+                        compact: true,
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: AppAsyncActionButton(
+                        key: const Key('login-submit-button'),
+                        label: _isSignUp ? 'Create Account' : 'Sign In',
+                        busyLabel: _isSignUp
+                            ? 'Creating account'
+                            : 'Signing in',
+                        isBusy: _loading,
+                        onPressed: widget.presentationPreview
+                            ? null
+                            : _submitEmailPassword,
+                        disabledHint: widget.presentationPreview
+                            ? 'Account actions are disabled on this presentation preview.'
+                            : null,
+                      ),
+                    ),
+                    if (!_isSignUp) ...[
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          key: const Key('forgot-password-link'),
+                          onPressed: _loading || widget.presentationPreview
+                              ? null
+                              : () {
+                                  final email = _emailController.text.trim();
+                                  context.push(
+                                    Uri(
+                                      path: '/recover-password',
+                                      queryParameters: email.isEmpty
+                                          ? null
+                                          : {'email': email},
+                                    ).toString(),
+                                  );
+                                },
+                          child: const Text('Forgot password?'),
                         ),
                       ),
-                      const Expanded(child: Divider()),
                     ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _loading ? null : _signInWithGoogle,
-                          icon: const Text(
-                            'G',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              color: AppColors.google,
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'or continue with',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
                             ),
                           ),
-                          label: const Text('Google'),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _loading ? null : _signInWithApple,
-                          icon: const Icon(Icons.apple, size: 22),
-                          label: const Text('Apple'),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _loading || widget.presentationPreview
+                                ? null
+                                : _signInWithGoogle,
+                            icon: const Text(
+                              'G',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                                color: AppColors.google,
+                              ),
+                            ),
+                            label: const Text('Google'),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  TextButton(
-                    onPressed: _loading ? null : () => context.go('/join'),
-                    child: const Text('Have an invite code? Join your team'),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      TextButton(
-                        onPressed: _loading
-                            ? null
-                            : () => context.push('/legal/terms'),
-                        child: const Text('Terms of Use'),
-                      ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _loading || widget.presentationPreview
+                                ? null
+                                : _signInWithApple,
+                            icon: const Icon(Icons.apple, size: 22),
+                            label: const Text('Apple'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (kIsWeb &&
+                        !_isSignUp &&
+                        !widget.presentationPreview) ...[
+                      const SizedBox(height: 10),
                       Text(
-                        '•',
-                        style: TextStyle(color: colorScheme.onSurfaceVariant),
-                      ),
-                      TextButton(
-                        onPressed: _loading
-                            ? null
-                            : () => context.push('/legal/privacy'),
-                        child: const Text('Privacy Policy'),
+                        'Assigned a staff account? Sign in with its email first, then connect Google or Apple in Profile to keep your access.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
-                  ),
-                ],
+                    const SizedBox(height: 20),
+                    TextButton(
+                      onPressed: _loading || widget.presentationPreview
+                          ? null
+                          : () => context.go('/join'),
+                      child: const Text('Have an invite code? Join your team'),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        TextButton(
+                          onPressed: _loading
+                              ? null
+                              : () => context.push('/legal/terms'),
+                          child: const Text('Terms of Use'),
+                        ),
+                        Text(
+                          '•',
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        ),
+                        TextButton(
+                          onPressed: _loading
+                              ? null
+                              : () => context.push('/legal/privacy'),
+                          child: const Text('Privacy Policy'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -530,7 +630,11 @@ class _LeagueSneakPeek extends StatelessWidget {
         key: const Key('league-sneak-peek'),
         width: double.infinity,
         decoration: BoxDecoration(
-          color: AppColors.darkBg,
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [AppColors.primaryDark, AppColors.primary],
+          ),
           borderRadius: BorderRadius.circular(AppSizes.radiusLg),
           boxShadow: [
             BoxShadow(
@@ -607,9 +711,7 @@ class _LeagueSneakPeek extends StatelessWidget {
               excludeSemantics: true,
               label: 'Full scores and schedule. No account needed.',
               child: Material(
-                color: enabled
-                    ? AppColors.primaryDark
-                    : AppColors.textSecondary,
+                color: enabled ? AppColors.primary : AppColors.textSecondary,
                 child: InkWell(
                   key: const Key('browse-public-league-button'),
                   onTap: enabled ? onBrowse : null,
@@ -677,7 +779,13 @@ class _LeaguePeekContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (finals.isNotEmpty)
-          _LeaguePeekGame(label: 'LATEST RESULT', game: finals.first),
+          _LeaguePeekGame(
+            label: 'LATEST RESULT',
+            leagueName: data
+                .leagueForDivision(finals.first.divisionId)
+                .shortName,
+            game: finals.first,
+          ),
         if (finals.isNotEmpty && scheduled.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 14),
@@ -687,7 +795,13 @@ class _LeaguePeekContent extends StatelessWidget {
             ),
           ),
         if (scheduled.isNotEmpty)
-          _LeaguePeekGame(label: 'UP NEXT', game: scheduled.first),
+          _LeaguePeekGame(
+            label: 'UP NEXT',
+            leagueName: data
+                .leagueForDivision(scheduled.first.divisionId)
+                .shortName,
+            game: scheduled.first,
+          ),
       ],
     );
   }
@@ -701,9 +815,14 @@ class _LeaguePeekContent extends StatelessWidget {
 }
 
 class _LeaguePeekGame extends StatelessWidget {
-  const _LeaguePeekGame({required this.label, required this.game});
+  const _LeaguePeekGame({
+    required this.label,
+    required this.leagueName,
+    required this.game,
+  });
 
   final String label;
+  final String leagueName;
   final PublicGame game;
 
   @override
@@ -731,9 +850,9 @@ class _LeaguePeekGame extends StatelessWidget {
         game.awayScore! > game.homeScore!;
     final venue = game.venue?.trim();
     final semanticLabel = isFinal
-        ? '$label. Final. $away ${game.awayScore ?? 'not available'}, away. '
+        ? '$label. $leagueName. Final. $away ${game.awayScore ?? 'not available'}, away. '
               '$home ${game.homeScore ?? 'not available'}, home. $spokenTiming.'
-        : '$label. $away, away, at $home, home. $spokenTiming Jamaica time.'
+        : '$label. $leagueName. $away, away, at $home, home. $spokenTiming Jamaica time.'
               '${venue == null || venue.isEmpty ? '' : ' Venue: $venue.'}';
 
     return Semantics(
@@ -752,7 +871,26 @@ class _LeaguePeekGame extends StatelessWidget {
                   letterSpacing: 0.9,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(99),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.16),
+                  ),
+                ),
+                child: Text(
+                  leagueName.toUpperCase(),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 9,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   isFinal ? 'FINAL · $timing' : timing.toUpperCase(),

@@ -12,12 +12,13 @@ public launch, and live JBA data remain approval-gated.
 - The isolated presentation environment builds the release-mode web app,
   starts Auth, Firestore, Functions, Storage, and Hosting emulators, and refuses
   production credentials.
-- The deterministic fixture contains 14 role accounts, six teams, 36 players,
+- The deterministic fixture contains 14 role accounts, 42 teams, 36 players on
+  six featured matchup rosters,
   nine games across three leagues and useful lifecycle states, standings, five leaderboard
   categories, a public announcement, and an acknowledgment-required operations
   post.
 - Public visitors immediately see the latest published final score and next
-  scheduled game, can inspect a date-grouped schedule, choose a day from the
+  scheduled game, can open Media without signing in, inspect a date-grouped schedule, choose a day from the
   calendar, and view results, standings, leaders, game box scores, team details,
   and privacy-cleared player details without signing in.
 - Super admins, admins, statisticians, representatives, media/press users, and
@@ -30,6 +31,8 @@ public launch, and live JBA data remain approval-gated.
 
 The presenter instructions and recovery steps are in
 [`PRESENTATION_RUNBOOK.md`](PRESENTATION_RUNBOOK.md).
+The research and synthetic-data boundaries for the expanded team field are in
+[`TEAM_FIXTURE_SOURCES.md`](TEAM_FIXTURE_SOURCES.md).
 
 ## Presentation boundary
 

@@ -280,8 +280,8 @@ class _AssociationBrandingScreenState
             ),
             _textField(
               controller: _leagueLogoUrl,
-              label: 'League logo HTTPS URL',
-              url: true,
+              label: 'Association logo (HTTPS URL or bundled asset)',
+              imageReference: true,
             ),
           ],
         ),
@@ -400,8 +400,8 @@ class _AssociationBrandingScreenState
               ),
               _textField(
                 controller: _sponsorLogoUrl,
-                label: 'Sponsor logo HTTPS URL',
-                url: true,
+                label: 'Sponsor logo (HTTPS URL or bundled asset)',
+                imageReference: true,
               ),
               _textField(
                 controller: _sponsorWebsiteUrl,
@@ -414,7 +414,8 @@ class _AssociationBrandingScreenState
         const SizedBox(height: 20),
         FilledButton.icon(
           key: const Key('save-branding-button'),
-          onPressed: _saving || !_dirty || _pendingRemote != null
+          onPressed:
+              _saving || !_dirty || !_draftIsValid || _pendingRemote != null
               ? null
               : _save,
           icon: _saving
@@ -429,6 +430,8 @@ class _AssociationBrandingScreenState
         Text(
           _pendingRemote != null
               ? 'Resolve the saved-settings update before saving.'
+              : _dirty && !_draftIsValid
+              ? 'Fix the highlighted fields before saving.'
               : _dirty
               ? 'You have unsaved changes.'
               : 'All branding changes are saved.',
@@ -538,18 +541,26 @@ class _AssociationBrandingScreenState
     String? hint,
     bool required = false,
     bool url = false,
+    bool imageReference = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: TextFormField(
         controller: controller,
         enabled: !_saving,
-        keyboardType: url ? TextInputType.url : TextInputType.text,
+        keyboardType: url || imageReference
+            ? TextInputType.url
+            : TextInputType.text,
         decoration: InputDecoration(labelText: label, hintText: hint),
         validator: (value) {
           final text = value?.trim() ?? '';
           if (required && text.isEmpty) return '$label is required';
           if (text.length > 120) return '$label is too long';
+          if (imageReference &&
+              text.isNotEmpty &&
+              !_isValidImageReference(text)) {
+            return 'Use a complete HTTPS URL or a bundled asset reference';
+          }
           if (url && text.isNotEmpty && _httpsUri(text) == null) {
             return 'Use a complete HTTPS URL';
           }
@@ -640,6 +651,37 @@ class _AssociationBrandingScreenState
 
   String _draftFingerprint() =>
       _fingerprint(_draftBranding(_baseline!, safeColors: false));
+
+  bool get _draftIsValid {
+    bool validText(TextEditingController controller, {bool required = false}) {
+      final value = controller.text.trim();
+      return (!required || value.isNotEmpty) && value.length <= 120;
+    }
+
+    bool validUrl(TextEditingController controller) {
+      final value = controller.text.trim();
+      return value.isEmpty || _httpsUri(value) != null;
+    }
+
+    bool validImage(TextEditingController controller) {
+      final value = controller.text.trim();
+      return value.isEmpty || _isValidImageReference(value);
+    }
+
+    return validText(_leagueName, required: true) &&
+        validText(_shortName, required: true) &&
+        validText(_leagueLogoUrl) &&
+        validImage(_leagueLogoUrl) &&
+        AssociationBrandingModel.isValidColorHex(_primaryColor.text) &&
+        AssociationBrandingModel.isValidColorHex(_secondaryColor.text) &&
+        AssociationBrandingModel.isValidColorHex(_accentColor.text) &&
+        (!_sponsorEnabled || validText(_sponsorName, required: true)) &&
+        validText(_sponsorLabel) &&
+        validText(_sponsorLogoUrl) &&
+        validImage(_sponsorLogoUrl) &&
+        validText(_sponsorWebsiteUrl) &&
+        validUrl(_sponsorWebsiteUrl);
+  }
 
   String _fingerprint(AssociationBrandingModel branding) => [
     branding.associationId,
@@ -763,7 +805,7 @@ class _BrandingPreview extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 _LogoPreview(
-                  label: 'League logo',
+                  label: 'Association logo',
                   url: branding.logoUrl,
                   compact: true,
                   foreground: primaryForeground,
@@ -775,7 +817,7 @@ class _BrandingPreview extends StatelessWidget {
                     children: [
                       Text(
                         branding.leagueName.isEmpty
-                            ? 'League name preview'
+                            ? 'Association name preview'
                             : branding.leagueName,
                         style: theme.textTheme.titleLarge?.copyWith(
                           color: primaryForeground,
@@ -814,7 +856,7 @@ class _BrandingPreview extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _LogoPreview(label: 'League logo', url: branding.logoUrl),
+                _LogoPreview(label: 'Association logo', url: branding.logoUrl),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,
@@ -893,7 +935,6 @@ class _LogoPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = url?.trim() ?? '';
-    final uri = _httpsUri(value);
     final theme = Theme.of(context);
     final size = compact ? 56.0 : 84.0;
     final emptyForeground = foreground ?? theme.colorScheme.onSurfaceVariant;
@@ -913,19 +954,35 @@ class _LogoPreview extends StatelessWidget {
         ),
       );
     }
-    if (uri == null) {
+    if (!_isValidImageReference(value)) {
       return _LogoFrame(
         size: size,
         compact: compact,
         child: _LogoState(
           key: Key('${_keyPart(label)}-logo-invalid'),
           icon: Icons.link_off,
-          message: 'Enter a valid HTTPS URL to preview $label.',
+          message:
+              'Enter a valid HTTPS URL or bundled asset reference to preview $label.',
           compact: compact,
         ),
       );
     }
 
+    if (value.startsWith('asset:')) {
+      return _LogoFrame(
+        size: size,
+        compact: compact,
+        child: SponsorLogo(
+          reference: value,
+          semanticLabel: '$label preview',
+          width: compact ? size : double.infinity,
+          height: size,
+          onPlate: false,
+        ),
+      );
+    }
+
+    final uri = _httpsUri(value)!;
     return _LogoFrame(
       size: size,
       compact: compact,
@@ -1159,6 +1216,15 @@ Uri? _httpsUri(String value) {
   final uri = Uri.tryParse(value.trim());
   if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
   return uri;
+}
+
+bool _isValidImageReference(String value) {
+  final trimmed = value.trim();
+  if (_httpsUri(trimmed) != null) return true;
+  if (!trimmed.startsWith('asset:assets/images/')) return false;
+  final path = trimmed.substring('asset:'.length);
+  return !path.contains('..') &&
+      RegExp(r'^assets/images/[A-Za-z0-9._/-]+$').hasMatch(path);
 }
 
 String _keyPart(String label) {

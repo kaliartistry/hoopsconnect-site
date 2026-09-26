@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 
 /// Compile-time configuration for the isolated HoopsConnect QA backend.
 ///
@@ -47,9 +48,20 @@ class QaEnvironment {
 
   static FirebaseOptions get firebaseOptions {
     final current = target..validate();
+    final appId = kIsWeb
+        ? '1:1234567890:web:hoopsconnectqa'
+        : switch (defaultTargetPlatform) {
+            TargetPlatform.android =>
+              '1:1234567890:android:000000000000000000000000',
+            TargetPlatform.iOS ||
+            TargetPlatform.macOS => '1:1234567890:ios:000000000000000000000000',
+            _ => '1:1234567890:web:hoopsconnectqa',
+          };
     return FirebaseOptions(
-      apiKey: 'demo-key',
-      appId: '1:1234567890:web:hoopsconnectqa',
+      // Native Firebase validates the key and app-ID shapes before it will
+      // connect to emulators. These are synthetic, local-only identifiers.
+      apiKey: kIsWeb ? 'demo-key' : 'AIzaSy000000000000000000000000000000000',
+      appId: appId,
       messagingSenderId: '1234567890',
       projectId: current.projectId,
       authDomain: 'localhost',
@@ -69,7 +81,9 @@ class QaEnvironment {
     // a browser session from an earlier run makes the web SDK try to refresh a
     // stale token before the replacement emulator is ready. QA sessions are
     // intentionally ephemeral, so do not persist them across reloads.
-    await FirebaseAuth.instance.setPersistence(Persistence.NONE);
+    if (kIsWeb) {
+      await FirebaseAuth.instance.setPersistence(Persistence.NONE);
+    }
     FirebaseFirestore.instance.useFirestoreEmulator(
       current.host,
       current.firestorePort,

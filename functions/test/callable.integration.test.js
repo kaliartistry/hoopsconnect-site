@@ -31,10 +31,20 @@ const clientApp = initializeApp({
   apiKey: 'demo-key',
   appId: 'demo-app',
 });
+function localEmulatorAddress(name, fallback) {
+  const address = process.env[name] || fallback;
+  const match = /^(127\.0\.0\.1|localhost):([1-9]\d{0,4})$/.exec(address);
+  if (!match || Number(match[2]) > 65535) {
+    throw new Error(`${name} must be a loopback host and port`);
+  }
+  return {host: match[1], port: Number(match[2])};
+}
 const auth = getAuth(clientApp);
-connectAuthEmulator(auth, 'http://127.0.0.1:9099', {disableWarnings: true});
+const authAddress = localEmulatorAddress('FIREBASE_AUTH_EMULATOR_HOST', '127.0.0.1:9099');
+connectAuthEmulator(auth, `http://${authAddress.host}:${authAddress.port}`, {disableWarnings: true});
 const functions = getFunctions(clientApp);
-connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+const functionsAddress = localEmulatorAddress('FIREBASE_FUNCTIONS_EMULATOR_HOST', '127.0.0.1:5001');
+connectFunctionsEmulator(functions, functionsAddress.host, functionsAddress.port);
 
 test.before(async () => {
   await adminDb.doc('associations/jba').set({
@@ -1052,7 +1062,15 @@ test('division deletion resumes persisted operations and inventories canonical j
     'association.read', 'association.manage',
   ]);
   const remove = leagueCallable('deleteDivisionIfUnreferenced');
-  await adminDb.doc('associations/jba/divisions/recoverable').set({name: 'Recoverable', status: 'active', version: 1});
+  await adminDb.doc('associations/jba/divisions/recoverable').set({
+    name: 'Recoverable', leagueId: 'nbl', status: 'active', version: 1,
+  });
+  await adminDb.doc('associations/jba').set({
+    leagueCatalogV1: {
+      schemaVersion: 1,
+      leagues: [{leagueId: 'nbl', name: 'NBL', divisionIds: ['premier', 'recoverable']}],
+    },
+  }, {merge: true});
   const operationId = 'division_recovery_0001';
   const canonical = (value) => Array.isArray(value) ? value.map(canonical) :
     value && typeof value === 'object' ? Object.keys(value).sort().reduce((result, key) => {
@@ -1074,6 +1092,10 @@ test('division deletion resumes persisted operations and inventories canonical j
   });
   assert.equal(recovered.data.status, 'deleted');
   assert.equal((await operationRef.get()).get('status'), 'deleted');
+  assert.deepEqual(
+    (await adminDb.doc('associations/jba').get()).get('leagueCatalogV1').leagues[0].divisionIds,
+    ['premier'],
+  );
 
   await adminDb.doc('associations/jba/divisions/inventory').set({name: 'Inventory', status: 'active', version: 1});
   await adminDb.doc(

@@ -16,6 +16,11 @@ class LeagueProfileModel {
     this.sponsor = const SponsorBrandingModel(),
     this.status = LeagueProfileStatus.active,
     this.sortOrder = 0,
+    this.historicalStatistics = false,
+    this.seasonLabel,
+    this.reportedStandings = const [],
+    this.standingsAsOf,
+    this.standingsSourceUrl,
   });
 
   final String id;
@@ -30,6 +35,11 @@ class LeagueProfileModel {
   final SponsorBrandingModel sponsor;
   final LeagueProfileStatus status;
   final int sortOrder;
+  final bool historicalStatistics;
+  final String? seasonLabel;
+  final List<Map<String, dynamic>> reportedStandings;
+  final String? standingsAsOf;
+  final String? standingsSourceUrl;
 
   bool get isArchived => status == LeagueProfileStatus.archived;
 
@@ -74,6 +84,15 @@ class LeagueProfileModel {
       name: name,
       shortName: _text(data['shortName']) ?? name,
       description: _text(data['description']),
+      historicalStatistics: data['historicalStatistics'] == true,
+      seasonLabel: _text(data['seasonLabel']),
+      reportedStandings: List.unmodifiable(
+        (data['reportedStandings'] as List? ?? []).map(
+          (row) => Map<String, dynamic>.from(row as Map),
+        ),
+      ),
+      standingsAsOf: _text(data['standingsAsOf']),
+      standingsSourceUrl: _safeHttpsUrl(data['standingsSourceUrl']),
       divisionIds: List.unmodifiable(divisionIds),
       logoUrl: _safeHttpsUrl(branding['logoUrl']),
       primaryColorHex: _safeColor(branding['primaryColorHex'], '#2E7D32'),
@@ -94,6 +113,11 @@ class LeagueProfileModel {
     'name': name.trim(),
     'shortName': shortName.trim(),
     'description': _text(description),
+    if (historicalStatistics) 'historicalStatistics': true,
+    if (seasonLabel != null) 'seasonLabel': seasonLabel,
+    if (reportedStandings.isNotEmpty) 'reportedStandings': reportedStandings,
+    if (standingsAsOf != null) 'standingsAsOf': standingsAsOf,
+    if (standingsSourceUrl != null) 'standingsSourceUrl': standingsSourceUrl,
     'divisionIds': divisionIds,
     'status': status.name,
     'sortOrder': sortOrder,
@@ -125,6 +149,11 @@ class LeagueProfileModel {
     name: name ?? this.name,
     shortName: shortName ?? this.shortName,
     description: description ?? this.description,
+    historicalStatistics: historicalStatistics,
+    seasonLabel: seasonLabel,
+    reportedStandings: reportedStandings,
+    standingsAsOf: standingsAsOf,
+    standingsSourceUrl: standingsSourceUrl,
     divisionIds: divisionIds ?? this.divisionIds,
     logoUrl: logoUrl ?? this.logoUrl,
     primaryColorHex: primaryColorHex ?? this.primaryColorHex,

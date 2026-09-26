@@ -3,10 +3,12 @@ import '../models/player_season_stats_model.dart';
 import '../models/team_model.dart';
 import '../services/repositories/stats_repository.dart';
 import '../services/repositories/team_repository.dart';
+import '../services/team_logo_storage.dart';
 import 'auth_providers.dart';
 import 'season_providers.dart';
 
 final teamRepositoryProvider = Provider((ref) => TeamRepository());
+final teamLogoStorageProvider = Provider((ref) => TeamLogoStorage());
 
 /// Stream all teams for the current association.
 final teamsStreamProvider = StreamProvider<List<TeamModel>>((ref) {

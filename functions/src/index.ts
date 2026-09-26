@@ -12,6 +12,7 @@ export {
   onAckWrite,
   ackDeadlineChecker,
   statDeadlineReminder,
+  onPublicSnapshotPublished,
 } from "./notifications";
 
 // ── Identity, membership, and privileged invitations ─────────────────

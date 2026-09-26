@@ -52,4 +52,42 @@ void main() {
     expect(find.textContaining('premier-internal-id'), findsNothing);
     expect(find.textContaining('Season season_2026'), findsOneWidget);
   });
+
+  testWidgets('team editor offers a real logo upload workflow', (tester) async {
+    const administrator = UserModel(
+      id: 'admin_1',
+      email: 'admin@example.com',
+      displayName: 'Administrator',
+      associationId: 'jba',
+      role: UserRole.admin,
+      capabilities: {'association.read', 'teams.manage'},
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(
+            const AsyncValue.data(administrator),
+          ),
+          teamsStreamProvider.overrideWith((ref) => Stream.value(const [])),
+          divisionsStreamProvider.overrideWith(
+            (ref) => Stream.value(const [
+              DivisionModel(id: 'premier', name: 'Premier'),
+            ]),
+          ),
+          activeSeasonIdProvider.overrideWith(
+            (ref) => Stream.value('season_2026'),
+          ),
+        ],
+        child: const MaterialApp(home: TeamListScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Team logo'), findsOneWidget);
+    expect(find.byKey(const Key('choose-team-logo')), findsOneWidget);
+    expect(find.textContaining('Maximum 2 MB'), findsOneWidget);
+  });
 }

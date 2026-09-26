@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "842064766966",
+    "project_id": "hoopsconnect-jba-staging",
+    "storage_bucket": "hoopsconnect-jba-staging.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:842064766966:android:d1004c9d8fe189755689d7",
+        "android_client_info": {
+          "package_name": "com.hoopsconnect.hoops_connect"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqLvNgX4bOBh1vbHDYlJsfyQawWJ4NUNA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

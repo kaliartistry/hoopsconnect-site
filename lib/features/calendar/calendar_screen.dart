@@ -427,31 +427,27 @@ class _GameCardWithStats extends ConsumerWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(
-                              0xFF16A34A,
-                            ).withValues(alpha: 0.08),
+                            color: AppColors.primary.withValues(alpha: 0.08),
                             border: Border.all(
-                              color: const Color(
-                                0xFF16A34A,
-                              ).withValues(alpha: 0.3),
+                              color: AppColors.primary.withValues(alpha: 0.3),
                             ),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.scoreboard_outlined,
-                                color: Color(0xFF16A34A),
+                                color: AppColors.primary,
                                 size: 18,
                               ),
-                              SizedBox(width: 6),
-                              Text(
+                              const SizedBox(width: 6),
+                              const Text(
                                 'Box Score',
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFF16A34A),
+                                  color: AppColors.primary,
                                 ),
                               ),
                             ],

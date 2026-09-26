@@ -22,7 +22,24 @@ void main() {
       friendlyAuthErrorMessage(
         Exception('[firebase_auth/account-exists-with-different-credential]'),
       ),
-      contains('Google, Apple, or email'),
+      contains('connect Google or Apple from Profile'),
+    );
+  });
+
+  test('account linking conflicts never suggest merging another UID', () {
+    final message = friendlyAccountLinkErrorMessage(
+      Exception('[firebase_auth/credential-already-in-use] secret detail'),
+    );
+    expect(message, contains('No accounts were merged'));
+    expect(message, isNot(contains('secret detail')));
+  });
+
+  test('account linking cancellation is silent', () {
+    expect(
+      friendlyAccountLinkErrorMessage(
+        Exception('[firebase_auth/popup-closed-by-user]'),
+      ),
+      isNull,
     );
   });
 

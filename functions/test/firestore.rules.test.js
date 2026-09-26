@@ -202,7 +202,7 @@ test('league operations remain callable-only even for a super administrator', as
       name: '2026', status: 'active', isActive: true,
     });
     await setDoc(doc(db, 'associations/jba/divisions/premier'), {
-      name: 'Premier', status: 'active', version: 7,
+      name: 'Premier', leagueId: 'nbl', status: 'active', version: 7,
     });
     await setDoc(doc(db, 'associations/jba/events/game-1'), {
       title: 'One vs Two', type: 'game', divisionId: 'premier',
@@ -252,7 +252,8 @@ test('direct division creates and every edit advance an exact integer version', 
   const division = doc(root, 'associations/jba/divisions/versioned');
   await assertFails(setDoc(division, {name: 'Versioned', status: 'active'}));
   await assertFails(setDoc(division, {name: 'Versioned', status: 'active', version: 2}));
-  await assertSucceeds(setDoc(division, {name: 'Versioned', status: 'active', version: 1}));
+  await assertFails(setDoc(division, {name: 'Versioned', status: 'active', version: 1}));
+  await assertSucceeds(setDoc(division, {name: 'Versioned', leagueId: 'nbl', status: 'active', version: 1}));
   await assertFails(updateDoc(division, {name: 'Skipped', version: 3, updatedAt: serverTimestamp()}));
   await assertFails(updateDoc(division, {name: 'Unversioned', updatedAt: serverTimestamp()}));
   await assertSucceeds(updateDoc(division, {name: 'Edited', version: 2, updatedAt: serverTimestamp()}));
@@ -274,9 +275,9 @@ test('direct team writers cannot bypass a pending division deletion guard', asyn
         'posts.create', 'posts.manage',
       ],
     });
-    await setDoc(doc(db, 'associations/jba/divisions/open'), {name: 'Open', status: 'active'});
+    await setDoc(doc(db, 'associations/jba/divisions/open'), {name: 'Open', leagueId: 'nbl', status: 'active'});
     await setDoc(doc(db, 'associations/jba/divisions/pending'), {
-      name: 'Pending', status: 'active', deletionPending: {operationId: 'delete_operation_01'},
+      name: 'Pending', leagueId: 'nbl', status: 'active', deletionPending: {operationId: 'delete_operation_01'},
     });
     await setDoc(doc(db, 'associations/jba/teams/team-1'), {
       name: 'One', divisionId: 'open', seasonId: 's2026',
@@ -403,6 +404,7 @@ test('fans can save bounded favorites but cannot change authority fields', async
       role: 'fan',
       favoriteLeagueIds: [],
       favoriteTeamIds: [],
+      favoritePlayerIds: [],
       notificationPrefs: {favoriteTeamUpdates: true},
     });
   });
@@ -410,12 +412,59 @@ test('fans can save bounded favorites but cannot change authority fields', async
   await assertSucceeds(updateDoc(doc(fan, 'users/fan-favorites'), {
     favoriteLeagueIds: ['nbl', 'schools'],
     favoriteTeamIds: ['team-a', 'team-b'],
+    favoritePlayerIds: ['player-a'],
     notificationPrefs: {favoriteTeamUpdates: false},
   }));
   await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {
     favoriteTeamIds: Array.from({length: 51}, (_, index) => `team-${index}`),
   }));
+  await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {
+    favoritePlayerIds: Array.from({length: 101}, (_, index) => `player-${index}`),
+  }));
   await assertFails(updateDoc(doc(fan, 'users/fan-favorites'), {role: 'admin'}));
+});
+
+test('inbox is owner-only and clients can only mark an unread item read', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'users/fan-inbox'), {
+      email: 'inbox@example.com', displayName: 'Inbox Fan', associationId: 'jba', role: 'fan',
+    });
+    await setDoc(doc(db, 'memberships/fan-inbox'), {
+      associationId: 'jba', status: 'active', authorizationSchemaVersion: 1,
+      role: 'fan', capabilities: ['association.read'],
+    });
+    await setDoc(doc(db, 'users/other-inbox'), {
+      email: 'other@example.com', displayName: 'Other', associationId: 'jba', role: 'fan',
+    });
+    await setDoc(doc(db, 'memberships/other-inbox'), {
+      associationId: 'jba', status: 'active', authorizationSchemaVersion: 1,
+      role: 'fan', capabilities: ['association.read'],
+    });
+    await setDoc(doc(db, 'users/fan-inbox/notifications/final-game-1'), {
+      associationId: 'jba', type: 'favorite_team_final', gameId: 'game-1',
+      title: 'Final', body: 'Score', createdAt: new Date(), readAt: null,
+    });
+  });
+  const own = authed('fan-inbox', 'inbox@example.com');
+  const other = authed('other-inbox', 'other@example.com');
+  const inboxRef = doc(own, 'users/fan-inbox/notifications/final-game-1');
+  await assertSucceeds(getDoc(inboxRef));
+  await assertSucceeds(getDocs(query(
+    collection(own, 'users/fan-inbox/notifications'),
+    orderBy('createdAt', 'desc'),
+  )));
+  await assertSucceeds(getDocs(query(
+    collection(own, 'users/fan-inbox/notifications'),
+    where('readAt', '==', null),
+  )));
+  await assertFails(getDoc(doc(other, 'users/fan-inbox/notifications/final-game-1')));
+  await assertFails(setDoc(doc(own, 'users/fan-inbox/notifications/forged'), {
+    associationId: 'jba', type: 'favorite_team_final', readAt: null,
+  }));
+  await assertFails(updateDoc(inboxRef, {title: 'Forged'}));
+  await assertSucceeds(updateDoc(inboxRef, {readAt: serverTimestamp()}));
+  await assertFails(updateDoc(inboxRef, {readAt: serverTimestamp()}));
+  await assertFails(deleteDoc(inboxRef));
 });
 
 test('fan query proves public non-ack visibility and internal reads fail', async () => {
@@ -522,7 +571,7 @@ test('statistician writes are tenant-bound and cannot approve', async () => {
       capabilities: ['association.read', 'stats.enter'],
     });
     await setDoc(doc(db, 'associations/jba/divisions/premier'), {
-      name: 'Premier', status: 'active',
+      name: 'Premier', leagueId: 'nbl', status: 'active',
     });
     await setDoc(doc(db, 'associations/jba/events/game-1'), {
       type: 'game', divisionId: 'premier',
@@ -655,7 +704,7 @@ test('explicit v2 cutover rejects legacy stat writes while disabled and shadow r
       associationId: 'jba', role: 'statistician', status: 'active',
       authorizationSchemaVersion: 1, capabilities: ['stats.enter'],
     });
-    await setDoc(doc(db, 'associations/jba/divisions/premier'), {name: 'Premier', status: 'active'});
+    await setDoc(doc(db, 'associations/jba/divisions/premier'), {name: 'Premier', leagueId: 'nbl', status: 'active'});
     for (const eventId of ['disabled', 'shadow', 'cutover-bypass', 'unknown-enabled', 'unknown-null']) {
       await setDoc(doc(db, `associations/jba/events/${eventId}`), {type: 'game', divisionId: 'premier'});
     }

@@ -4,7 +4,7 @@ import 'package:hoops_connect/core/constants/app_constants.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
 
 void main() {
-  test('light theme retains JBA green with accessible foreground', () {
+  test('light theme retains royal chrome with accessible foreground', () {
     final theme = AppTheme.light;
     expect(theme.colorScheme.primary, AppColors.primary);
     expect(

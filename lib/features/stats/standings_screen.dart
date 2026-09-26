@@ -4,13 +4,14 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
-import '../../models/association_branding_model.dart';
+import '../../core/sharing/public_share_branding.dart';
 import '../../models/standings_model.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/standings_providers.dart';
 import '../../services/public_artifact_release_validator.dart';
+import '../public/historical_league_standings.dart';
 
 class StandingsScreen extends ConsumerStatefulWidget {
   const StandingsScreen({super.key});
@@ -26,6 +27,28 @@ class _StandingsScreenState extends ConsumerState<StandingsScreen>
     final seasonId = ref.watch(activeSeasonIdProvider).value;
     final selectedDivision = ref.watch(selectedDivisionProvider);
     final selectedDivisionId = ref.watch(selectedDivisionIdProvider);
+    final publicSnapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
+    final historicalLeagues =
+        publicSnapshot?.leagues
+            .where(
+              (league) =>
+                  publicSnapshot.version.isPublished &&
+                  league.historicalStatistics &&
+                  (selectedDivisionId == null ||
+                      league.divisionIds.contains(selectedDivisionId)),
+            )
+            .toList() ??
+        [];
+    if (selectedDivisionId != null && historicalLeagues.isNotEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Standings')),
+        body: HistoricalLeagueStandings(
+          snapshot: publicSnapshot!,
+          league: historicalLeagues.first,
+          showBranding: true,
+        ),
+      );
+    }
     final standingsAsync = seasonId == null
         ? null
         : ref.watch(
@@ -46,52 +69,71 @@ class _StandingsScreenState extends ConsumerState<StandingsScreen>
           ),
         ],
       ),
-      body: standingsAsync == null
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.primary),
-            )
-          : standingsAsync.when(
-              data: (standings) {
-                if (standings == null || standings.standings.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.emoji_events_outlined,
-                          size: 48,
-                          color: AppColors.textMuted,
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'No standings data',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          selectedDivision == null
-                              ? 'Standings will appear after games are played'
-                              : 'Standings for ${selectedDivision.name} will appear after games are played',
-                          style: const TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return _StandingsTable(standings: standings.standings);
-              },
-              loading: () => const Center(
-                child: CircularProgressIndicator(color: AppColors.primary),
+      body: Column(
+        children: [
+          if (historicalLeagues.isNotEmpty && selectedDivisionId == null)
+            for (final league in historicalLeagues)
+              ListTile(
+                leading: const Icon(Icons.leaderboard_outlined),
+                title: Text('${league.name} standings'),
+                subtitle: const Text('League points and team statistics'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () =>
+                    ref.read(selectedDivisionIdProvider.notifier).state =
+                        league.divisionIds.first,
               ),
-              error: (e, _) => Center(child: Text('Error: $e')),
-            ),
+          Expanded(
+            child: standingsAsync == null
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary),
+                  )
+                : standingsAsync.when(
+                    data: (standings) {
+                      if (standings == null || standings.standings.isEmpty) {
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.emoji_events_outlined,
+                                size: 48,
+                                color: AppColors.textMuted,
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'No standings data',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                selectedDivision == null
+                                    ? 'Standings will appear after games are played'
+                                    : 'Standings for ${selectedDivision.name} will appear after games are played',
+                                style: const TextStyle(
+                                  color: AppColors.textMuted,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return _StandingsTable(standings: standings.standings);
+                    },
+                    loading: () => const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    error: (e, _) => Center(child: Text('Error: $e')),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -113,28 +155,80 @@ class _StandingsShareButton extends ConsumerWidget {
     final snapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
     final publicRows =
         snapshot?.standings
-            .where((row) => row.divisionId == divisionId)
+            .where((row) => divisionId == null || row.divisionId == divisionId)
             .toList(growable: false) ??
         const [];
-    final canShare =
+    final canShareVerified =
         snapshot != null &&
         snapshot.canCreatePublishedArtifacts &&
         publicRows.isNotEmpty;
+    final canShareLegacy =
+        snapshot != null &&
+        isLegacyPublicTeamStandingsShareEligible(snapshot) &&
+        publicRows.isNotEmpty;
+    final canShare = canShareVerified || canShareLegacy;
     return IconButton(
       icon: const Icon(Icons.share_outlined),
       tooltip: canShare
-          ? 'Share published standings'
+          ? canShareLegacy
+                ? 'Share standings'
+                : 'Share published standings'
           : 'Published standings are not available to share',
       onPressed: !canShare
           ? null
-          : () {
-              final branding =
-                  AssociationBrandingModel.jba(
-                    associationId: snapshot.associationId,
-                  ).copyWith(
-                    leagueName: snapshot.leagueName,
-                    shortName: snapshot.leagueShortName,
+          : () async {
+              final isAssociationOverview =
+                  divisionId == null &&
+                  publicRows
+                          .map(
+                            (row) => snapshot
+                                .leagueForDivision(row.divisionId)
+                                .leagueId,
+                          )
+                          .toSet()
+                          .length >
+                      1;
+              final branding = isAssociationOverview
+                  ? publicOverviewShareBranding(snapshot)
+                  : publicShareBranding(
+                      snapshot,
+                      snapshot.leagueForDivision(divisionId),
+                    );
+              if (canShareLegacy) {
+                try {
+                  final validator = PublicLegacyStandingsShareValidator(
+                    ref.read(publicLeagueRepositoryProvider),
                   );
+                  final current = await validator.requireCurrent(snapshot);
+                  if (!context.mounted) return;
+                  final currentRows = current.standings
+                      .where(
+                        (row) =>
+                            divisionId == null || row.divisionId == divisionId,
+                      )
+                      .toList(growable: false);
+                  await showBrandedShareSheet(
+                    context: context,
+                    branding: branding,
+                    payload: BrandedSharePayload.legacyPublicStandings(
+                      snapshot: current,
+                      standings: currentRows,
+                      branding: branding,
+                      divisionName: divisionName,
+                    ),
+                    validateCurrent: () async {
+                      await validator.requireCurrent(snapshot);
+                    },
+                  );
+                } on PublicArtifactReleaseException catch (error) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(error.message)));
+                  }
+                }
+                return;
+              }
               final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
               showBrandedShareSheet(
                 context: context,

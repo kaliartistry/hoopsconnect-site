@@ -100,6 +100,7 @@ abstract final class VersionedPublicReleaseAssembler {
     'schedule',
     'standings',
     'leaderboards',
+    'media',
   ];
   static final _sha256 = RegExp(r'^[a-f0-9]{64}$');
 

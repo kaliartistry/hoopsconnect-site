@@ -172,7 +172,7 @@
     {
       "id":"F09-REP-ROSTER","covers":["F-09"],"minimumStage":1,"driver":"hybrid","roles":["rep","admin","superAdmin"],"platforms":["web-chrome","ios","android"],"dataStates":["own-team","unrelated-team","proposal-pending","approved","rejected","stale-authority"],"mutationScope":"synthetic-emulator-only",
       "preconditions":["The league decision is own-team proposals with authorized approval unless a newer recorded contract says otherwise."],
-      "steps":["As qa-rep propose an add/change for Kingston Lions, cancel once, submit once and inspect status.","Attempt the same mutation on another team and with a stale assignment.","Approve and reject separate proposals as admin and repeat core authority checks as superAdmin."],
+      "steps":["As qa-rep propose an add/change for St George’s Slayers, cancel once, submit once and inspect status.","Attempt the same mutation on another team and with a stale assignment.","Approve and reject separate proposals as admin and repeat core authority checks as superAdmin."],
       "assertions":["A rep can act only for the assigned team and never gains general teams.manage.","Official eligibility changes only after authorized approval, history stays linked, and denials/retries are visible."],
       "evidence":["proposal/decision records","rules denials","role screenshots","roster history readback"]
     },

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
 import 'package:hoops_connect/core/constants/app_constants.dart';
+import 'package:hoops_connect/core/widgets/app_form_controls.dart';
 import 'package:hoops_connect/features/auth/login_auth_actions.dart';
 import 'package:hoops_connect/features/auth/login_screen.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
@@ -20,6 +21,8 @@ void main() {
     _FakeLoginAuthActions? auth,
     TextScaler textScaler = TextScaler.noScaling,
     PublicLeagueSnapshot? publicSnapshot,
+    String? requestedLocation,
+    bool presentationPreview = false,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
@@ -39,7 +42,10 @@ void main() {
           theme: theme ?? AppTheme.light,
           home: MediaQuery(
             data: MediaQueryData(size: size, textScaler: textScaler),
-            child: const LoginScreen(),
+            child: LoginScreen(
+              requestedLocation: requestedLocation,
+              presentationPreview: presentationPreview,
+            ),
           ),
         ),
       ),
@@ -77,6 +83,60 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('explains the fan follow workflow when opened from public scores', (
+    tester,
+  ) async {
+    await pumpLogin(tester, requestedLocation: '/settings?follow=jbl');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Follow your teams'), findsOneWidget);
+    expect(
+      find.text(
+        'Sign in or create a fan account, then choose teams and score notifications.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('member access'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('member access')).dy, lessThan(360));
+    final scrollView = tester.widget<SingleChildScrollView>(
+      find.byKey(const Key('login-scroll-view')),
+    );
+    expect(scrollView.controller!.position.pixels, greaterThan(0));
+  });
+
+  testWidgets('presentation preview shows member access without live actions', (
+    tester,
+  ) async {
+    await pumpLogin(
+      tester,
+      requestedLocation: '/settings',
+      presentationPreview: true,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Presentation preview'), findsOneWidget);
+    expect(
+      find.text(
+        'Member access is shown for review. Account actions are disabled on this public preview.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<AppAsyncActionButton>(
+            find.byKey(const Key('login-submit-button')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('login-email-field')))
+          .enabled,
+      isFalse,
+    );
+  });
+
   testWidgets('makes guest access prominent with a public league preview', (
     tester,
   ) async {
@@ -94,7 +154,7 @@ void main() {
     expect(
       find.bySemanticsLabel(
         RegExp(
-          r'LATEST RESULT\. Final\. Montego Bay Waves 76, away\. Kingston Lions 82, home\.',
+          r'LATEST RESULT\. JBA\. Final\. Montego Bay Waves 76, away\. Kingston Lions 82, home\.',
         ),
       ),
       findsOneWidget,
@@ -103,7 +163,12 @@ void main() {
     final card = tester.widget<Container>(
       find.byKey(const Key('league-sneak-peek')),
     );
-    expect((card.decoration! as BoxDecoration).color, AppColors.darkBg);
+    final cardDecoration = card.decoration! as BoxDecoration;
+    expect(cardDecoration.color, isNull);
+    expect((cardDecoration.gradient! as LinearGradient).colors, const [
+      AppColors.primaryDark,
+      AppColors.primary,
+    ]);
     final browse = tester.widget<InkWell>(
       find.byKey(const Key('browse-public-league-button')),
     );
