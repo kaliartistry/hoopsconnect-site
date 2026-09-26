@@ -238,6 +238,7 @@ _releaseFixture({bool retracted = false}) {
           ],
     'standings': [],
     'leaderboards': [],
+    'media': [],
   };
   final releaseId = PublicReleaseIntegrity.digest({
     'protocolVersion': VersionedPublicReleaseAssembler.protocolVersion,

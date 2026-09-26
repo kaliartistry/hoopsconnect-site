@@ -5,6 +5,10 @@ enum DivisionStatus { active, archived }
 class DivisionModel {
   final String id;
   final String name;
+
+  /// The league that owns this division. Legacy records may be null until
+  /// migrated, but new divisions must always be created beneath a league.
+  final String? leagueId;
   final String? seasonId;
   final String? description;
   final DivisionStatus status;
@@ -13,6 +17,7 @@ class DivisionModel {
   const DivisionModel({
     required this.id,
     required this.name,
+    this.leagueId,
     this.seasonId,
     this.description,
     this.status = DivisionStatus.active,
@@ -41,6 +46,7 @@ class DivisionModel {
     return DivisionModel(
       id: id,
       name: data['name'] as String,
+      leagueId: _optionalId(data['leagueId'], 'leagueId'),
       seasonId: data['seasonId'] as String?,
       description: data['description'] as String?,
       status: status,
@@ -51,6 +57,7 @@ class DivisionModel {
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
+      'leagueId': leagueId,
       'seasonId': seasonId,
       'description': description,
       'status': status.name,
@@ -59,6 +66,18 @@ class DivisionModel {
   }
 
   bool get isArchived => status == DivisionStatus.archived;
+
+  bool get hasParentLeague => leagueId?.isNotEmpty == true;
+}
+
+String? _optionalId(Object? value, String field) {
+  if (value == null) return null;
+  if (value is! String ||
+      value.trim().isEmpty ||
+      !RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$').hasMatch(value.trim())) {
+    throw FormatException('Division $field must be a valid identifier.');
+  }
+  return value.trim();
 }
 
 class DivisionDeleteReference {

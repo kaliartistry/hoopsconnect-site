@@ -122,5 +122,29 @@ void main() {
 
       expect(sponsor.toMap()['label'], 'Presented by');
     });
+
+    test('accepts only approved bundled image references outside HTTPS', () {
+      final sponsor = SponsorBrandingModel.fromMap(const {
+        'enabled': true,
+        'name': 'Demo Partner',
+        'logoUrl': 'asset:assets/images/sponsor_demo.png',
+      });
+      final league = AssociationBrandingModel.fromMap(
+        associationId: 'jba',
+        data: const {
+          'leagueName': 'National Basketball League',
+          'logoUrl': 'asset:assets/images/nbl_jamaica_logo.png',
+        },
+      );
+      final rejected = SponsorBrandingModel.fromMap(const {
+        'enabled': true,
+        'name': 'Demo Partner',
+        'logoUrl': 'asset:../../private.png',
+      });
+
+      expect(sponsor.logoUrl, 'asset:assets/images/sponsor_demo.png');
+      expect(league.logoUrl, 'asset:assets/images/nbl_jamaica_logo.png');
+      expect(rejected.logoUrl, isNull);
+    });
   });
 }

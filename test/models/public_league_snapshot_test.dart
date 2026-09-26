@@ -2,6 +2,62 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
 
 void main() {
+  test('legacy feed derives league scopes from its published divisions', () {
+    final snapshot = PublicLeagueSnapshot.fromMap({
+      'published': true,
+      'certificationStatus': 'certified',
+      'seasonId': 'season-1',
+      'generatedAt': '2026-09-10T21:00:00.000Z',
+      'schedule': [
+        {
+          'gameId': 'game-1',
+          'title': 'Home vs Away',
+          'startTime': '2026-09-10T20:00:00.000Z',
+          'status': 'final',
+          'divisionId': 'nbl-premier',
+          'homeTeamName': 'Home',
+          'awayTeamName': 'Away',
+          'homeScore': 82,
+          'awayScore': 79,
+        },
+      ],
+      'standings': [
+        {
+          'teamName': 'Women A',
+          'divisionId': 'womens-league',
+          'wins': 1,
+          'losses': 0,
+          'pct': 1.0,
+          'pointsFor': 80,
+          'pointsAgainst': 70,
+        },
+      ],
+      'leaderboards': const [],
+    });
+
+    expect(snapshot.availableLeagues.single.divisionIds, [
+      'nbl-premier',
+      'womens-league',
+    ]);
+    expect(snapshot.canCreatePublishedArtifacts, isFalse);
+    expect(snapshot.divisionName('nbl-premier'), 'NBL Premier');
+    expect(snapshot.divisionName('womens-league'), "Women's League");
+  });
+
+  test('accepts the approved bundled NBL presentation logo', () {
+    final identity = PublicBrandIdentity.fromMap(
+      const {
+        'name': 'National Basketball League',
+        'shortName': 'NBL',
+        'logoUrl': 'asset:assets/images/nbl_jamaica_logo.png',
+      },
+      fallbackName: 'League',
+      fallbackShortName: 'League',
+    );
+
+    expect(identity.logoUrl, 'asset:assets/images/nbl_jamaica_logo.png');
+  });
+
   test('maps association branding and nested league division scopes', () {
     final snapshot = PublicLeagueSnapshot.fromMap({
       'published': true,
@@ -39,7 +95,12 @@ void main() {
         {'divisionId': 'girls', 'name': 'Girls Division'},
       ],
       'teams': [
-        {'teamId': 'team-a', 'name': 'Team A', 'divisionId': 'a'},
+        {
+          'teamId': 'team-a',
+          'name': 'Team A',
+          'divisionId': 'a',
+          'logoUrl': 'https://example.com/team-a.png',
+        },
       ],
       'schedule': const [],
       'standings': const [],
@@ -52,6 +113,7 @@ void main() {
     );
     expect(snapshot.availableLeagues.single.name, 'School Leagues');
     expect(snapshot.availableLeagues.single.sponsor.name, 'League Sponsor');
+    expect(snapshot.teams.single.logoUrl, 'https://example.com/team-a.png');
     expect(
       snapshot.divisionsForLeague('schools').map((division) => division.name),
       ['A Division', 'B Division', 'Girls Division'],

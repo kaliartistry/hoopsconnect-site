@@ -48,7 +48,8 @@ run from being refreshed against a replacement instance.
 Every fixture role and capability set, including the historical `press` alias,
 is loaded directly from `functions/src/authorization_schema_v1.json`. The
 fixture does not maintain a second authorization table. The full dataset has
-six teams across the NBL, Women’s League, and School Leagues, 36 rostered players (including `0`
+42 teams across the NBL, Women’s League, and School Leagues, with 36 players on
+the six featured matchup rosters (including `0`
 and `00` jersey cases), regulation and overtime finals, submitted, rejected,
 in-progress and scheduled games, one public announcement, one acknowledgment
 post, all/division standings, five leaderboard

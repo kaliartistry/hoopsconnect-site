@@ -40,4 +40,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Login destination'), findsOneWidget);
   });
+
+  testWidgets('public association brand and home-marked Games return home', (
+    tester,
+  ) async {
+    final snapshot = PublicLeagueSnapshot(
+      leagueName: 'Jamaica Basketball Association',
+      leagueShortName: 'JBA',
+      seasonId: 'demo-season',
+      version: PublicSnapshotVersion(
+        schemaVersion: 1,
+        contractVersion: 'legacy-public-snapshot-v1',
+        snapshotVersion: null,
+        verificationStatus: 'legacyUnverified',
+        state: PublicReleaseState.published,
+        privacyEpoch: null,
+        generatedAt: DateTime.utc(2026, 9, 14),
+      ),
+      schedule: const [],
+      standings: const [],
+      leaderboards: const [],
+    );
+    final router = GoRouter(
+      initialLocation: '/public/standings',
+      routes: [
+        GoRoute(
+          path: '/public/games',
+          builder: (_, _) => const PublicLeagueScreen(),
+        ),
+        GoRoute(
+          path: '/public/standings',
+          builder: (_, _) => const PublicLeagueScreen(initialTab: 2),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          publicLeagueSnapshotProvider.overrideWith(
+            (ref) => Stream.value(snapshot),
+          ),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('public-games-home-tab')), findsOneWidget);
+    expect(find.byIcon(Icons.home_rounded), findsOneWidget);
+    await tester.tap(find.byKey(const Key('public-association-home')));
+    await tester.pumpAndSettle();
+
+    expect(router.routeInformationProvider.value.uri.path, '/public/games');
+  });
 }

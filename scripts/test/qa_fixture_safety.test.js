@@ -67,20 +67,32 @@ test('QA role authority and schema version exactly match the canonical Functions
   }
 });
 
-test('full dataset has six deterministic teams for multi-league journeys', () => {
-  assert.deepEqual(TEAM_FIXTURES.map((team) => team.id), [
-    'kingston-lions',
-    'montego-bay-waves',
-    'spanish-town-sparks',
-    'portmore-pelicans',
-    'kingston-college-braves',
-    'calabar-high-lions',
+test('full dataset has 42 deterministic teams for multi-league journeys', () => {
+  assert.equal(TEAM_FIXTURES.length, 42);
+  assert.deepEqual(TEAM_FIXTURES.slice(0, 10).map((team) => team.id), [
+    'st-georges-slayers',
+    'uwi-running-rebels',
+    'rae-town-raptors',
+    'urban-knights',
+    'upper-room-eagles',
+    'tivoli-wizards',
+    'falmouth-saints',
+    'central-celtics',
+    'spanish-town-spartans',
+    'portmore-flames',
   ]);
   assert.deepEqual(new Set(TEAM_FIXTURES.map((team) => team.divisionId)), new Set([
     'premier',
     'development',
     'schoolboy-a',
+    'schoolboy-b',
+    'schoolboy-c',
+    'schoolgirls',
   ]));
+  assert.equal(
+    TEAM_FIXTURES.filter((team) => team.fixtureSource === 'fictional').length,
+    8,
+  );
 });
 
 test('QA public data uses the reviewed pure projector without a deployable trigger', () => {

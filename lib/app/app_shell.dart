@@ -202,7 +202,7 @@ class AppShell extends ConsumerWidget {
                         if (isPreviewActive)
                           RolePreviewBanner(role: previewRole),
                         if (showLeagueScope) const _LeagueScopeBar(),
-                        const SponsorBanner(),
+                        if (showLeagueScope) const SponsorBanner(),
                       ],
                     ),
                   ),
@@ -233,7 +233,7 @@ class AppShell extends ConsumerWidget {
                 OfflineBanner(isOffline: !isOnline),
                 if (isPreviewActive) RolePreviewBanner(role: previewRole),
                 if (showLeagueScope) const _LeagueScopeBar(),
-                const SponsorBanner(),
+                if (showLeagueScope) const SponsorBanner(),
               ],
             ),
           ),

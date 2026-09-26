@@ -45,6 +45,7 @@ void main() {
         '/calendar?division=women',
       );
       expect(PublicRoutePaths.game('game 1'), '/public/games/game%201');
+      expect(PublicRoutePaths.media, '/public/media');
       expect(PublicRoutePaths.team('team/1'), '/public/teams/team%2F1');
       expect(PublicRoutePaths.player('player 1'), '/public/players/player%201');
       expect(
@@ -57,7 +58,21 @@ void main() {
         ),
         '/public/teams/kingston-lions?division=premier',
       );
-      expect(resolveRouterInitialLocation('https://evil.example'), '/board');
+      expect(resolveRouterInitialLocation('https://evil.example'), isNull);
+      expect(
+        resolveRouterInitialLocation(
+          null,
+          browserLocation: '/public/games?league=nbl',
+        ),
+        '/public/games?league=nbl',
+      );
+      expect(
+        resolveRouterInitialLocation(
+          null,
+          browserLocation: 'https://evil.example',
+        ),
+        isNull,
+      );
     });
 
     test(

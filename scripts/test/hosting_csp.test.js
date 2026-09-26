@@ -136,6 +136,10 @@ test('Hosting CSP permits exact Firebase client endpoints only', () => {
     true,
   );
   assert.equal(
+    allows('connect-src', 'blob:https://hoops-connect-jm.web.app/team-logo'),
+    true,
+  );
+  assert.equal(
     allows(
       'connect-src',
       'https://fonts.gstatic.com/s/notosanssymbols/v43/fallback.woff2',
@@ -168,6 +172,25 @@ test('Hosting CSP path-scopes FlutterFire and Google provider scripts', () => {
   assert.equal(
     allows('script-src', 'https://accounts.google.com/gsi/client'),
     true,
+  );
+  assert.equal(
+    allows('script-src', 'https://apis.google.com/js/api.js?onload=auth'),
+    true,
+  );
+  assert.equal(
+    allows('script-src', 'https://apis.google.com/js/unrelated.js'),
+    false,
+  );
+  assert.equal(
+    allows(
+      'script-src',
+      'https://apis.google.com/_/scs/abc-static/_/js/k=gapi.lb.en/m=gapi_iframes',
+    ),
+    true,
+  );
+  assert.equal(
+    allows('script-src', 'https://apis.google.com/unrelated.js'),
+    false,
   );
   assert.equal(
     allows('script-src', 'https://accounts.google.com/unrelated.js'),

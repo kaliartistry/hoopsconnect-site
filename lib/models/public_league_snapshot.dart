@@ -183,13 +183,60 @@ class PublicTeam {
   final String teamId;
   final String name;
   final String? divisionId;
+  final String? logoUrl;
 
-  const PublicTeam({required this.teamId, required this.name, this.divisionId});
+  const PublicTeam({
+    required this.teamId,
+    required this.name,
+    this.divisionId,
+    this.logoUrl,
+  });
 
   factory PublicTeam.fromMap(Map<String, dynamic> map) => PublicTeam(
     teamId: _requiredText(map['teamId'], 'teamId'),
     name: _requiredText(map['name'], 'team name'),
     divisionId: _optionalText(map['divisionId']),
+    logoUrl: _imageReference(map['logoUrl']),
+  );
+}
+
+class PublicMediaItem {
+  final String mediaId;
+  final String title;
+  final String summary;
+  final String type;
+  final String? divisionId;
+  final String? imageUrl;
+  final DateTime publishedAt;
+  final bool pinned;
+
+  const PublicMediaItem({
+    required this.mediaId,
+    required this.title,
+    required this.summary,
+    required this.type,
+    this.divisionId,
+    this.imageUrl,
+    required this.publishedAt,
+    this.pinned = false,
+  });
+
+  String get typeLabel => switch (type) {
+    'announcement' => 'Announcement',
+    'refRequest' => 'League update',
+    'gymAvailable' => 'Venue update',
+    _ => 'News',
+  };
+
+  factory PublicMediaItem.fromMap(Map<String, dynamic> map) => PublicMediaItem(
+    mediaId: _requiredText(map['mediaId'], 'mediaId'),
+    title: _requiredText(map['title'], 'media title'),
+    summary: _requiredText(map['summary'], 'media summary'),
+    type: _optionalText(map['type']) ?? 'general',
+    divisionId: _optionalText(map['divisionId']),
+    imageUrl: _imageReference(map['imageUrl']),
+    publishedAt: _dateTime(map['publishedAt'], 'media publishedAt'),
+    pinned: map['pinned'] == true,
   );
 }
 
@@ -298,6 +345,7 @@ class PublicGame {
   final String gameId;
   final String title;
   final DateTime startTime;
+  final bool dateOnly;
   final String? venue;
   final String? divisionId;
   final String? homeTeamId;
@@ -316,6 +364,7 @@ class PublicGame {
     required this.gameId,
     required this.title,
     required this.startTime,
+    this.dateOnly = false,
     this.venue,
     this.divisionId,
     this.homeTeamId,
@@ -392,6 +441,7 @@ class PublicGame {
     }
     return PublicGame(
       gameId: gameId,
+      dateOnly: dateOnly,
       title: title,
       startTime: startTime,
       venue: venue,
@@ -459,6 +509,7 @@ class PublicGame {
     }
 
     final game = PublicGame(
+      dateOnly: map['dateOnly'] == true,
       gameId: _requiredText(map['gameId'], 'gameId'),
       title: _requiredText(map['title'], 'game title'),
       startTime: _dateTime(map['startTime'], 'game startTime'),
@@ -553,6 +604,8 @@ class PublicLeader {
   final String? divisionId;
   final double? value;
   final int? gamesPlayed;
+  final int? cumulativeTotal;
+  final Map<String, int> shootingMade;
 
   const PublicLeader({
     this.playerId,
@@ -562,6 +615,8 @@ class PublicLeader {
     this.divisionId,
     required this.value,
     required this.gamesPlayed,
+    this.cumulativeTotal,
+    this.shootingMade = const {},
   });
 
   factory PublicLeader.fromMap(Map<String, dynamic> map) => PublicLeader(
@@ -572,6 +627,13 @@ class PublicLeader {
     divisionId: _optionalText(map['divisionId']),
     value: _number(map['value']),
     gamesPlayed: _integer(map['gamesPlayed']),
+    cumulativeTotal: _integer(map['cumulativeTotal']),
+    shootingMade: Map.unmodifiable({
+      for (final key in ['twoMade', 'threeMade', 'ftMade'])
+        if (_integer(_optionalMap(map['shootingMade'])[key])
+            case final int value)
+          key: value,
+    }),
   );
 }
 
@@ -681,7 +743,7 @@ class PublicSponsor {
     enabled: map['enabled'] as bool? ?? false,
     name: _optionalText(map['name']) ?? '',
     label: _optionalText(map['label']) ?? 'Presented by',
-    logoUrl: _httpsUrl(map['logoUrl']),
+    logoUrl: _imageReference(map['logoUrl']),
     websiteUrl: _httpsUrl(map['websiteUrl']),
   );
 }
@@ -714,7 +776,7 @@ class PublicBrandIdentity {
     return PublicBrandIdentity(
       name: _optionalText(map['name']) ?? fallbackName,
       shortName: _optionalText(map['shortName']) ?? fallbackShortName,
-      logoUrl: _httpsUrl(map['logoUrl']),
+      logoUrl: _imageReference(map['logoUrl']),
       primaryColorHex: _colorHex(map['primaryColorHex'] ?? map['primaryColor']),
       secondaryColorHex: _colorHex(
         map['secondaryColorHex'] ?? map['secondaryColor'],
@@ -729,12 +791,35 @@ class PublicBrandIdentity {
   }
 }
 
+class ReportedTeamStanding {
+  const ReportedTeamStanding({
+    required this.teamId,
+    required this.leaguePoints,
+  });
+  final String teamId;
+  final int leaguePoints;
+
+  factory ReportedTeamStanding.fromMap(Map<String, dynamic> map) =>
+      ReportedTeamStanding(
+        teamId: _requiredText(map['teamId'], 'standing teamId'),
+        leaguePoints:
+            _integer(map['leaguePoints']) ??
+            (throw const FormatException('Standing league points required.')),
+      );
+}
+
 class PublicLeagueDefinition extends PublicBrandIdentity {
   const PublicLeagueDefinition({
     required this.leagueId,
     required super.name,
     required super.shortName,
     this.description,
+    this.seasonLabel,
+    this.historicalStatistics = false,
+    this.reportedStandings = const [],
+    this.standingsAsOf,
+    this.standingsSourceUrl,
+    this.supportingSponsorExamples = const [],
     this.divisionIds = const [],
     super.logoUrl,
     super.primaryColorHex,
@@ -745,6 +830,12 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
 
   final String leagueId;
   final String? description;
+  final String? seasonLabel;
+  final bool historicalStatistics;
+  final List<ReportedTeamStanding> reportedStandings;
+  final String? standingsAsOf;
+  final String? standingsSourceUrl;
+  final List<PublicSponsor> supportingSponsorExamples;
   final List<String> divisionIds;
 
   factory PublicLeagueDefinition.fromMap(Map<String, dynamic> map) {
@@ -767,6 +858,22 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
       name: identity.name,
       shortName: identity.shortName,
       description: _optionalText(map['description']),
+      seasonLabel: _optionalText(map['seasonLabel']),
+      historicalStatistics: map['historicalStatistics'] == true,
+      reportedStandings: List.unmodifiable(
+        _mapList(
+          map['reportedStandings'],
+          'reportedStandings',
+        ).map(ReportedTeamStanding.fromMap),
+      ),
+      standingsAsOf: _optionalText(map['standingsAsOf']),
+      standingsSourceUrl: _optionalText(map['standingsSourceUrl']),
+      supportingSponsorExamples: List.unmodifiable(
+        _mapList(
+          map['supportingSponsorExamples'],
+          'supportingSponsorExamples',
+        ).map(PublicSponsor.fromMap),
+      ),
       divisionIds: List.unmodifiable(divisionIds),
       logoUrl: identity.logoUrl,
       primaryColorHex: identity.primaryColorHex,
@@ -790,6 +897,7 @@ class PublicLeagueSnapshot {
   final List<PublicGame> schedule;
   final List<PublicStanding> standings;
   final List<PublicLeaderboard> leaderboards;
+  final List<PublicMediaItem> media;
   final PublicBrandIdentity? associationBrand;
   final List<PublicLeagueDefinition> leagues;
 
@@ -808,6 +916,7 @@ class PublicLeagueSnapshot {
     required this.schedule,
     required this.standings,
     required this.leaderboards,
+    this.media = const [],
   }) : seasonName = seasonName ?? seasonId;
 
   DateTime get generatedAt => version.generatedAt;
@@ -823,14 +932,21 @@ class PublicLeagueSnapshot {
 
   List<PublicLeagueDefinition> get availableLeagues {
     if (leagues.isNotEmpty) return leagues;
+    final divisionIds = <String>{
+      for (final division in divisions) division.divisionId,
+      for (final game in schedule)
+        if (game.divisionId != null) game.divisionId!,
+      for (final standing in standings)
+        if (standing.divisionId != null) standing.divisionId!,
+      for (final board in leaderboards)
+        if (board.divisionId != null) board.divisionId!,
+    }.toList(growable: false)..sort();
     return [
       PublicLeagueDefinition(
         leagueId: 'all',
         name: leagueName,
         shortName: leagueShortName,
-        divisionIds: divisions
-            .map((division) => division.divisionId)
-            .toList(growable: false),
+        divisionIds: divisionIds,
       ),
     ];
   }
@@ -867,6 +983,7 @@ class PublicLeagueSnapshot {
         schedule: const [],
         standings: const [],
         leaderboards: const [],
+        media: const [],
       );
     }
 
@@ -982,6 +1099,9 @@ class PublicLeagueSnapshot {
       schedule: List.unmodifiable(schedule),
       standings: List.unmodifiable(standings),
       leaderboards: List.unmodifiable(leaderboards),
+      media: List.unmodifiable(
+        _mapList(map['media'], 'media').map(PublicMediaItem.fromMap),
+      ),
     );
   }
 
@@ -989,6 +1109,21 @@ class PublicLeagueSnapshot {
     if (divisionId == null) return 'All divisions';
     for (final division in divisions) {
       if (division.divisionId == divisionId) return division.name;
+    }
+    if (divisionId.length <= 40 &&
+        RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(divisionId)) {
+      return divisionId
+          .split(RegExp(r'[-_]'))
+          .where((word) => word.isNotEmpty)
+          .map(
+            (word) => switch (word.toLowerCase()) {
+              'nbl' => 'NBL',
+              'jba' => 'JBA',
+              'womens' => "Women's",
+              _ => '${word[0].toUpperCase()}${word.substring(1)}',
+            },
+          )
+          .join(' ');
     }
     return 'Division unavailable';
   }
@@ -1017,6 +1152,16 @@ class PublicLeagueSnapshot {
 
   bool gameBelongsToLeague(PublicGame game, String leagueId) =>
       leagueById(leagueId).divisionIds.contains(game.divisionId);
+
+  List<PublicMediaItem> mediaForLeague(String leagueId) {
+    final allowed = leagueById(leagueId).divisionIds.toSet();
+    return media
+        .where(
+          (item) =>
+              item.divisionId == null || allowed.contains(item.divisionId),
+        )
+        .toList(growable: false);
+  }
 
   PublicGameDetail? gameDetail(String gameId) {
     for (final game in schedule) {
@@ -1130,6 +1275,22 @@ String? _httpsUrl(Object? value) {
   return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty
       ? uri.toString()
       : null;
+}
+
+String? _imageReference(Object? value) {
+  final text = _optionalText(value);
+  if (text == null) return null;
+  final bundledPresentationAsset =
+      text == 'asset:assets/images/nbl_jamaica_logo.png' ||
+      RegExp(
+        r'^asset:assets/images/jbl_(full|sub|foska|tivoli|slayers|warriors|raptors|flames|eagles|knights|celtics|rebels|spartans)\.png$',
+      ).hasMatch(text) ||
+      (text.startsWith('asset:assets/images/sponsor_') &&
+          text.endsWith('.png'));
+  if (bundledPresentationAsset && !text.contains('..')) {
+    return text;
+  }
+  return _httpsUrl(text);
 }
 
 String _colorHex(Object? value, {String fallback = '#2E7D32'}) {

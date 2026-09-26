@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/core/sharing/branded_share_payload.dart';
+import 'package:hoops_connect/core/sharing/share_demo_samples.dart';
 import 'package:hoops_connect/models/association_branding_model.dart';
 import 'package:hoops_connect/models/game_stats_model.dart';
 import 'package:hoops_connect/models/leaderboard_model.dart';
@@ -8,6 +9,27 @@ import 'package:hoops_connect/models/public_league_snapshot.dart';
 import 'package:hoops_connect/models/standings_model.dart';
 
 void main() {
+  test('leaders demo matches the selected statistic without private data', () {
+    final assists = ShareDemoSamples.leaderboardFor('apg');
+    expect(assists.headline, 'assists leaders');
+    expect(assists.shareText, isNot(contains('DEMONSTRATION CARD')));
+    expect(assists.shareText, contains('AST'));
+    expect(assists.shareText, isNot(contains('40.0 PTS')));
+  });
+
+  test(
+    'evaluation names remain intact with no demo labels on shared cards',
+    () {
+      final box = ShareDemoSamples.boxScore;
+      final player = ShareDemoSamples.player;
+      expect(box.isDemonstration, isTrue);
+      expect(box.shareText, isNot(contains('DEMONSTRATION CARD')));
+      expect(box.shareText, contains('St George’s Slayers'));
+      expect(box.eyebrow, 'BOX SCORE');
+      expect(player.teams.single.name, 'Andre Blake');
+    },
+  );
+
   const stats = GameStatsModel(
     id: 'game-1',
     eventId: 'game-1',
@@ -68,16 +90,45 @@ void main() {
         privacyEpoch: 3,
         generatedAt: DateTime.utc(2026, 9, 10),
       ),
+      teams: const [
+        PublicTeam(
+          teamId: 'home',
+          name: 'Home',
+          logoUrl: 'asset:assets/images/jba_logo.png',
+        ),
+        PublicTeam(
+          teamId: 'away',
+          name: 'Away',
+          logoUrl: 'asset:assets/images/sponsor_yardcourt.png',
+        ),
+      ],
       schedule: [
         PublicGame(
           gameId: 'game-1',
           title: 'Home vs Away',
           startTime: DateTime.utc(2026, 9, 10),
+          homeTeamId: 'home',
           homeTeamName: 'Home',
+          awayTeamId: 'away',
           awayTeamName: 'Away',
           homeScore: 82,
           awayScore: 79,
           status: PublicGameStatus.finalResult,
+          periodScores: const [
+            PublicPeriodScore(period: 1, homeScore: 20, awayScore: 18),
+            PublicPeriodScore(period: 2, homeScore: 22, awayScore: 21),
+          ],
+          playerLines: const [
+            PublicPlayerGameLine(
+              playerId: 'player-1',
+              displayName: 'A. Brown',
+              teamId: 'home',
+              points: 24,
+              offensiveRebounds: 2,
+              defensiveRebounds: 5,
+              assists: 6,
+            ),
+          ],
         ).withComputedResultVersion(),
       ],
       standings: const [],
@@ -92,20 +143,60 @@ void main() {
     );
 
     expect(payload.sourceLabel, 'Published league result');
-    expect(payload.versionLabel, 'Publication aaaaaaaaaaaa');
-    expect(
-      payload.shareText,
-      contains('Publication: ${snapshot.version.snapshotVersion}'),
-    );
-    expect(
-      payload.shareText,
-      contains('Result: ${snapshot.schedule.single.resultVersion}'),
-    );
+    expect(payload.versionLabel, isNull);
+    expect(payload.shareText, isNot(contains('Publication:')));
+    expect(payload.shareText, isNot(contains('Result:')));
     expect(
       payload.shareText,
       contains('https://example.test/public/game/game-1'),
     );
     expect(payload.fileName, contains('aaaaaaaaaaaa'));
+    expect(payload.fileName, contains('home-vs-away'));
+    expect(payload.fileName, isNot(contains('game-1')));
+    expect(payload.teams, hasLength(2));
+    expect(payload.teams.first.logoUrl, 'asset:assets/images/jba_logo.png');
+    expect(
+      payload.teams.last.logoUrl,
+      'asset:assets/images/sponsor_yardcourt.png',
+    );
+
+    final boxScore = BrandedSharePayload.publicBoxScore(
+      snapshot: snapshot,
+      game: snapshot.schedule.single,
+      branding: AssociationBrandingModel.jba(),
+    );
+    expect(boxScore.sheetTitle, 'Share this box score');
+    expect(boxScore.detail, contains('A. Brown'));
+    expect(boxScore.detail, contains('24 PTS'));
+    expect(boxScore.detail, contains('1: 20-18 · 2: 22-21'));
+    expect(boxScore.detail, isNot(contains('Home ·')));
+    expect(boxScore.shareText, contains('A. Brown · Home · 24 PTS'));
+    expect(boxScore.teams, hasLength(2));
+
+    final team = BrandedSharePayload.publicTeam(
+      snapshot: snapshot,
+      team: PublicTeamDetail(
+        team: snapshot.teams.first,
+        standing: const PublicStanding(
+          teamId: 'home',
+          teamName: 'Home',
+          divisionId: 'premier',
+          rank: 1,
+          rankStatus: PublicRankStatus.ranked,
+          wins: 4,
+          losses: 1,
+          pct: .8,
+          pointsFor: 410,
+          pointsAgainst: 385,
+        ),
+        games: snapshot.schedule,
+        leaderboards: const [],
+      ),
+      branding: AssociationBrandingModel.jba(),
+    );
+    expect(team.sheetTitle, 'Share this team snapshot');
+    expect(team.detail, contains('4-1'));
+    expect(team.teams.single.logoUrl, 'asset:assets/images/jba_logo.png');
   });
 
   test('leaderboard highlights the top three and shares the full ranking', () {
@@ -286,11 +377,8 @@ void main() {
     );
 
     for (final payload in [leaderboard, player, standings]) {
-      expect(payload.versionLabel, 'Publication aaaaaaaaaaaa');
-      expect(
-        payload.shareText,
-        contains('Publication: ${snapshot.version.snapshotVersion}'),
-      );
+      expect(payload.versionLabel, isNull);
+      expect(payload.shareText, isNot(contains('Publication:')));
       expect(payload.fileName, contains('aaaaaaaaaaaa'));
     }
     expect(leaderboard.shareText, contains('Unknown'));
@@ -319,7 +407,207 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('published fixture shares its schedule without inventing a score', () {
+    final snapshot = _publicMediaAndFixtureSnapshot();
+    final payload = BrandedSharePayload.publicFixture(
+      snapshot: snapshot,
+      game: snapshot.schedule.single,
+      branding: AssociationBrandingModel.jba(),
+      canonicalUri: Uri.parse('https://example.test/public/games/game-2'),
+    );
+
+    expect(payload.eyebrow, 'UPCOMING GAME');
+    expect(payload.headline, 'Public Home vs Public Away');
+    expect(payload.detail, contains('JA'));
+    expect(payload.teams.map((team) => team.score), everyElement(isNull));
+    expect(payload.shareText, contains('/public/games/game-2'));
+  });
+
+  test('public media card carries its story permalink and sponsor', () {
+    final snapshot = _publicMediaAndFixtureSnapshot();
+    final branding = AssociationBrandingModel.jba().copyWith(
+      sponsor: const SponsorBrandingModel(
+        enabled: true,
+        name: 'ShipSafe',
+        label: 'Title sponsor',
+      ),
+    );
+    final payload = BrandedSharePayload.publicMedia(
+      snapshot: snapshot,
+      item: snapshot.media.single,
+      branding: branding,
+      canonicalUri: Uri.parse('https://example.test/public/media/story-1'),
+    );
+
+    expect(payload.headline, 'League opening day');
+    expect(payload.detail, 'The season tips off on Saturday.');
+    expect(payload.sourceLabel, 'Published league media');
+    expect(payload.shareText, contains('Title sponsor ShipSafe'));
+    expect(payload.shareText, contains('/public/media/story-1'));
+  });
+
+  test('current public cards read naturally without inventing a version', () {
+    final snapshot = _legacyPublicSnapshot();
+    final branding = AssociationBrandingModel.jba();
+    final score = BrandedSharePayload.legacyPublicGame(
+      snapshot: snapshot,
+      game: snapshot.schedule.single,
+      branding: branding,
+    );
+    final standings = BrandedSharePayload.legacyPublicStandings(
+      snapshot: snapshot,
+      standings: snapshot.standings,
+      branding: branding,
+    );
+
+    expect(score.sourceLabel, 'League result');
+    expect(score.shareText, contains('Final'));
+    expect(score.versionLabel, isNull);
+    expect(standings.sourceLabel, 'League standings');
+    expect(standings.versionLabel, isNull);
+    expect(standings.shareText, isNot(contains('Publication:')));
+  });
+
+  test('legacy mixed-division preview groups rows and avoids fake ranks', () {
+    final base = _legacyPublicSnapshot();
+    const premier = PublicStanding(
+      teamName: 'Premier One',
+      divisionId: 'premier',
+      wins: 7,
+      losses: 3,
+      pct: 0.7,
+      pointsFor: 700,
+      pointsAgainst: 600,
+    );
+    const womens = PublicStanding(
+      teamName: 'Women One',
+      divisionId: 'womens',
+      wins: 6,
+      losses: 4,
+      pct: 0.6,
+      pointsFor: 620,
+      pointsAgainst: 580,
+    );
+    const secondPremier = PublicStanding(
+      teamName: 'Premier Two',
+      divisionId: 'premier',
+      wins: 5,
+      losses: 5,
+      pct: 0.5,
+      pointsFor: 580,
+      pointsAgainst: 580,
+    );
+    final snapshot = PublicLeagueSnapshot(
+      leagueName: base.leagueName,
+      leagueShortName: base.leagueShortName,
+      seasonId: base.seasonId,
+      version: base.version,
+      divisions: const [
+        PublicDivision(divisionId: 'premier', name: 'Premier'),
+        PublicDivision(divisionId: 'womens', name: "Women's League"),
+      ],
+      schedule: base.schedule,
+      standings: const [premier, womens, secondPremier],
+      leaderboards: const [],
+    );
+    final payload = BrandedSharePayload.legacyPublicStandings(
+      snapshot: snapshot,
+      standings: snapshot.standings,
+      branding: AssociationBrandingModel.jba(),
+    );
+
+    expect(payload.headline, contains('division overview'));
+    expect(payload.detail, contains('Premier: Premier One'));
+    expect(payload.detail, contains("Women's League: Women One"));
+    expect(payload.shareText, contains('Premier division'));
+    expect(payload.shareText, contains("Women's League division"));
+    expect(
+      payload.shareText.indexOf('Premier Two'),
+      lessThan(payload.shareText.indexOf("Women's League division")),
+    );
+    expect(payload.shareText, contains('Rank pending'));
+    expect(payload.shareText, isNot(contains('—')));
+  });
 }
+
+PublicLeagueSnapshot _legacyPublicSnapshot() => PublicLeagueSnapshot(
+  leagueName: 'Jamaica Basketball Association',
+  leagueShortName: 'JBA',
+  seasonId: 'season-1',
+  version: PublicSnapshotVersion(
+    schemaVersion: 1,
+    contractVersion: 'legacy-public-snapshot-v1',
+    snapshotVersion: null,
+    verificationStatus: 'certified',
+    state: PublicReleaseState.published,
+    privacyEpoch: null,
+    generatedAt: DateTime.utc(2026, 9, 10),
+  ),
+  schedule: [
+    PublicGame(
+      gameId: 'game-1',
+      title: 'Home vs Away',
+      startTime: DateTime.utc(2026, 9, 10),
+      homeTeamName: 'Home',
+      awayTeamName: 'Away',
+      homeScore: 82,
+      awayScore: 79,
+      status: PublicGameStatus.finalResult,
+    ),
+  ],
+  standings: const [
+    PublicStanding(
+      teamName: 'Home',
+      rank: 1,
+      rankStatus: PublicRankStatus.ranked,
+      wins: 1,
+      losses: 0,
+      pct: 1.0,
+      pointsFor: 82,
+      pointsAgainst: 79,
+    ),
+  ],
+  leaderboards: const [],
+);
+
+PublicLeagueSnapshot _publicMediaAndFixtureSnapshot() => PublicLeagueSnapshot(
+  leagueName: 'Jamaica Basketball Association',
+  leagueShortName: 'JBA',
+  seasonId: 'season-1',
+  seasonName: '2026 NBL',
+  version: PublicSnapshotVersion(
+    schemaVersion: 1,
+    contractVersion: 'legacy-public-snapshot-v1.1',
+    snapshotVersion:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    verificationStatus: 'legacyApproved',
+    state: PublicReleaseState.published,
+    privacyEpoch: 3,
+    generatedAt: DateTime.utc(2026, 9, 10),
+  ),
+  schedule: [
+    PublicGame(
+      gameId: 'game-2',
+      title: 'Public Home vs Public Away',
+      startTime: DateTime.utc(2026, 9, 19, 20),
+      homeTeamName: 'Public Home',
+      awayTeamName: 'Public Away',
+      status: PublicGameStatus.scheduled,
+    ),
+  ],
+  media: [
+    PublicMediaItem(
+      mediaId: 'story-1',
+      title: 'League opening day',
+      summary: 'The season tips off on Saturday.',
+      type: 'announcement',
+      publishedAt: DateTime.utc(2026, 9, 10),
+    ),
+  ],
+  standings: const [],
+  leaderboards: const [],
+);
 
 PublicLeagueSnapshot _publicStatsSnapshot({int? privacyEpoch = 3}) =>
     PublicLeagueSnapshot(

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../auth/auth_error_message.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/team_providers.dart';
@@ -17,6 +19,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   late TextEditingController _nameController;
   bool _hasEdited = false;
   bool _saving = false;
+  String? _linkingProviderId;
 
   @override
   void initState() {
@@ -115,6 +118,34 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
     if (confirmed == true && mounted) {
       await ref.read(authRepositoryProvider).signOut();
+    }
+  }
+
+  Future<void> _connectSignInMethod(UserModel user, String providerId) async {
+    if (_linkingProviderId != null) return;
+    setState(() => _linkingProviderId = providerId);
+    try {
+      await ref
+          .read(authRepositoryProvider)
+          .linkWebSignInMethod(expectedUserId: user.id, providerId: providerId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${providerId == 'google.com' ? 'Google' : 'Apple'} is now connected to this account. You can use it next time you sign in.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      final message = friendlyAccountLinkErrorMessage(error);
+      if (mounted && message != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } finally {
+      if (mounted) setState(() => _linkingProviderId = null);
     }
   }
 
@@ -249,6 +280,37 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ),
               const SizedBox(height: 16),
 
+              // Linking is self-service: the member first authenticates with
+              // this UID, then consents to the new provider's own popup.
+              if (kIsWeb &&
+                  ref.read(authRepositoryProvider).currentUser?.uid ==
+                      user.id) ...[
+                _SectionCard(
+                  title: 'Sign-in methods',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Connect Google or Apple to this account. Your role, teams, and history stay with the same account.',
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final method in const [
+                            ('google.com', 'Google'),
+                            ('apple.com', 'Apple'),
+                          ])
+                            _signInMethodButton(user, method.$1, method.$2),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
               // Team (read-only)
               if (teamName != null) ...[
                 _SectionCard(
@@ -332,6 +394,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
+    );
+  }
+
+  Widget _signInMethodButton(UserModel user, String providerId, String label) {
+    final connected =
+        ref
+            .read(authRepositoryProvider)
+            .currentUser
+            ?.providerData
+            .any((provider) => provider.providerId == providerId) ??
+        false;
+    if (connected) {
+      return Chip(
+        avatar: const Icon(Icons.check_circle, size: 18),
+        label: Text('$label connected'),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: _linkingProviderId == null
+          ? () => _connectSignInMethod(user, providerId)
+          : null,
+      icon: _linkingProviderId == providerId
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.link),
+      label: Text('Connect $label'),
     );
   }
 }

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/app/branded_theme.dart';
+import 'package:hoops_connect/core/constants/app_constants.dart';
 import 'package:hoops_connect/core/theme/app_theme.dart';
 import 'package:hoops_connect/models/association_branding_model.dart';
 
@@ -32,23 +33,23 @@ void main() {
     accentColorHex: '#E8E8E8',
   );
 
-  test('ordinary light branding preserves exact filled-control colors', () {
+  test('ordinary light branding preserves royal product chrome', () {
     final theme = buildBrandedTheme(AppTheme.light, mediumBrand);
 
-    expect(theme.colorScheme.primary, mediumBrand.primaryColor);
+    expect(theme.colorScheme.primary, AppColors.primary);
     expect(
       theme.colorScheme.onPrimary,
-      highestContrastForeground(mediumBrand.primaryColor),
+      highestContrastForeground(AppColors.primary),
     );
-    expect(theme.colorScheme.secondary, mediumBrand.accentColor);
+    expect(theme.colorScheme.secondary, AppColors.accent);
     expect(
       theme.colorScheme.onSecondary,
-      highestContrastForeground(mediumBrand.accentColor),
+      highestContrastForeground(AppColors.accent),
     );
-    expect(theme.appBarTheme.backgroundColor, mediumBrand.secondaryColor);
+    expect(theme.appBarTheme.backgroundColor, AppColors.primary);
     expect(
       theme.appBarTheme.foregroundColor,
-      highestContrastForeground(mediumBrand.secondaryColor),
+      highestContrastForeground(AppColors.primary),
     );
     expect(
       contrastRatio(theme.colorScheme.onPrimary, theme.colorScheme.primary),
@@ -73,26 +74,21 @@ void main() {
     );
   });
 
-  test(
-    'JBA light brand remains exact while dark variants use tonal colors',
-    () {
-      final branding = AssociationBrandingModel.jba();
-      final light = buildBrandedTheme(AppTheme.light, branding);
-      final dark = buildBrandedTheme(AppTheme.dark, branding);
-      final highContrastDark = buildBrandedTheme(
-        AppTheme.highContrastDark,
-        branding,
-        highContrast: true,
-      );
+  test('JBA artwork colors do not take over product chrome', () {
+    final branding = AssociationBrandingModel.jba();
+    final light = buildBrandedTheme(AppTheme.light, branding);
+    final dark = buildBrandedTheme(AppTheme.dark, branding);
+    final highContrastDark = buildBrandedTheme(
+      AppTheme.highContrastDark,
+      branding,
+      highContrast: true,
+    );
 
-      expect(light.colorScheme.primary, const Color(0xFF2E7D32));
-      expect(dark.colorScheme.primary, isNot(branding.primaryColor));
-      expect(
-        highContrastDark.colorScheme.primary,
-        isNot(branding.primaryColor),
-      );
-    },
-  );
+    expect(light.colorScheme.primary, AppColors.primary);
+    expect(light.colorScheme.primary, isNot(branding.primaryColor));
+    expect(dark.colorScheme.primary, isNot(branding.primaryColor));
+    expect(highContrastDark.colorScheme.primary, isNot(branding.primaryColor));
+  });
 
   test('all branded variants retain semantic colors and readable controls', () {
     final fixtures = <AssociationBrandingModel>[
@@ -155,13 +151,10 @@ void main() {
       final disabled = const <WidgetState>{WidgetState.disabled};
       final elevated = theme.elevatedButtonTheme.style!;
 
-      expect(
-        elevated.backgroundColor!.resolve(enabled),
-        mediumBrand.primaryColor,
-      );
+      expect(elevated.backgroundColor!.resolve(enabled), AppColors.primary);
       expect(
         elevated.backgroundColor!.resolve(disabled),
-        isNot(mediumBrand.primaryColor),
+        isNot(AppColors.primary),
       );
       expect(
         elevated.foregroundColor!.resolve(disabled),
@@ -185,20 +178,17 @@ void main() {
             .color,
         theme.colorScheme.primary,
       );
-      expect(theme.navigationBarTheme.indicatorColor, mediumBrand.primaryColor);
+      expect(theme.navigationBarTheme.indicatorColor, AppColors.primary);
       expect(
         theme.segmentedButtonTheme.style!.backgroundColor!.resolve(
           const <WidgetState>{WidgetState.selected},
         ),
         theme.colorScheme.primary,
       );
-      expect(
-        theme.navigationRailTheme.indicatorColor,
-        mediumBrand.primaryColor,
-      );
+      expect(theme.navigationRailTheme.indicatorColor, AppColors.primary);
       expect(
         theme.navigationRailTheme.selectedIconTheme!.color,
-        highestContrastForeground(mediumBrand.primaryColor),
+        highestContrastForeground(AppColors.primary),
       );
       expect(
         elevated.overlayColor!.resolve(const <WidgetState>{
@@ -263,20 +253,20 @@ void main() {
     final context = tester.element(find.text('League'));
     expect(
       Theme.of(context).appBarTheme.foregroundColor,
-      highestContrastForeground(mediumBrand.secondaryColor),
+      highestContrastForeground(AppColors.primary),
     );
     expect(
       Theme.of(context).navigationBarTheme.indicatorColor,
-      mediumBrand.primaryColor,
+      AppColors.primary,
     );
     expect(
       DefaultTextStyle.of(context).style.color,
-      highestContrastForeground(mediumBrand.secondaryColor),
+      highestContrastForeground(AppColors.primary),
     );
     final iconContext = tester.element(find.byIcon(Icons.settings));
     expect(
       IconTheme.of(iconContext).color,
-      highestContrastForeground(mediumBrand.secondaryColor),
+      highestContrastForeground(AppColors.primary),
     );
     expect(find.text('Disabled'), findsOneWidget);
     expect(find.text('Unavailable'), findsOneWidget);

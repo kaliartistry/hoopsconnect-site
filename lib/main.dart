@@ -14,7 +14,9 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'app/app.dart';
 import 'app/app_bootstrap.dart';
+import 'app/router/app_router.dart';
 import 'firebase_options.dart';
+import 'platform/staging_environment.dart';
 import 'services/notification_service.dart';
 
 const _webAppCheckSiteKey = String.fromEnvironment(
@@ -28,7 +30,7 @@ const _macOSKeychainAccessGroup = String.fromEnvironment(
 /// Must be a top-level function (not a class method).
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await Firebase.initializeApp(options: _firebaseOptionsForCurrentBuild);
   // Background messages are handled by the OS notification tray automatically.
 }
 
@@ -36,12 +38,24 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Capture the browser deep link before async Firebase startup. Reading it
+  // later can yield `/` after a provider-driven router rebuild.
+  final initialBrowserLocation = kIsWeb
+      ? Uri(
+          path: Uri.base.path,
+          query: Uri.base.hasQuery ? Uri.base.query : null,
+        ).toString()
+      : null;
+
+  await Firebase.initializeApp(options: _firebaseOptionsForCurrentBuild);
   await _configurePlatformAuth();
 
-  // Enable Firestore offline persistence
-  FirebaseFirestore.instance.settings = const Settings(
-    persistenceEnabled: true,
+  // The staging presentation is online-only and commonly open in several
+  // browser tabs. Its IndexedDB single-tab lock otherwise emits a warning and
+  // falls back to memory in the second tab. Native and production web retain
+  // their existing offline persistence setting.
+  FirebaseFirestore.instance.settings = Settings(
+    persistenceEnabled: !(kIsWeb && StagingEnvironment.enabled),
   );
 
   // Set up Crashlytics error reporting where it is supported.
@@ -70,7 +84,9 @@ void main() async {
   };
 
   // Register background message handler
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  if (!StagingEnvironment.enabled) {
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  }
 
   // Initialize notification service after the app shell renders. Notification
   // permission/token failures should not block sign-in or public screens.
@@ -80,6 +96,9 @@ void main() async {
     ProviderScope(
       overrides: [
         notificationServiceProvider.overrideWithValue(notificationService),
+        initialBrowserLocationProvider.overrideWithValue(
+          initialBrowserLocation,
+        ),
       ],
       child: AppBootstrap(
         initialize: _activateAppCheckIfConfigured,
@@ -88,8 +107,16 @@ void main() async {
     ),
   );
 
-  unawaited(notificationService.init());
+  // Synthetic staging does not register devices for outbound push delivery.
+  if (!StagingEnvironment.enabled) {
+    unawaited(notificationService.init());
+  }
 }
+
+FirebaseOptions get _firebaseOptionsForCurrentBuild =>
+    StagingEnvironment.enabled
+    ? StagingEnvironment.firebaseOptions
+    : DefaultFirebaseOptions.currentPlatform;
 
 Future<void> _configurePlatformAuth() async {
   if (!kIsWeb &&
@@ -103,6 +130,9 @@ Future<void> _configurePlatformAuth() async {
 
 Future<void> _activateAppCheckIfConfigured() async {
   try {
+    // Staging callable functions are deliberately isolated from production
+    // attestation and do not require device App Check registration.
+    if (StagingEnvironment.enabled) return;
     if (kIsWeb) {
       if (_webAppCheckSiteKey.isEmpty) {
         dev.log(

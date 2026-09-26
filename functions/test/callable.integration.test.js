@@ -1052,7 +1052,15 @@ test('division deletion resumes persisted operations and inventories canonical j
     'association.read', 'association.manage',
   ]);
   const remove = leagueCallable('deleteDivisionIfUnreferenced');
-  await adminDb.doc('associations/jba/divisions/recoverable').set({name: 'Recoverable', status: 'active', version: 1});
+  await adminDb.doc('associations/jba/divisions/recoverable').set({
+    name: 'Recoverable', leagueId: 'nbl', status: 'active', version: 1,
+  });
+  await adminDb.doc('associations/jba').set({
+    leagueCatalogV1: {
+      schemaVersion: 1,
+      leagues: [{leagueId: 'nbl', name: 'NBL', divisionIds: ['premier', 'recoverable']}],
+    },
+  }, {merge: true});
   const operationId = 'division_recovery_0001';
   const canonical = (value) => Array.isArray(value) ? value.map(canonical) :
     value && typeof value === 'object' ? Object.keys(value).sort().reduce((result, key) => {
@@ -1074,6 +1082,10 @@ test('division deletion resumes persisted operations and inventories canonical j
   });
   assert.equal(recovered.data.status, 'deleted');
   assert.equal((await operationRef.get()).get('status'), 'deleted');
+  assert.deepEqual(
+    (await adminDb.doc('associations/jba').get()).get('leagueCatalogV1.leagues.0.divisionIds'),
+    ['premier'],
+  );
 
   await adminDb.doc('associations/jba/divisions/inventory').set({name: 'Inventory', status: 'active', version: 1});
   await adminDb.doc(

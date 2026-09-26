@@ -4,6 +4,10 @@
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save HoopsConnect share-card images to Photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Access Photos to save HoopsConnect share-card images.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

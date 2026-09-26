@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/utils/error_mapper.dart';
 import '../../core/widgets/app_constrained_content.dart';
 import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
+import '../../models/association_branding_model.dart';
 import '../../models/division_model.dart';
+import '../../models/league_catalog_model.dart';
+import '../../providers/association_branding_providers.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/league_workflow_providers.dart';
@@ -17,73 +21,234 @@ class DivisionManagementScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final divisionsAsync = ref.watch(divisionsStreamProvider);
+    final catalogAsync = ref.watch(leagueCatalogProvider);
     final canManage =
         ref.watch(currentUserProvider).valueOrNull?.canManageDivisions ?? false;
 
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: const Text('Divisions'),
+        title: const Text('League divisions'),
       ),
-      body: divisionsAsync.when(
-        data: (divisions) {
-          if (divisions.isEmpty) {
-            return AppConstrainedContent(
-              child: AppStateMessage(
-                title: 'No divisions yet',
-                message: canManage
-                    ? 'Create the first division before adding teams or games.'
-                    : 'A league administrator has not created a division yet.',
-                icon: Icons.category_outlined,
-                actionLabel: canManage ? 'Create division' : null,
-                onAction: canManage
-                    ? () => _showDivisionDialog(context, ref)
-                    : null,
-              ),
-            );
-          }
-          final ordered = [...divisions]
-            ..sort((a, b) {
-              final status = a.status.index.compareTo(b.status.index);
-              return status != 0
-                  ? status
-                  : a.name.toLowerCase().compareTo(b.name.toLowerCase());
-            });
-          return ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: ordered.length,
-            itemBuilder: (context, index) =>
-                _DivisionCard(division: ordered[index], canManage: canManage),
-          );
-        },
+      body: catalogAsync.when(
         loading: () =>
-            const Center(child: AppLoadingState(label: 'Loading divisions')),
+            const Center(child: AppLoadingState(label: 'Loading leagues')),
         error: (error, _) => AppConstrainedContent(
           child: AppStateMessage(
-            title: 'Divisions could not be loaded',
+            title: 'Leagues could not be loaded',
             message: ErrorMapper.map(error),
             tone: AppStateTone.error,
-            actionLabel: 'Try again',
-            onAction: () => ref.invalidate(divisionsStreamProvider),
+          ),
+        ),
+        data: (catalog) => divisionsAsync.when(
+          data: (divisions) => _DivisionHierarchy(
+            catalog: catalog,
+            divisions: divisions,
+            canManage: canManage,
+            onCreate: (leagueId) => _showDivisionDialog(
+              context,
+              ref,
+              catalog,
+              initialLeagueId: leagueId,
+            ),
+          ),
+          loading: () =>
+              const Center(child: AppLoadingState(label: 'Loading divisions')),
+          error: (error, _) => AppConstrainedContent(
+            child: AppStateMessage(
+              title: 'Divisions could not be loaded',
+              message: ErrorMapper.map(error),
+              tone: AppStateTone.error,
+              actionLabel: 'Try again',
+              onAction: () => ref.invalidate(divisionsStreamProvider),
+            ),
           ),
         ),
       ),
       floatingActionButton: canManage
           ? FloatingActionButton.extended(
-              onPressed: () => _showDivisionDialog(context, ref),
+              onPressed:
+                  catalogAsync.valueOrNull?.orderedActive.isEmpty != false
+                  ? null
+                  : () => _showDivisionDialog(
+                      context,
+                      ref,
+                      catalogAsync.requireValue,
+                    ),
               icon: const Icon(Icons.add),
-              label: const Text('New division'),
+              label: const Text('Add division to league'),
             )
           : null,
     );
   }
 }
 
+class _DivisionHierarchy extends StatelessWidget {
+  const _DivisionHierarchy({
+    required this.catalog,
+    required this.divisions,
+    required this.canManage,
+    required this.onCreate,
+  });
+
+  final LeagueCatalogModel catalog;
+  final List<DivisionModel> divisions;
+  final bool canManage;
+  final ValueChanged<String> onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    final leagues = catalog.orderedActive;
+    if (leagues.isEmpty) {
+      return AppConstrainedContent(
+        child: AppStateMessage(
+          title: 'Create a league first',
+          message:
+              'Divisions cannot stand on their own. Create the parent league, then add its divisions beneath it.',
+          icon: Icons.account_tree_outlined,
+          actionLabel: canManage ? 'Go to leagues' : null,
+          onAction: canManage ? () => context.go('/admin/leagues') : null,
+        ),
+      );
+    }
+
+    final byId = {for (final division in divisions) division.id: division};
+    final assignedIds = <String>{};
+    for (final league in catalog.leagues) {
+      assignedIds.addAll(league.divisionIds);
+    }
+    final unassigned = divisions
+        .where((division) => !assignedIds.contains(division.id))
+        .toList(growable: false);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+      children: [
+        const AppStateMessage(
+          title: 'League → division hierarchy',
+          message:
+              'Every division belongs to one parent league. Teams, schedules, standings, and leaders inherit that league context.',
+          icon: Icons.account_tree_outlined,
+          compact: true,
+        ),
+        const SizedBox(height: 12),
+        for (final league in leagues) ...[
+          Builder(
+            builder: (context) {
+              final leagueColor = AssociationBrandingModel.colorFromHex(
+                league.primaryColorHex,
+              );
+              return Card(
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ColoredBox(
+                      color: leagueColor.withValues(alpha: 0.16),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.sports_basketball_outlined,
+                              color: leagueColor,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    league.name,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w800),
+                                  ),
+                                  Text(
+                                    '${league.divisionIds.length} ${league.divisionIds.length == 1 ? 'division' : 'divisions'} beneath this league',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (canManage)
+                              TextButton.icon(
+                                onPressed: () => onCreate(league.id),
+                                icon: const Icon(Icons.add),
+                                label: const Text('Add division'),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (league.divisionIds.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'No divisions have been added under this league.',
+                        ),
+                      )
+                    else
+                      for (final divisionId in league.divisionIds)
+                        if (byId[divisionId] case final division?)
+                          _DivisionCard(
+                            division: division,
+                            parentLeagueId: league.id,
+                            parentLeagueName: league.name,
+                            canManage: canManage,
+                          )
+                        else
+                          ListTile(
+                            leading: const Icon(Icons.warning_amber_rounded),
+                            title: Text('Missing division record: $divisionId'),
+                            subtitle: const Text(
+                              'Repair this league before scheduling teams or games.',
+                            ),
+                          ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (unassigned.isNotEmpty) ...[
+          AppStateMessage(
+            title: 'Legacy divisions need a parent league',
+            message:
+                '${unassigned.length} older division records are not attached to a league. Edit each one to complete the migration.',
+            tone: AppStateTone.warning,
+            icon: Icons.warning_amber_rounded,
+            compact: true,
+          ),
+          const SizedBox(height: 8),
+          for (final division in unassigned)
+            _DivisionCard(
+              division: division,
+              parentLeagueName: 'Parent league required',
+              canManage: canManage,
+            ),
+        ],
+      ],
+    );
+  }
+}
+
 class _DivisionCard extends ConsumerStatefulWidget {
-  const _DivisionCard({required this.division, required this.canManage});
+  const _DivisionCard({
+    required this.division,
+    required this.canManage,
+    required this.parentLeagueName,
+    this.parentLeagueId,
+  });
 
   final DivisionModel division;
   final bool canManage;
+  final String parentLeagueName;
+  final String? parentLeagueId;
 
   @override
   ConsumerState<_DivisionCard> createState() => _DivisionCardState();
@@ -119,11 +284,11 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
           ],
         ),
         subtitle: Text(
-          division.description?.trim().isNotEmpty == true
+          '${widget.parentLeagueId == null ? '${widget.parentLeagueName} · ' : ''}${division.description?.trim().isNotEmpty == true
               ? division.description!
               : division.isArchived
               ? 'Hidden from new team and schedule forms'
-              : 'Available for teams and scheduling',
+              : 'Available for teams and scheduling'}',
         ),
         trailing: !widget.canManage
             ? null
@@ -138,8 +303,19 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
                 children: [
                   IconButton(
                     tooltip: 'Edit ${division.name}',
-                    onPressed: () =>
-                        _showDivisionDialog(context, ref, existing: division),
+                    onPressed: () {
+                      final catalog = ref
+                          .read(leagueCatalogProvider)
+                          .valueOrNull;
+                      if (catalog == null) return;
+                      _showDivisionDialog(
+                        context,
+                        ref,
+                        catalog,
+                        existing: division,
+                        initialLeagueId: widget.parentLeagueId,
+                      );
+                    },
                     icon: const Icon(Icons.edit_outlined),
                   ),
                   PopupMenuButton<String>(
@@ -185,6 +361,28 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
   Future<void> _setArchived(bool archived) async {
     final assocId = ref.read(currentAssociationIdProvider);
     if (assocId == null) return;
+    if (archived) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Archive ${widget.division.name}?'),
+          content: Text(
+            'This hides the division from new teams and schedules inside ${widget.parentLeagueName}. Existing records stay intact.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Archive division'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     setState(() => _updating = true);
     try {
       await ref
@@ -396,19 +594,31 @@ class _DivisionCardState extends ConsumerState<_DivisionCard> {
 
 Future<void> _showDivisionDialog(
   BuildContext context,
-  WidgetRef ref, {
+  WidgetRef ref,
+  LeagueCatalogModel catalog, {
   DivisionModel? existing,
+  String? initialLeagueId,
 }) async {
   await showDialog<void>(
     context: context,
-    builder: (_) => _DivisionEditorDialog(existing: existing),
+    builder: (_) => _DivisionEditorDialog(
+      catalog: catalog,
+      existing: existing,
+      initialLeagueId: initialLeagueId,
+    ),
   );
 }
 
 class _DivisionEditorDialog extends ConsumerStatefulWidget {
-  const _DivisionEditorDialog({this.existing});
+  const _DivisionEditorDialog({
+    required this.catalog,
+    this.existing,
+    this.initialLeagueId,
+  });
 
+  final LeagueCatalogModel catalog;
   final DivisionModel? existing;
+  final String? initialLeagueId;
 
   @override
   ConsumerState<_DivisionEditorDialog> createState() =>
@@ -419,6 +629,7 @@ class _DivisionEditorDialogState extends ConsumerState<_DivisionEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
   late final TextEditingController _descriptionController;
+  String? _leagueId;
   bool _saving = false;
   String? _error;
 
@@ -429,6 +640,7 @@ class _DivisionEditorDialogState extends ConsumerState<_DivisionEditorDialog> {
     _descriptionController = TextEditingController(
       text: widget.existing?.description,
     );
+    _leagueId = widget.existing?.leagueId ?? widget.initialLeagueId;
   }
 
   @override
@@ -440,6 +652,10 @@ class _DivisionEditorDialogState extends ConsumerState<_DivisionEditorDialog> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_leagueId == null) {
+      setState(() => _error = 'Choose the parent league.');
+      return;
+    }
     final assocId = ref.read(currentAssociationIdProvider);
     if (assocId == null) {
       setState(() => _error = 'Your association could not be confirmed.');
@@ -450,23 +666,27 @@ class _DivisionEditorDialogState extends ConsumerState<_DivisionEditorDialog> {
       _error = null;
     });
     try {
-      final repository = ref.read(divisionRepositoryProvider);
       final name = _nameController.text.trim();
       final description = _descriptionController.text.trim();
       if (widget.existing == null) {
-        await repository.createDivision(
-          assocId,
-          DivisionModel(
-            id: '',
-            name: name,
-            description: description.isEmpty ? null : description,
-          ),
-        );
+        await ref
+            .read(associationRepositoryProvider)
+            .createDivisionUnderLeague(
+              associationId: assocId,
+              leagueId: _leagueId!,
+              name: name,
+              description: description.isEmpty ? null : description,
+            );
       } else {
-        await repository.updateDivision(assocId, widget.existing!.id, {
-          'name': name,
-          'description': description.isEmpty ? null : description,
-        });
+        await ref
+            .read(associationRepositoryProvider)
+            .updateDivisionUnderLeague(
+              associationId: assocId,
+              divisionId: widget.existing!.id,
+              leagueId: _leagueId!,
+              name: name,
+              description: description.isEmpty ? null : description,
+            );
       }
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
@@ -494,6 +714,33 @@ class _DivisionEditorDialogState extends ConsumerState<_DivisionEditorDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                DropdownButtonFormField<String>(
+                  key: const Key('division-parent-league-field'),
+                  initialValue:
+                      widget.catalog.leagues.any(
+                        (league) =>
+                            league.id == _leagueId && !league.isArchived,
+                      )
+                      ? _leagueId
+                      : null,
+                  decoration: const InputDecoration(
+                    labelText: 'Parent league',
+                    helperText: 'Every division must live under one league.',
+                  ),
+                  items: [
+                    for (final league in widget.catalog.orderedActive)
+                      DropdownMenuItem(
+                        value: league.id,
+                        child: Text(league.name),
+                      ),
+                  ],
+                  onChanged: widget.existing?.hasParentLeague == true
+                      ? null
+                      : (value) => setState(() => _leagueId = value),
+                  validator: (value) =>
+                      value == null ? 'Choose the parent league' : null,
+                ),
+                const SizedBox(height: 12),
                 TextFormField(
                   controller: _nameController,
                   autofocus: true,

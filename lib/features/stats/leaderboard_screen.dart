@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
+import '../public/public_stats_navigation.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
-import '../../models/association_branding_model.dart';
+import '../../core/sharing/public_share_branding.dart';
 import '../../models/leaderboard_model.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/public_league_provider.dart';
@@ -64,7 +65,7 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Season Leaderboard'),
+        title: const Text('Player statistics'),
         actions: [_buildShareAction(context, category, selectedDivisionId)],
         bottom: TabBar(
           controller: _tabController,
@@ -74,45 +75,52 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
           tabs: _categoryLabels.map((label) => Tab(text: label)).toList(),
         ),
       ),
-      body: leaderboardAsync == null
-          ? const SkeletonListTileList()
-          : leaderboardAsync.when(
-              data: (leaderboard) {
-                if (leaderboard == null || leaderboard.rankings.isEmpty) {
-                  return EmptyState(
-                    icon: Icons.leaderboard_outlined,
-                    title: 'No leaderboard data',
-                    subtitle: selectedDivision == null
-                        ? 'Stats will appear after games are played'
-                        : 'Stats for ${selectedDivision.name} will appear after games are played',
-                  );
-                }
+      body: Column(
+        children: [
+          const PublicStatsNavigation(),
+          Expanded(
+            child: leaderboardAsync == null
+                ? const SkeletonListTileList()
+                : leaderboardAsync.when(
+                    data: (leaderboard) {
+                      if (leaderboard == null || leaderboard.rankings.isEmpty) {
+                        return EmptyState(
+                          icon: Icons.leaderboard_outlined,
+                          title: 'No leaderboard data',
+                          subtitle: selectedDivision == null
+                              ? 'Stats will appear after games are played'
+                              : 'Stats for ${selectedDivision.name} will appear after games are played',
+                        );
+                      }
 
-                return ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: leaderboard.rankings.length,
-                  itemBuilder: (context, index) {
-                    final entry = leaderboard.rankings[index];
-                    return _buildRankingItem(context, entry, index + 1);
-                  },
-                );
-              },
-              loading: () => const SkeletonListTileList(),
-              error: (e, _) => ErrorDisplay(
-                error: e,
-                onRetry: () {
-                  if (seasonId != null) {
-                    ref.invalidate(
-                      leaderboardProvider((
-                        seasonId: seasonId,
-                        divisionId: selectedDivisionId,
-                        category: category,
-                      )),
-                    );
-                  }
-                },
-              ),
-            ),
+                      return ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: leaderboard.rankings.length,
+                        itemBuilder: (context, index) {
+                          final entry = leaderboard.rankings[index];
+                          return _buildRankingItem(context, entry, index + 1);
+                        },
+                      );
+                    },
+                    loading: () => const SkeletonListTileList(),
+                    error: (e, _) => ErrorDisplay(
+                      error: e,
+                      onRetry: () {
+                        if (seasonId != null) {
+                          ref.invalidate(
+                            leaderboardProvider((
+                              seasonId: seasonId,
+                              divisionId: selectedDivisionId,
+                              category: category,
+                            )),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -134,37 +142,31 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
         snapshot.version.privacyEpoch != null &&
         publicBoard != null &&
         publicBoard.rankings.isNotEmpty;
+    if (!canShare) return const SizedBox.shrink();
     return IconButton(
       icon: const Icon(Icons.share_outlined),
-      tooltip: canShare
-          ? 'Share published leaderboard'
-          : 'Published leaderboard is not available to share',
-      onPressed: !canShare
-          ? null
-          : () {
-              final branding =
-                  AssociationBrandingModel.jba(
-                    associationId: snapshot.associationId,
-                  ).copyWith(
-                    leagueName: snapshot.leagueName,
-                    shortName: snapshot.leagueShortName,
-                  );
-              final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
-              showBrandedShareSheet(
-                context: context,
-                branding: branding,
-                payload: BrandedSharePayload.publicLeaderboard(
-                  snapshot: snapshot,
-                  leaderboard: publicBoard,
-                  branding: branding,
-                ),
-                validateCurrent: () async {
-                  await ref
-                      .read(publicArtifactReleaseValidatorProvider)
-                      .requireCurrent(releaseBinding);
-                },
-              );
-            },
+      tooltip: 'Share published leaderboard',
+      onPressed: () {
+        final branding = publicShareBranding(
+          snapshot,
+          snapshot.leagueForDivision(publicBoard.divisionId),
+        );
+        final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
+        showBrandedShareSheet(
+          context: context,
+          branding: branding,
+          payload: BrandedSharePayload.publicLeaderboard(
+            snapshot: snapshot,
+            leaderboard: publicBoard,
+            branding: branding,
+          ),
+          validateCurrent: () async {
+            await ref
+                .read(publicArtifactReleaseValidatorProvider)
+                .requireCurrent(releaseBinding);
+          },
+        );
+      },
     );
   }
 

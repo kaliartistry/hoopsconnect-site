@@ -89,13 +89,21 @@ class PublicDetailRouteScreen extends ConsumerWidget {
   Widget _team(BuildContext context, PublicLeagueSnapshot snapshot) {
     final detail = snapshot.teamDetail(id);
     if (detail == null) return _missing(context);
-    return PublicTeamDetailScreen(snapshot: snapshot, detail: detail);
+    return PublicTeamDetailScreen(
+      snapshot: snapshot,
+      detail: detail,
+      canonicalUri: canonicalUri,
+    );
   }
 
   Widget _player(BuildContext context, PublicLeagueSnapshot snapshot) {
     final detail = snapshot.playerDetail(id);
     if (detail == null) return _missing(context);
-    return PublicPlayerDetailScreen(snapshot: snapshot, detail: detail);
+    return PublicPlayerDetailScreen(
+      snapshot: snapshot,
+      detail: detail,
+      canonicalUri: canonicalUri,
+    );
   }
 
   Widget _missing(BuildContext context) => _RouteState(
@@ -140,7 +148,7 @@ class _RouteState extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       leading: IconButton(
-        onPressed: () => context.go(backLocation),
+        onPressed: () => _returnToPublic(context, backLocation),
         tooltip: 'Back to public league',
         icon: const Icon(Icons.arrow_back),
       ),
@@ -156,4 +164,12 @@ class _RouteState extends StatelessWidget {
       ),
     ),
   );
+}
+
+void _returnToPublic(BuildContext context, String fallback) {
+  if (context.canPop()) {
+    context.pop();
+  } else {
+    context.go(fallback);
+  }
 }

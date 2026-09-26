@@ -4,9 +4,16 @@ import '../../models/user_model.dart';
 class AppColors {
   AppColors._();
 
-  static const Color primary = Color(0xFF2E7D32); // green-800
-  static const Color primaryLight = Color(0xFFE8F5E9); // green-50
-  static const Color primaryDark = Color(0xFF1B5E20); // green-900
+  // Product chrome. Association and league brand colors remain independent so
+  // their real green-and-gold marks stay visually distinct.
+  static const Color primary = Color(0xFF234EBD); // royal blue
+  static const Color primaryLight = Color(0xFFEFF4FF); // royal tint
+  static const Color primaryDark = Color(0xFF16378D); // deep royal
+
+  // JBA brand colors. Use for association artwork and brand lockups, not
+  // navigation or general interface chrome.
+  static const Color brandGreen = Color(0xFF2E7D32);
+  static const Color brandGreenDark = Color(0xFF1B5E20);
 
   static const Color accent = Color(0xFFF9A825); // gold (yellow-800)
   static const Color accentLight = Color(0xFFFFF8E1); // yellow-50
@@ -18,8 +25,8 @@ class AppColors {
   static const Color success = Color(0xFF22C55E); // green-500
   static const Color successBg = Color(0xFFF0FDF4); // green-50
 
-  static const Color statHighlight = Color(0xFF059669); // emerald-600
-  static const Color statBg = Color(0xFFECFDF5); // emerald-50
+  static const Color statHighlight = Color(0xFF184A9E); // deep royal
+  static const Color statBg = Color(0xFFEFF4FF); // royal tint
 
   static const Color darkBg = Color(0xFF111827); // gray-900
   static const Color textPrimary = Color(0xFF111827); // gray-900

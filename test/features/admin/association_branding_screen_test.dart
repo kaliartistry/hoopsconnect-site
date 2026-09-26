@@ -19,7 +19,7 @@ void main() {
           find.text('Sponsor is off. The association identity remains active.'),
           findsOneWidget,
         );
-        expect(find.text('No league logo added.'), findsOneWidget);
+        expect(find.text('No association logo added.'), findsOneWidget);
         expect(find.textContaining('AA readable'), findsNWidgets(3));
         expect(tester.takeException(), isNull);
 
@@ -76,7 +76,7 @@ void main() {
       find.text('Secondary to the Jamaica Basketball identity'),
       findsOneWidget,
     );
-    expect(find.text('Courtside Co'), findsOneWidget);
+    expect(find.text('Courtside Co'), findsWidgets);
     expect(find.text('No sponsor logo added.'), findsOneWidget);
     expect(find.text('You have unsaved changes.'), findsOneWidget);
   });
@@ -86,7 +86,7 @@ void main() {
 
     await tester.enterText(_field('Primary color'), '#12ZZ99');
     await tester.enterText(
-      _field('League logo HTTPS URL'),
+      _field('Association logo (HTTPS URL or bundled asset)'),
       'http://example.com/logo.png',
     );
     await tester.pump();
@@ -95,15 +95,25 @@ void main() {
     await tester.tap(find.text('Show association mega sponsor'));
     await tester.pump();
     await tester.enterText(
-      _field('Sponsor logo HTTPS URL'),
+      _field('Sponsor logo (HTTPS URL or bundled asset)'),
       'logo.example.com/image.png',
     );
     await tester.pump();
 
     expect(find.text('Primary color must look like #2E7D32'), findsOneWidget);
-    expect(find.text('Use a complete HTTPS URL'), findsNWidgets(2));
-    expect(find.byKey(const Key('league-logo-invalid')), findsWidgets);
+    expect(
+      find.text('Use a complete HTTPS URL or a bundled asset reference'),
+      findsNWidgets(2),
+    );
+    expect(find.byKey(const Key('association-logo-invalid')), findsWidgets);
     expect(find.byKey(const Key('sponsor-logo-invalid')), findsOneWidget);
+    await tester.ensureVisible(_saveButton());
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(_saveButton()).onPressed, isNull);
+    expect(
+      find.text('Fix the highlighted fields before saving.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('shows explicit league and sponsor image failure states', (
@@ -119,16 +129,39 @@ void main() {
     await _pumpScreen(tester, width: 768, height: 1500, branding: branding);
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('league-logo-error')), findsWidgets);
+    expect(find.byKey(const Key('association-logo-error')), findsWidgets);
     expect(find.byKey(const Key('sponsor-logo-error')), findsOneWidget);
     expect(
-      find.text('League logo could not be loaded. Check the URL.'),
+      find.text('Association logo could not be loaded. Check the URL.'),
       findsOneWidget,
     );
     expect(
       find.text('Sponsor logo could not be loaded. Check the URL.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('bundled logo references remain previewable and saveable', (
+    tester,
+  ) async {
+    final branding = AssociationBrandingModel.jba().copyWith(
+      logoUrl: 'asset:assets/images/jba_logo.png',
+      sponsor: const SponsorBrandingModel(
+        enabled: true,
+        name: 'Demo Partner',
+        logoUrl: 'asset:assets/images/sponsor_kingston_flame.png',
+      ),
+    );
+    await _pumpScreen(tester, width: 768, height: 1500, branding: branding);
+
+    await tester.enterText(_field('Short display name'), 'JBA Updated');
+    await tester.pump();
+    await tester.ensureVisible(_saveButton());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('association-logo-invalid')), findsNothing);
+    expect(find.byKey(const Key('sponsor-logo-invalid')), findsNothing);
+    expect(tester.widget<FilledButton>(_saveButton()).onPressed, isNotNull);
   });
 
   testWidgets('maps load failures and offers retry without raw details', (

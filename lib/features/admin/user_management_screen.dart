@@ -21,6 +21,7 @@ class UserManagementScreen extends ConsumerStatefulWidget {
 
 class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
   String _searchQuery = '';
+  UserRole? _selectedRole;
 
   @override
   Widget build(BuildContext context) {
@@ -37,39 +38,73 @@ class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
       ),
       body: Column(
         children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: 'Search users...',
-                prefixIcon: const Icon(Icons.search),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+          usersAsync.when(
+            data: (users) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Search by name, email, or role',
+                      prefixIcon: const Icon(Icons.search),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                      ),
+                    ),
+                    onChanged: (v) =>
+                        setState(() => _searchQuery = v.toLowerCase()),
+                  ),
                 ),
-              ),
-              onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
+                SizedBox(
+                  height: 44,
+                  child: ListView(
+                    key: const Key('user-role-filter-list'),
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    children: [
+                      _RoleFilterChip(
+                        label: 'All',
+                        count: users.length,
+                        selected: _selectedRole == null,
+                        onSelected: () => setState(() => _selectedRole = null),
+                      ),
+                      for (final role in _filterRoles)
+                        _RoleFilterChip(
+                          label: _filterRoleLabel(role),
+                          count: users
+                              .where((user) => _matchesRole(user.role, role))
+                              .length,
+                          selected: _selectedRole == role,
+                          onSelected: () =>
+                              setState(() => _selectedRole = role),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
             ),
+            loading: () => const SizedBox(height: 76),
+            error: (_, _) => const SizedBox(height: 76),
           ),
 
           // User list
           Expanded(
             child: usersAsync.when(
               data: (users) {
-                final filtered = _searchQuery.isEmpty
-                    ? users
-                    : users
-                          .where(
-                            (u) =>
-                                u.displayName.toLowerCase().contains(
-                                  _searchQuery,
-                                ) ||
-                                u.email.toLowerCase().contains(_searchQuery) ||
-                                u.role.name.contains(_searchQuery),
-                          )
-                          .toList();
+                final filtered = users.where((user) {
+                  final matchesSearch =
+                      _searchQuery.isEmpty ||
+                      user.displayName.toLowerCase().contains(_searchQuery) ||
+                      user.email.toLowerCase().contains(_searchQuery) ||
+                      user.role.name.toLowerCase().contains(_searchQuery);
+                  final matchesRole =
+                      _selectedRole == null ||
+                      _matchesRole(user.role, _selectedRole!);
+                  return matchesSearch && matchesRole;
+                }).toList();
 
                 if (filtered.isEmpty) {
                   return Center(
@@ -83,9 +118,9 @@ class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          _searchQuery.isEmpty
+                          _selectedRole == null && _searchQuery.isEmpty
                               ? 'No users found'
-                              : 'No users match "$_searchQuery"',
+                              : 'No users match these filters',
                           style: const TextStyle(
                             color: AppColors.textSecondary,
                             fontSize: 16,
@@ -115,6 +150,55 @@ class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
       ),
     );
   }
+}
+
+const _filterRoles = <UserRole>[
+  UserRole.superAdmin,
+  UserRole.admin,
+  UserRole.statistician,
+  UserRole.rep,
+  UserRole.media,
+  UserRole.fan,
+];
+
+bool _matchesRole(UserRole actual, UserRole filter) => filter == UserRole.media
+    ? actual == UserRole.media || actual == UserRole.press
+    : actual == filter;
+
+String _filterRoleLabel(UserRole role) => switch (role) {
+  UserRole.superAdmin => 'Super Admins',
+  UserRole.admin => 'Admins',
+  UserRole.statistician => 'Statisticians',
+  UserRole.rep => 'Team Reps',
+  UserRole.media || UserRole.press => 'Media',
+  UserRole.fan => 'Fans',
+};
+
+class _RoleFilterChip extends StatelessWidget {
+  const _RoleFilterChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: 8),
+    child: FilterChip(
+      key: Key('user-role-filter-${label.toLowerCase().replaceAll(' ', '-')}'),
+      selected: selected,
+      showCheckmark: false,
+      avatar: selected ? const Icon(Icons.check, size: 16) : null,
+      label: Text('$label ($count)'),
+      onSelected: (_) => onSelected(),
+    ),
+  );
 }
 
 class _UserCard extends ConsumerWidget {

@@ -1428,8 +1428,10 @@ async function executeDeleteDivisionIfUnreferenced(
       throw new HttpsError("failed-precondition", "Division deletion remains closed until a v2 division-management capability is adopted.");
     }
     requireCapability(authority, capabilities.associationManage);
-    const [receipt, division, operation] = await Promise.all([
+    const associationRef = db.doc(`associations/${authority.associationId}`);
+    const [receipt, division, operation, association] = await Promise.all([
       transaction.get(prepared.receiptRef), transaction.get(prepared.divisionRef), transaction.get(prepared.operationRef),
+      transaction.get(associationRef),
     ]);
     const replay = receiptReplay(receipt, fingerprint, {
       actorId: actor.uid, associationId: authority.associationId, operation: "division.delete", operationId,
@@ -1467,6 +1469,23 @@ async function executeDeleteDivisionIfUnreferenced(
       transaction.update(prepared.operationRef, {status: "blocked", references, leaseExpiresAt: FieldValue.delete(), completedAt: FieldValue.serverTimestamp()});
     } else {
       result = {operationId, status: "deleted", divisionVersion: expectedDivisionVersion};
+      const leagueCatalog = association.get("leagueCatalogV1");
+      if (leagueCatalog && typeof leagueCatalog === "object" && Array.isArray(leagueCatalog.leagues)) {
+        let catalogChanged = false;
+        const leagues = leagueCatalog.leagues.map((league: unknown) => {
+          if (!league || typeof league !== "object") return league;
+          const entry = league as Json;
+          if (!Array.isArray(entry.divisionIds) || !entry.divisionIds.includes(divisionId)) return league;
+          catalogChanged = true;
+          return {...entry, divisionIds: entry.divisionIds.filter((candidate) => candidate !== divisionId)};
+        });
+        if (catalogChanged) {
+          transaction.update(associationRef, {
+            leagueCatalogV1: {...leagueCatalog, leagues},
+            leagueCatalogUpdatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      }
       transaction.delete(prepared.divisionRef);
       transaction.update(prepared.operationRef, {status: "deleted", leaseExpiresAt: FieldValue.delete(), completedAt: FieldValue.serverTimestamp()});
     }
@@ -2021,7 +2040,17 @@ export async function mutateScheduledGameHandler(request: CallableRequest<unknow
   });
 }
 
-export const LEAGUE_CALLABLE_OPTIONS = Object.freeze({enforceAppCheck: true});
+const isSyntheticAcceptanceProject =
+  process.env.GCLOUD_PROJECT === "hoopsconnect-jba-staging" ||
+  process.env.GCP_PROJECT === "hoopsconnect-jba-staging";
+
+// The remotely hosted acceptance project has no public App Check site key.
+// It contains synthetic data only, while every callable still enforces the
+// authenticated capability and association boundaries below. Production and
+// every unrecognized project continue to fail closed behind App Check.
+export const LEAGUE_CALLABLE_OPTIONS = Object.freeze({
+  enforceAppCheck: !isSyntheticAcceptanceProject,
+});
 
 export const getRosterWorkspace = onCall(LEAGUE_CALLABLE_OPTIONS, getRosterWorkspaceHandler);
 export const submitRosterChange = onCall(LEAGUE_CALLABLE_OPTIONS, submitRosterChangeHandler);

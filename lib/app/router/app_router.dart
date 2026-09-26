@@ -11,9 +11,11 @@ import '../../features/auth/account_lifecycle_route_screen.dart';
 import '../../features/auth/password_recovery_screen.dart';
 import '../../features/public/public_league_screen.dart';
 import '../../features/public/public_detail_route_screen.dart';
+import '../../features/public/public_media_detail_screen.dart';
 import '../../features/board/board_screen.dart';
 import '../../features/board/create_post_screen.dart';
 import '../../features/stats/leaderboard_screen.dart';
+import '../../features/public/public_team_stats_screen.dart';
 import '../../features/stats/player_card_screen.dart';
 import '../../features/stats/stat_game_select_screen.dart';
 import '../../features/stats/stat_entry_screen.dart';
@@ -75,8 +77,21 @@ final pendingRequestedLocationProvider = StateProvider<String?>((ref) => null);
 /// back to the signed-in default while Auth finishes restoring its state.
 final preservedRouterLocationProvider = StateProvider<String?>((ref) => null);
 
-String resolveRouterInitialLocation(String? preservedLocation) =>
-    AppRouteContract.safeRequestedLocation(preservedLocation) ?? '/board';
+/// Captured by main before Firebase startup can trigger any router rebuild.
+///
+/// Flutter web's platform default route can fall back to `/` after startup,
+/// so reading [Uri.base] lazily from the router is too late for hard-refresh
+/// deep links.
+final initialBrowserLocationProvider = Provider<String?>((ref) => null);
+
+String? resolveRouterInitialLocation(
+  String? preservedLocation, {
+  String? browserLocation,
+}) {
+  final preserved = AppRouteContract.safeRequestedLocation(preservedLocation);
+  if (preserved != null) return preserved;
+  return AppRouteContract.safeRequestedLocation(browserLocation);
+}
 
 String? resolvePendingRequestedLocation({
   required String? pendingLocation,
@@ -185,20 +200,62 @@ String? resolveAppRedirect({
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
+  // Public detail pages use push/pop so browser and system Back restore the
+  // exact list state underneath them. Keep those imperative routes reflected
+  // in the address bar for refreshable and shareable public URLs.
+  GoRouter.optionURLReflectsImperativeAPIs = true;
   final authState = ref.watch(authStateProvider);
   final currentUser = ref.watch(currentUserProvider);
   final accessStatus = ref.watch(accountAccessStatusProvider);
+  var pendingLocation = ref.read(pendingRequestedLocationProvider);
+  var preservedLocation = ref.read(preservedRouterLocationProvider);
+  final initialBrowserLocation = ref.watch(initialBrowserLocationProvider);
+  var disposed = false;
+  ref.onDispose(() => disposed = true);
+
+  void persistAfterRedirect(
+    StateController<String?> controller,
+    String? value,
+  ) {
+    // GoRouter can call redirect while widgets are building. Riverpod rejects
+    // synchronous provider mutations at that point, so mirror redirect state
+    // after the current build while keeping the closure's local value current.
+    Future<void>.microtask(() {
+      if (!disposed && controller.state != value) controller.state = value;
+    });
+  }
+
+  void rememberPending(String? value) {
+    pendingLocation = value;
+    persistAfterRedirect(
+      ref.read(pendingRequestedLocationProvider.notifier),
+      value,
+    );
+  }
+
+  void rememberPreserved(String? value) {
+    preservedLocation = value;
+    persistAfterRedirect(
+      ref.read(preservedRouterLocationProvider.notifier),
+      value,
+    );
+  }
+
   final initialLocation = resolveRouterInitialLocation(
-    ref.read(preservedRouterLocationProvider),
+    preservedLocation,
+    browserLocation: initialBrowserLocation,
   );
 
   return GoRouter(
     initialLocation: initialLocation,
+    // On the first build, let Flutter read the browser URL so shared public
+    // links survive a hard refresh. On later auth-driven router rebuilds, use
+    // the same-app location captured by the redirect above.
+    overridePlatformDefaultLocation: initialLocation != null,
     redirect: (context, state) {
       final matchedRule = AppRouteContract.ruleFor(state.matchedLocation);
       if (matchedRule != null) {
-        ref.read(preservedRouterLocationProvider.notifier).state = state.uri
-            .toString();
+        rememberPreserved(state.uri.toString());
       }
       final isPublic = matchedRule?.session == AppRouteSession.public;
       final isLoggedIn = authState.valueOrNull != null;
@@ -210,27 +267,24 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!isLoggedIn && loginRequested != null) {
         // Capture a bookmarked/shared sign-in URL even while the Auth streams
         // are still loading. The value is re-authorized after sign-in.
-        ref.read(pendingRequestedLocationProvider.notifier).state =
-            loginRequested;
+        rememberPending(loginRequested);
       }
       if ((accessStatus == AccountAccessStatus.loading || !isLoggedIn) &&
           !isPublic &&
           state.matchedLocation != '/login' &&
           state.matchedLocation != '/loading') {
-        ref.read(pendingRequestedLocationProvider.notifier).state = state.uri
-            .toString();
+        rememberPending(state.uri.toString());
       }
 
       if (state.matchedLocation == '/loading' &&
           accessStatus != AccountAccessStatus.loading) {
-        final pending = ref.read(pendingRequestedLocationProvider);
         final destination = resolveLoadingExit(
           accessStatus: accessStatus,
           isLoggedIn: isLoggedIn,
-          pendingLocation: pending,
+          pendingLocation: pendingLocation,
           user: currentUser.valueOrNull,
         );
-        ref.read(pendingRequestedLocationProvider.notifier).state = null;
+        rememberPending(null);
         if (destination != null) return destination;
       }
 
@@ -238,9 +292,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (accessStatus == AccountAccessStatus.active &&
           isLoggedIn &&
           activeUser != null) {
-        final pending = ref.read(pendingRequestedLocationProvider);
+        final pending = pendingLocation;
         if (pending != null) {
-          ref.read(pendingRequestedLocationProvider.notifier).state = null;
+          rememberPending(null);
           final restored = resolvePendingRequestedLocation(
             pendingLocation: pending,
             currentLocation: state.uri,
@@ -259,6 +313,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       );
     },
     routes: [
+      GoRoute(path: '/', redirect: (_, _) => '/board'),
+
       // Loading / splash screen
       GoRoute(
         path: '/loading',
@@ -266,7 +322,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
 
       // Auth routes (no shell)
-      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) =>
+            LoginScreen(requestedLocation: state.uri.queryParameters['from']),
+      ),
       GoRoute(path: '/join', builder: (context, state) => const JoinScreen()),
       GoRoute(
         path: '/access-blocked',
@@ -299,12 +359,36 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const PublicLeagueScreen(),
       ),
       GoRoute(
-        path: PublicRoutePaths.standings,
+        path: PublicRoutePaths.media,
         builder: (context, state) => const PublicLeagueScreen(initialTab: 1),
       ),
       GoRoute(
-        path: PublicRoutePaths.leaders,
+        path: '${PublicRoutePaths.media}/:mediaId',
+        builder: (context, state) => PublicMediaDetailRouteScreen(
+          mediaId: state.pathParameters['mediaId']!,
+          canonicalUri: _absolutePublicUri(
+            PublicRoutePaths.mediaItem(state.pathParameters['mediaId']!),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.standings,
         builder: (context, state) => const PublicLeagueScreen(initialTab: 2),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.leaders,
+        builder: (context, state) => const PublicLeagueScreen(initialTab: 3),
+      ),
+      GoRoute(
+        path: '/public/team-stats',
+        builder: (context, state) => const PublicTeamStatsScreen(),
+      ),
+      GoRoute(
+        path: '/public/compare',
+        builder: (context, state) => HeadToHeadScreen(
+          initialTeamAId: state.uri.queryParameters['team'],
+          initialPlayerAId: state.uri.queryParameters['player'],
+        ),
       ),
       GoRoute(
         path: '${PublicRoutePaths.games}/:gameId',
@@ -319,17 +403,27 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '${PublicRoutePaths.root}/teams/:teamId',
-        builder: (context, state) => PublicDetailRouteScreen(
-          kind: PublicDetailRouteKind.team,
-          id: state.pathParameters['teamId']!,
-        ),
+        builder: (context, state) {
+          final path = PublicRoutePaths.team(state.pathParameters['teamId']!);
+          return PublicDetailRouteScreen(
+            kind: PublicDetailRouteKind.team,
+            id: state.pathParameters['teamId']!,
+            canonicalUri: _absolutePublicUri(path),
+          );
+        },
       ),
       GoRoute(
         path: '${PublicRoutePaths.root}/players/:playerId',
-        builder: (context, state) => PublicDetailRouteScreen(
-          kind: PublicDetailRouteKind.player,
-          id: state.pathParameters['playerId']!,
-        ),
+        builder: (context, state) {
+          final path = PublicRoutePaths.player(
+            state.pathParameters['playerId']!,
+          );
+          return PublicDetailRouteScreen(
+            kind: PublicDetailRouteKind.player,
+            id: state.pathParameters['playerId']!,
+            canonicalUri: _absolutePublicUri(path),
+          );
+        },
       ),
 
       GoRoute(
@@ -595,7 +689,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/settings',
-        builder: (context, state) => const SettingsScreen(),
+        builder: (context, state) => SettingsScreen(
+          focusFavorites:
+              state.uri.queryParameters.containsKey('follow') ||
+              state.uri.queryParameters['section'] == 'favorites',
+          leagueId:
+              state.uri.queryParameters['follow'] ??
+              state.uri.queryParameters['league'],
+        ),
       ),
 
       // Team detail

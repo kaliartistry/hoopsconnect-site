@@ -4,8 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/sharing/branded_share_payload.dart';
 import '../../core/sharing/branded_share_sheet.dart';
+import '../../core/sharing/public_share_branding.dart';
 import '../../core/time/league_time.dart';
-import '../../models/association_branding_model.dart';
 import '../../models/player_season_stats_model.dart';
 import '../../providers/public_league_provider.dart';
 import '../../providers/season_providers.dart';
@@ -295,31 +295,28 @@ class _PlayerStatsShareButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final playerStats = stats;
-    if (playerStats == null || playerStats.gamesPlayed == 0) {
-      return const SizedBox.shrink();
-    }
     final snapshot = ref.watch(publicLeagueSnapshotProvider).valueOrNull;
-    final publicPlayer = snapshot?.playerDetail(playerStats.playerId);
+    final publicPlayer = playerStats == null
+        ? null
+        : snapshot?.playerDetail(playerStats.playerId);
     final canShare =
+        playerStats != null &&
+        playerStats.gamesPlayed > 0 &&
         snapshot != null &&
         snapshot.canCreatePublishedArtifacts &&
         snapshot.version.privacyEpoch != null &&
         publicPlayer != null;
+    if (!canShare) return const SizedBox.shrink();
     return IconButton(
       icon: const Icon(Icons.share_outlined),
-      tooltip: canShare
-          ? 'Share published player stats'
-          : 'Published player stats are not available to share',
-      onPressed: !canShare
-          ? null
-          : () {
-              final branding =
-                  AssociationBrandingModel.jba(
-                    associationId: snapshot.associationId,
-                  ).copyWith(
-                    leagueName: snapshot.leagueName,
-                    shortName: snapshot.leagueShortName,
-                  );
+      tooltip: 'Share published player stats',
+      onPressed: () {
+              final branding = publicShareBranding(
+                snapshot,
+                snapshot.leagueForDivision(
+                  publicPlayer.categories.firstOrNull?.divisionId,
+                ),
+              );
               final releaseBinding = PublicArtifactBinding.snapshot(snapshot);
               showBrandedShareSheet(
                 context: context,

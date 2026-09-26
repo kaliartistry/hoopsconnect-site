@@ -25,7 +25,7 @@ function fixture(overrides = {}) {
     season: {id: 'season-1', data: {name: '2026 NBL'}},
     divisions: [{id: 'premier', data: {name: 'Premier', seasonId: 'season-1', managerUid: 'private'}}],
     teams: [
-      {id: 'home', data: {name: 'Home Team', seasonId: 'season-1', divisionId: 'premier', repIds: ['private-user']}},
+      {id: 'home', data: {name: 'Home Team', seasonId: 'season-1', divisionId: 'premier', logoUrl: 'https://example.com/home.png', repIds: ['private-user']}},
       {id: 'away', data: {name: 'Away Team', seasonId: 'season-1', divisionId: 'premier'}},
     ],
     events: [{id: 'game-1', data: {
@@ -70,6 +70,20 @@ function fixture(overrides = {}) {
         }],
       }},
     ],
+    posts: [
+      {id: 'story-1', data: {
+        title: 'Opening night recap', body: 'A public summary for supporters.',
+        type: 'announcement', visibility: 'public', archived: false,
+        divisionFilter: 'premier', pinned: true,
+        createdAt: Timestamp.fromDate(new Date('2026-09-10T19:00:00Z')),
+        authorId: 'private-author', internalNotes: 'never publish this',
+      }},
+      {id: 'internal-story', data: {
+        title: 'Internal media plan', body: 'Private newsroom notes.',
+        type: 'general', visibility: 'internal', archived: false,
+        createdAt: Timestamp.fromDate(new Date('2026-09-10T18:00:00Z')),
+      }},
+    ],
     generatedAt: '2026-09-10T21:00:00.000Z',
     ...overrides,
   };
@@ -87,6 +101,7 @@ test('public snapshot exposes one versioned approved result and strips private s
   assert.equal(snapshot.publication.privacyEpoch, 7);
   assert.equal(snapshot.season.name, '2026 NBL');
   assert.equal(snapshot.divisions[0].name, 'Premier');
+  assert.equal(snapshot.teams.find((team) => team.teamId === 'home').logoUrl, 'https://example.com/home.png');
   assert.equal(snapshot.schedule[0].status, 'final');
   assert.equal(snapshot.schedule[0].title, 'Home Team vs Away Team');
   assert.equal(snapshot.schedule[0].homeScore, 82);
@@ -98,6 +113,9 @@ test('public snapshot exposes one versioned approved result and strips private s
   assert.equal(snapshot.standings[0].divisionId, 'premier');
   assert.equal(snapshot.leaderboards[0].rankings[0].displayName, 'Player One');
   assert.deepEqual(snapshot.leaderboards.map((entry) => entry.category), ['ppg', 'apg']);
+  assert.equal(snapshot.media.length, 1);
+  assert.equal(snapshot.media[0].title, 'Opening night recap');
+  assert.equal(snapshot.media[0].divisionId, 'premier');
   const serialized = JSON.stringify(snapshot);
   for (const forbidden of [
     'privateNotes', 'repIds', 'managerUid', 'createdBy', 'description',
@@ -106,6 +124,7 @@ test('public snapshot exposes one versioned approved result and strips private s
     'internalRecap', 'processedEvents',
     'Private Admin Title', 'Private Home Alias', 'Private Away Alias',
     'Private Standings Alias', 'Private Rankings Alias',
+    'private-author', 'never publish this', 'Internal media plan',
   ]) {
     assert.equal(serialized.includes(forbidden), false);
   }
@@ -116,7 +135,10 @@ test('association mega sponsor and league-specific branding publish with divisio
   input.association.brandingV1 = {
     leagueName: 'Jamaica Basketball Association', shortName: 'JBA',
     primaryColorHex: '#2e7d32',
-    sponsor: {enabled: true, name: 'Association Partner', label: 'Presented by'},
+    sponsor: {
+      enabled: true, name: 'Association Partner', label: 'Presented by',
+      logoUrl: 'asset:assets/images/sponsor_association.png',
+    },
   };
   input.association.leagueCatalogV1 = {
     schemaVersion: 1,
@@ -124,8 +146,12 @@ test('association mega sponsor and league-specific branding publish with divisio
       leagueId: 'nbl', name: 'National Basketball League', shortName: 'NBL',
       divisionIds: ['premier'], status: 'active', sortOrder: 0,
       branding: {
+        logoUrl: 'asset:assets/images/nbl_jamaica_logo.png',
         primaryColorHex: '#123456',
-        sponsor: {enabled: true, name: 'League Partner', label: 'Title sponsor'},
+        sponsor: {
+          enabled: true, name: 'League Partner', label: 'Title sponsor',
+          logoUrl: 'asset:assets/images/sponsor_league.png',
+        },
       },
     }],
   };
@@ -133,9 +159,15 @@ test('association mega sponsor and league-specific branding publish with divisio
   const snapshot = buildPublicSnapshot(input);
   assert.equal(snapshot.association.sponsor.name, 'Association Partner');
   assert.equal(snapshot.association.primaryColorHex, '#2E7D32');
+  assert.equal(snapshot.association.sponsor.logoUrl, 'asset:assets/images/sponsor_association.png');
   assert.equal(snapshot.leagues[0].leagueId, 'nbl');
   assert.deepEqual(snapshot.leagues[0].divisionIds, ['premier']);
+  assert.equal(
+    snapshot.leagues[0].branding.logoUrl,
+    'asset:assets/images/nbl_jamaica_logo.png',
+  );
   assert.equal(snapshot.leagues[0].branding.sponsor.name, 'League Partner');
+  assert.equal(snapshot.leagues[0].branding.sponsor.logoUrl, 'asset:assets/images/sponsor_league.png');
 });
 
 test('unapproved scores are never returned to guests', () => {
@@ -682,4 +714,19 @@ test('compatibility module registers no deployable projection triggers', () => {
   const moduleExports = require('../lib/index');
   assert.equal(moduleExports.onPublicLeagueSourceWritten, undefined);
   assert.equal(moduleExports.onPublicAssociationWritten, undefined);
+});
+
+test('reported league points preserve provenance, remain separate from wins and retract', () => {
+  const input = fixture();
+  input.association.leagueCatalogV1 = {schemaVersion: 1, leagues: [{
+    leagueId: 'jbl', name: 'Jamaica Basketball League', shortName: 'JBL',
+    divisionIds: ['premier'], historicalStatistics: true, seasonLabel: '2025 Season',
+    reportedStandings: [{teamId: 'home', leaguePoints: 16, privateNote: 'not public'}],
+    standingsAsOf: '2025-04-15', standingsSourceUrl: 'https://example.com/standings',
+  }]};
+  const result = buildPublicSnapshot(input);
+  assert.deepEqual(result.leagues[0].reportedStandings, [{teamId: 'home', leaguePoints: 16}]);
+  assert.equal(result.leagues[0].standingsAsOf, '2025-04-15');
+  input.association.publicLeagueState = 'retracted';
+  assert.deepEqual(buildPublicSnapshot(input).leagues[0].reportedStandings, []);
 });

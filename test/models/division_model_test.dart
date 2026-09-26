@@ -12,6 +12,23 @@ void main() {
     expect(division.status, DivisionStatus.active);
     expect(division.isArchived, isFalse);
     expect(division.version, 0);
+    expect(division.hasParentLeague, isFalse);
+  });
+
+  test('parent league round-trips on a division record', () {
+    final division = DivisionModel.fromMap(
+      id: 'division-a',
+      data: const {
+        'name': 'Division A',
+        'leagueId': 'schoolboy',
+        'status': 'active',
+        'version': 1,
+      },
+    );
+
+    expect(division.leagueId, 'schoolboy');
+    expect(division.hasParentLeague, isTrue);
+    expect(division.toFirestore()['leagueId'], 'schoolboy');
   });
 
   test(

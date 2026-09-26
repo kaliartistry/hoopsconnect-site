@@ -3,18 +3,42 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hoops_connect/app/router/app_route_contract.dart';
+import 'package:hoops_connect/core/constants/app_constants.dart';
 import 'package:hoops_connect/features/public/public_detail_route_screen.dart';
 import 'package:hoops_connect/features/public/public_league_screen.dart';
+import 'package:hoops_connect/features/public/public_media_detail_screen.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
+import 'package:hoops_connect/models/user_model.dart';
+import 'package:hoops_connect/providers/auth_providers.dart';
 import 'package:hoops_connect/providers/public_league_provider.dart';
 
 void main() {
+  testWidgets('signed-in fan view offers a return to the member app', (
+    tester,
+  ) async {
+    const user = UserModel(
+      id: 'member-1',
+      email: 'member@example.test',
+      displayName: 'Test Member',
+      associationId: 'jba',
+      role: UserRole.admin,
+      capabilities: {'posts.internal.read'},
+    );
+    final router = await _pump(tester, _snapshot(), signedInUser: user);
+    expect(find.byKey(const Key('public-back-to-app')), findsOneWidget);
+    expect(find.text('Sign in'), findsNothing);
+    await tester.tap(find.byKey(const Key('public-back-to-app')));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/board');
+    expect(find.text('Member board'), findsOneWidget);
+  });
+
   testWidgets('guest discovers a result and opens public-only details', (
     tester,
   ) async {
     final router = await _pump(tester, _snapshot());
 
-    expect(find.textContaining('Version aaaaaaaaaaaa'), findsOneWidget);
+    expect(find.text('League coverage'), findsOneWidget);
     expect(find.text('Home'), findsWidgets);
     expect(find.text('Away'), findsWidgets);
 
@@ -26,6 +50,8 @@ void main() {
       PublicRoutePaths.game('game-1'),
     );
     expect(find.text('Game details'), findsOneWidget);
+    await tester.tap(find.text('Summary'));
+    await tester.pumpAndSettle();
     expect(find.text('Home Team won a close game.'), findsOneWidget);
     expect(find.text('Share published result'), findsOneWidget);
     expect(find.textContaining('Publication aaaaaaaaaaaa'), findsOneWidget);
@@ -111,7 +137,7 @@ void main() {
       router.routeInformationProvider.value.uri.path,
       PublicRoutePaths.standings,
     );
-    expect(find.text('Premier'), findsOneWidget);
+    expect(find.text('Premier'), findsWidgets);
     expect(find.text('1 GP · PF 82 · PA 79'), findsOneWidget);
     expect(
       find.text('Winning percentage; tied ranks remain tied'),
@@ -125,6 +151,9 @@ void main() {
       PublicRoutePaths.team('home'),
     );
     expect(find.text('Team details'), findsOneWidget);
+    expect(find.text('Past games'), findsOneWidget);
+    await tester.tap(find.text('Players & stats'));
+    await tester.pumpAndSettle();
     expect(find.text('1 game played'), findsWidgets);
   });
 
@@ -133,7 +162,7 @@ void main() {
   ) async {
     await _pump(tester, _snapshot());
 
-    await tester.tap(find.text('Leaders'));
+    await tester.tap(find.text('Stats'));
     await tester.pumpAndSettle();
     expect(find.textContaining('PTS'), findsOneWidget);
     expect(find.textContaining('AST'), findsOneWidget);
@@ -148,6 +177,22 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('media is public, prominent, and league scoped', (tester) async {
+    final router = await _pump(tester, _snapshot());
+
+    expect(find.byKey(const Key('public-featured-media-card')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('public-featured-media-card')));
+    await tester.pumpAndSettle();
+
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      PublicRoutePaths.mediaItem('story-1'),
+    );
+    expect(find.text('Opening night recap'), findsOneWidget);
+    expect(find.text('A useful public summary.'), findsOneWidget);
+    expect(find.text('Share this story'), findsOneWidget);
   });
 
   testWidgets('an empty public leader board explains identity suppression', (
@@ -166,7 +211,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Leaders'));
+    await tester.tap(find.text('Stats'));
     await tester.pumpAndSettle();
 
     expect(find.text('No cleared leaders published'), findsOneWidget);
@@ -360,7 +405,7 @@ void main() {
   ) async {
     await _pump(tester, _snapshot(), size: const Size(1440, 1000));
 
-    expect(find.text('Games & scores'), findsOneWidget);
+    expect(find.text('Schedule'), findsOneWidget);
     expect(find.text('Schedule'), findsOneWidget);
     expect(find.text('Calendar'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -369,6 +414,62 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('public-games-calendar-view')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('public sports surfaces use a neutral canvas and layered cards', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _snapshot(
+        leagues: const [
+          PublicLeagueDefinition(
+            leagueId: 'nbl',
+            name: 'National Basketball League',
+            shortName: 'NBL',
+            logoUrl: 'asset:assets/images/nbl_jamaica_logo.png',
+            primaryColorHex: '#234EBD',
+            divisionIds: ['premier'],
+          ),
+        ],
+      ),
+      size: const Size(1100, 2000),
+    );
+
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(scaffold.backgroundColor, const Color(0xFFF4F5F6));
+    expect(
+      find.bySemanticsLabel('National Basketball League logo'),
+      findsOneWidget,
+    );
+    final hero = tester.widget<Container>(
+      find.byKey(const Key('public-league-hero')),
+    );
+    final heroDecoration = hero.decoration! as BoxDecoration;
+    expect(heroDecoration.gradient, isA<LinearGradient>());
+    expect((heroDecoration.gradient! as LinearGradient).colors, const [
+      Color(0xFF16378D),
+      Color(0xFF234EBD),
+      Color(0xFF6C8BE3),
+      Color(0xFF234EBD),
+      Color(0xFF184A9E),
+    ]);
+
+    final latestCard = tester.widget<Card>(
+      find.descendant(
+        of: find.byKey(const Key('public-latest-result-card')),
+        matching: find.byType(Card),
+      ),
+    );
+    expect(latestCard.elevation, 4);
+    expect(latestCard.color, AppColors.primaryLight);
+
+    final gameCard = tester.widget<Card>(
+      find.byKey(const Key('public-game-card-game-1')),
+    );
+    expect(gameCard.elevation, 2);
+    expect(gameCard.color, Colors.white);
     expect(tester.takeException(), isNull);
   });
 
@@ -423,11 +524,23 @@ void main() {
     );
 
     expect(find.text('Home'), findsWidgets);
-    await tester.tap(find.byKey(const Key('public-league-schools')));
+    await tester.tap(find.byKey(const Key('public-league-dropdown')));
     await tester.pumpAndSettle();
-    expect(find.text('Title sponsor Campus Courts'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('public-league-schools')).last);
+    await tester.pumpAndSettle();
+    expect(find.text('TITLE SPONSOR'), findsOneWidget);
+    expect(find.text('Campus Courts'), findsWidgets);
     expect(find.text('School Home'), findsWidgets);
     expect(find.text('Home'), findsNothing);
+
+    await tester.tap(find.text('Standings'));
+    await tester.pumpAndSettle();
+    expect(find.text('TITLE SPONSOR'), findsNothing);
+    expect(find.text('Campus Courts'), findsNothing);
+
+    await tester.tap(find.text('Games'));
+    await tester.pumpAndSettle();
+    expect(find.text('School Home'), findsWidgets);
   });
 
   testWidgets('fresh public detail URLs resolve and unknown IDs stay public', (
@@ -439,6 +552,8 @@ void main() {
       initialLocation: PublicRoutePaths.game('game-1'),
     );
     expect(find.text('Game details'), findsOneWidget);
+    await tester.tap(find.text('Summary'));
+    await tester.pumpAndSettle();
     expect(find.text('Home Team won a close game.'), findsOneWidget);
 
     await _pump(
@@ -457,7 +572,9 @@ Future<GoRouter> _pump(
   Size size = const Size(900, 1200),
   Stream<PublicLeagueSnapshot?>? stream,
   String initialLocation = PublicRoutePaths.games,
+  UserModel? signedInUser,
 }) async {
+  GoRouter.optionURLReflectsImperativeAPIs = true;
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -466,16 +583,31 @@ Future<GoRouter> _pump(
     initialLocation: initialLocation,
     routes: [
       GoRoute(
+        path: '/board',
+        builder: (_, _) =>
+            const Scaffold(body: Center(child: Text('Member board'))),
+      ),
+      GoRoute(
         path: PublicRoutePaths.games,
         builder: (_, _) => const PublicLeagueScreen(),
       ),
       GoRoute(
-        path: PublicRoutePaths.standings,
+        path: PublicRoutePaths.media,
         builder: (_, _) => const PublicLeagueScreen(initialTab: 1),
       ),
       GoRoute(
-        path: PublicRoutePaths.leaders,
+        path: '${PublicRoutePaths.media}/:mediaId',
+        builder: (_, state) => PublicMediaDetailRouteScreen(
+          mediaId: state.pathParameters['mediaId']!,
+        ),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.standings,
         builder: (_, _) => const PublicLeagueScreen(initialTab: 2),
+      ),
+      GoRoute(
+        path: PublicRoutePaths.leaders,
+        builder: (_, _) => const PublicLeagueScreen(initialTab: 3),
       ),
       GoRoute(
         path: '${PublicRoutePaths.games}/:gameId',
@@ -505,6 +637,8 @@ Future<GoRouter> _pump(
     ProviderScope(
       key: UniqueKey(),
       overrides: [
+        if (signedInUser != null)
+          currentUserProvider.overrideWith((ref) => AsyncData(signedInUser)),
         publicLeagueSnapshotProvider.overrideWith(
           (ref) => stream ?? Stream.value(snapshot),
         ),
@@ -519,6 +653,7 @@ Future<GoRouter> _pump(
 PublicLeagueSnapshot _snapshot({
   List<PublicGame>? schedule,
   List<PublicLeaderboard>? leaderboards,
+  List<PublicMediaItem>? media,
   List<PublicDivision>? divisions,
   List<PublicLeagueDefinition>? leagues,
 }) => PublicLeagueSnapshot(
@@ -621,6 +756,19 @@ PublicLeagueSnapshot _snapshot({
               gamesPlayed: 1,
             ),
           ],
+        ),
+      ],
+  media:
+      media ??
+      [
+        PublicMediaItem(
+          mediaId: 'story-1',
+          title: 'Opening night recap',
+          summary: 'A useful public summary.',
+          type: 'announcement',
+          divisionId: 'premier',
+          publishedAt: DateTime.utc(2026, 9, 10, 19),
+          pinned: true,
         ),
       ],
 );

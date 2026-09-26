@@ -59,11 +59,13 @@ class TeamRepository {
     required String teamId,
     required String name,
     required String divisionId,
+    String? logoUrl,
   }) {
     return updateTeam(assocId, teamId, {
       'name': name.trim(),
       'normalizedName': normalizeTeamName(name),
       'divisionId': divisionId,
+      'logoUrl': logoUrl,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
