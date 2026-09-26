@@ -8,11 +8,20 @@ player account role or player claim flow.
 
 The notification trigger reads only `publicData/{associationId}/snapshots/current`
 after a certified published change. It does not send from private stat approval.
-The production repository currently has no writer for that public snapshot;
-the only writer is the local QA seed. The bell, inbox, and trigger can be tested
-locally, but live result and schedule alerts require the separate certified
-public publisher and its approval gates. Do not deploy or describe these alerts
-as operational before that publisher exists and a live end-to-end check passes.
+The integration branch has no production writer for that public snapshot.
+However, a September 26 provider read confirmed that production already runs
+`onPublicLeagueSourceWritten`, deployed September 17. Its separate
+`legacy_live.js` entrypoint writes this exact path under the enabled,
+server-owned `publicSnapshotControls/jba` v1.1 control. The current snapshot is
+published, has `certificationStatus: certified`, and records
+`verificationStatus: legacyApproved`. This compatibility publication is not an
+official-stat v2 certificate. The notification trigger accepts its format.
+
+The deployed compatibility source and the newer native app source are present
+in the original uncommitted checkout, not this branch's Git baseline. Reconcile
+them into a reviewed release candidate before deployment or mobile upload.
+The new inbox trigger is not deployed yet. A live end-to-end check remains
+required before describing alerts as operational.
 
 New bulk schedule releases produce one digest instead of one alert per new game.
 Existing certified-to-certified changes are compared. A retraction followed by
