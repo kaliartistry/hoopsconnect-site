@@ -31,10 +31,20 @@ const clientApp = initializeApp({
   apiKey: 'demo-key',
   appId: 'demo-app',
 });
+function localEmulatorAddress(name, fallback) {
+  const address = process.env[name] || fallback;
+  const match = /^(127\.0\.0\.1|localhost):([1-9]\d{0,4})$/.exec(address);
+  if (!match || Number(match[2]) > 65535) {
+    throw new Error(`${name} must be a loopback host and port`);
+  }
+  return {host: match[1], port: Number(match[2])};
+}
 const auth = getAuth(clientApp);
-connectAuthEmulator(auth, 'http://127.0.0.1:9099', {disableWarnings: true});
+const authAddress = localEmulatorAddress('FIREBASE_AUTH_EMULATOR_HOST', '127.0.0.1:9099');
+connectAuthEmulator(auth, `http://${authAddress.host}:${authAddress.port}`, {disableWarnings: true});
 const functions = getFunctions(clientApp);
-connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+const functionsAddress = localEmulatorAddress('FIREBASE_FUNCTIONS_EMULATOR_HOST', '127.0.0.1:5001');
+connectFunctionsEmulator(functions, functionsAddress.host, functionsAddress.port);
 
 test.before(async () => {
   await adminDb.doc('associations/jba').set({

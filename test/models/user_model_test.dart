@@ -78,6 +78,26 @@ void main() {
       expect(AppDefaults.defaultSignupRole, UserRole.fan);
     });
 
+    test('player following remains a fan preference, not an account role', () {
+      final fan = UserModel(
+        id: 'fan',
+        email: 'fan@example.com',
+        displayName: 'Fan',
+        associationId: 'jba',
+        role: UserRole.fan,
+        favoritePlayerIds: const ['player-1'],
+      );
+      expect(fan.toFirestore()['favoritePlayerIds'], ['player-1']);
+      expect(
+        fan.copyWith(favoritePlayerIds: const []).favoritePlayerIds,
+        isEmpty,
+      );
+      expect(
+        UserRole.values.map((role) => role.name),
+        isNot(contains('player')),
+      );
+    });
+
     test('has expected enum values', () {
       expect(UserRole.values.length, 7);
       expect(UserRole.values, contains(UserRole.superAdmin));

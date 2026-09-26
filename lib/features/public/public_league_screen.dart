@@ -9,6 +9,8 @@ import '../../core/time/league_time.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../models/public_league_snapshot.dart';
 import '../../providers/public_league_provider.dart';
+import '../../providers/auth_providers.dart';
+import '../notifications/notifications_screen.dart';
 
 class PublicLeagueScreen extends ConsumerWidget {
   const PublicLeagueScreen({super.key, this.initialTab = 0});
@@ -18,6 +20,7 @@ class PublicLeagueScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final snapshot = ref.watch(publicLeagueSnapshotProvider);
+    final user = ref.watch(currentUserProvider).valueOrNull;
     return DefaultTabController(
       length: 3,
       initialIndex: initialTab,
@@ -26,11 +29,14 @@ class PublicLeagueScreen extends ConsumerWidget {
           title: const Text('Jamaica Basketball'),
           foregroundColor: Colors.white,
           actions: [
-            TextButton(
-              onPressed: () => context.go('/login'),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-              child: const Text('Sign in'),
-            ),
+            if (user != null)
+              const NotificationBell(color: Colors.white)
+            else
+              TextButton(
+                onPressed: () => context.go('/login'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                child: const Text('Sign in'),
+              ),
           ],
           bottom: TabBar(
             labelColor: Colors.white,

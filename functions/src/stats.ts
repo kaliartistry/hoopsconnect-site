@@ -4,7 +4,6 @@ import {
 import { logger } from "firebase-functions";
 import * as admin from "firebase-admin";
 import { rebuildLeaderboards } from "./leaderboard";
-import {notifyFavoriteTeamFans} from "./notifications";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -427,20 +426,6 @@ export const onGameStatsApproved = onDocumentUpdated(
 
       // ── 4. Rebuild leaderboards ──────────────────────────────
       await rebuildLeaderboards(assocId, afterData.seasonId, afterData.divisionId);
-
-      // ── 5. Notify fans following either team ─────────────────
-      const fanCount = await notifyFavoriteTeamFans({
-        db,
-        associationId: assocId,
-        gameId: afterData.eventId,
-        homeTeamId: afterData.homeTeamId,
-        awayTeamId: afterData.awayTeamId,
-        homeTeamName: afterData.homeTeamName,
-        awayTeamName: afterData.awayTeamName,
-        homeScore: afterData.homeScore,
-        awayScore: afterData.awayScore,
-      });
-      logger.info(`Queued final-score alerts for ${fanCount} favorite-team followers.`);
 
       logger.info("onGameStatsApproved completed successfully.");
     } catch (err) {

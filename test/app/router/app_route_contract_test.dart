@@ -67,6 +67,8 @@ void main() {
         expect(AppRouteContract.landingFor(fan), '/standings');
         expect(AppRouteContract.permits('/board', fan), isFalse);
         expect(AppRouteContract.permits('/standings', fan), isTrue);
+        expect(AppRouteContract.permits('/notifications', fan), isTrue);
+        expect(AppRouteContract.permits('/notifications', null), isFalse);
         expect(
           resolveAppRedirect(
             location: Uri.parse('/login?from=%2Fcalendar%3Fdivision%3Dwomen'),

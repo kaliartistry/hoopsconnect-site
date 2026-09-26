@@ -19,10 +19,10 @@ const fixturePath =
   'contracts/account_deletion/ad05d/storage_media_fixtures_v1.json';
 
 const pinnedBaseBlobs = Object.freeze({
-  // Reviewed callable-only season lifecycle transition; AD05-D stays absent.
-  'functions/src/index.ts': '32cb4ad58c2fd3409c480d67fefffd13c71cb372',
+  // Reviewed follow-inbox integration; AD05-D stays absent.
+  'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
   'firebase.json': '200cb8847e8897c13e2f747a8fca44a22e994b9c',
-  'firestore.rules': '366dfece2fe30a5a8e81184f2e3e587311bd0d44',
+  'firestore.rules': '9fbd6d900fa97d630e27045fa886bc883e5989b4',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'functions/src/account_deletion/ad05_records.ts':
     'dfc83138cf1a4e7cb306f7332417c46316eddf1e',
