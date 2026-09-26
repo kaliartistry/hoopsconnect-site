@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test test/public_snapshot.test.js"
+    "test": "npm run build && node --test test/*.test.js"
   },
   "dependencies": {
     "firebase-admin": "^13.7.0",

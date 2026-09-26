@@ -84,6 +84,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _loaded = true;
           }
 
+          final followedTeamCount = {
+            ..._favoriteTeamIds,
+            if (publicSnapshot != null)
+              for (final team in publicSnapshot.teams)
+                if (publicSnapshot.availableLeagues.any(
+                  (league) =>
+                      _favoriteLeagueIds.contains(league.leagueId) &&
+                      league.divisionIds.contains(team.divisionId),
+                ))
+                  team.teamId,
+          }.length;
           final themeMode = ref.watch(themeModeProvider);
           final version = ref.watch(appVersionInfoProvider);
           final cardColor =
@@ -170,12 +181,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       )
                     : ExpansionTile(
                         initiallyExpanded:
-                            widget.focusFavorites || _favoriteTeamIds.isEmpty,
+                            widget.focusFavorites || followedTeamCount == 0,
                         leading: const Icon(Icons.favorite_outline),
                         title: Text(
-                          _favoriteTeamIds.isEmpty
+                          followedTeamCount == 0
                               ? 'Choose teams to follow'
-                              : '${_favoriteTeamIds.length} team${_favoriteTeamIds.length == 1 ? '' : 's'} followed',
+                              : '$followedTeamCount team${followedTeamCount == 1 ? '' : 's'} followed',
                         ),
                         subtitle: const Text(
                           'Your teams stay together across scores and alerts',

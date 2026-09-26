@@ -2,6 +2,8 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
+const repoRoot = path.resolve(__dirname, '../..');
 const {replaceNblPresentation} = require('../lib/jbl_presentation_import');
 
 // Independent miniature source, so regression tests don't require the private XLS.
@@ -46,7 +48,7 @@ test('ambiguous league match fails closed', () => {
 });
 
 test('actual bundled historical league has ten teams and no fabricated competition records', () => {
-  const snapshot = JSON.parse(fs.readFileSync('assets/demo/presentation_public_snapshot.json'));
+  const snapshot = JSON.parse(fs.readFileSync(path.join(repoRoot, 'assets/demo/presentation_public_snapshot.json')));
   const league = snapshot.leagues.find(l => l.leagueId === 'jbl');
   assert.ok(league.historicalStatistics);
   assert.equal(snapshot.teams.filter(t => league.divisionIds.includes(t.divisionId)).length, 10);
@@ -54,5 +56,5 @@ test('actual bundled historical league has ten teams and no fabricated competiti
   const points = snapshot.leaderboards.find(b => b.category === 'ppg' && league.divisionIds.includes(b.divisionId));
   assert.equal(points.rankings.length, 188);
   assert.equal(points.rankings.reduce((n,p) => n+p.cumulativeTotal,0), 5555);
-  for (const t of snapshot.teams.filter(t => league.divisionIds.includes(t.divisionId))) assert.ok(fs.existsSync(t.logoUrl.replace('asset:', '')));
+  for (const t of snapshot.teams.filter(t => league.divisionIds.includes(t.divisionId))) assert.ok(fs.existsSync(path.join(repoRoot, t.logoUrl.replace('asset:', ''))));
 });
