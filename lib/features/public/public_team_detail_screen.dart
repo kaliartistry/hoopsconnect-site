@@ -157,61 +157,6 @@ class _PublicTeamDetailScreenState
         actions: [
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
-            key: const Key('follow-team-button'),
-            onPressed: _saving || (viaLeague && !isFollowing)
-                ? null
-                : () async {
-                    if (user == null) {
-                      context.go(
-                        AppRouteContract.loginFor(
-                          Uri.parse(
-                            PublicRoutePaths.team(widget.detail.team.teamId),
-                          ),
-                        ),
-                      );
-                      return;
-                    }
-                    setState(() => _saving = true);
-                    try {
-                      await ref.read(authRepositoryProvider).updateUser(
-                        user.id,
-                        {
-                          'favoriteTeamIds': isFollowing
-                              ? FieldValue.arrayRemove([
-                                  widget.detail.team.teamId,
-                                ])
-                              : FieldValue.arrayUnion([
-                                  widget.detail.team.teamId,
-                                ]),
-                        },
-                      );
-                    } catch (_) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Could not update team follow. Try again.',
-                            ),
-                          ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) setState(() => _saving = false);
-                    }
-                  },
-            icon: Icon(
-              isFollowing || viaLeague ? Icons.check : Icons.favorite_border,
-            ),
-            label: Text(
-              isFollowing
-                  ? 'Following team'
-                  : viaLeague
-                  ? 'Via league'
-                  : 'Follow',
-            ),
-          ),
-          TextButton.icon(
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
             icon: const Icon(Icons.compare_arrows, size: 20),
             label: const Text('Compare'),
             onPressed: () => context.push(
@@ -236,6 +181,61 @@ class _PublicTeamDetailScreenState
               snapshot: snapshot,
               league: league,
               divisionName: snapshot.divisionName(detail.team.divisionId),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const Key('follow-team-button'),
+              onPressed: _saving || (viaLeague && !isFollowing)
+                  ? null
+                  : () async {
+                      if (user == null) {
+                        context.go(
+                          AppRouteContract.loginFor(
+                            Uri.parse(
+                              PublicRoutePaths.team(widget.detail.team.teamId),
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                      setState(() => _saving = true);
+                      try {
+                        await ref.read(authRepositoryProvider).updateUser(
+                          user.id,
+                          {
+                            'favoriteTeamIds': isFollowing
+                                ? FieldValue.arrayRemove([
+                                    widget.detail.team.teamId,
+                                  ])
+                                : FieldValue.arrayUnion([
+                                    widget.detail.team.teamId,
+                                  ]),
+                          },
+                        );
+                      } catch (_) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Could not update team follow. Try again.',
+                              ),
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _saving = false);
+                      }
+                    },
+              icon: Icon(
+                isFollowing || viaLeague ? Icons.check : Icons.favorite_border,
+              ),
+              label: Text(
+                isFollowing
+                    ? 'Following team'
+                    : viaLeague
+                    ? 'Via league'
+                    : 'Follow',
+              ),
             ),
             const SizedBox(height: 20),
             Row(

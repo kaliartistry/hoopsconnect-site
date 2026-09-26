@@ -202,7 +202,7 @@ test('league operations remain callable-only even for a super administrator', as
       name: '2026', status: 'active', isActive: true,
     });
     await setDoc(doc(db, 'associations/jba/divisions/premier'), {
-      name: 'Premier', status: 'active', version: 7,
+      name: 'Premier', leagueId: 'nbl', status: 'active', version: 7,
     });
     await setDoc(doc(db, 'associations/jba/events/game-1'), {
       title: 'One vs Two', type: 'game', divisionId: 'premier',
@@ -252,7 +252,8 @@ test('direct division creates and every edit advance an exact integer version', 
   const division = doc(root, 'associations/jba/divisions/versioned');
   await assertFails(setDoc(division, {name: 'Versioned', status: 'active'}));
   await assertFails(setDoc(division, {name: 'Versioned', status: 'active', version: 2}));
-  await assertSucceeds(setDoc(division, {name: 'Versioned', status: 'active', version: 1}));
+  await assertFails(setDoc(division, {name: 'Versioned', status: 'active', version: 1}));
+  await assertSucceeds(setDoc(division, {name: 'Versioned', leagueId: 'nbl', status: 'active', version: 1}));
   await assertFails(updateDoc(division, {name: 'Skipped', version: 3, updatedAt: serverTimestamp()}));
   await assertFails(updateDoc(division, {name: 'Unversioned', updatedAt: serverTimestamp()}));
   await assertSucceeds(updateDoc(division, {name: 'Edited', version: 2, updatedAt: serverTimestamp()}));
@@ -274,9 +275,9 @@ test('direct team writers cannot bypass a pending division deletion guard', asyn
         'posts.create', 'posts.manage',
       ],
     });
-    await setDoc(doc(db, 'associations/jba/divisions/open'), {name: 'Open', status: 'active'});
+    await setDoc(doc(db, 'associations/jba/divisions/open'), {name: 'Open', leagueId: 'nbl', status: 'active'});
     await setDoc(doc(db, 'associations/jba/divisions/pending'), {
-      name: 'Pending', status: 'active', deletionPending: {operationId: 'delete_operation_01'},
+      name: 'Pending', leagueId: 'nbl', status: 'active', deletionPending: {operationId: 'delete_operation_01'},
     });
     await setDoc(doc(db, 'associations/jba/teams/team-1'), {
       name: 'One', divisionId: 'open', seasonId: 's2026',
@@ -570,7 +571,7 @@ test('statistician writes are tenant-bound and cannot approve', async () => {
       capabilities: ['association.read', 'stats.enter'],
     });
     await setDoc(doc(db, 'associations/jba/divisions/premier'), {
-      name: 'Premier', status: 'active',
+      name: 'Premier', leagueId: 'nbl', status: 'active',
     });
     await setDoc(doc(db, 'associations/jba/events/game-1'), {
       type: 'game', divisionId: 'premier',
@@ -703,7 +704,7 @@ test('explicit v2 cutover rejects legacy stat writes while disabled and shadow r
       associationId: 'jba', role: 'statistician', status: 'active',
       authorizationSchemaVersion: 1, capabilities: ['stats.enter'],
     });
-    await setDoc(doc(db, 'associations/jba/divisions/premier'), {name: 'Premier', status: 'active'});
+    await setDoc(doc(db, 'associations/jba/divisions/premier'), {name: 'Premier', leagueId: 'nbl', status: 'active'});
     for (const eventId of ['disabled', 'shadow', 'cutover-bypass', 'unknown-enabled', 'unknown-null']) {
       await setDoc(doc(db, `associations/jba/events/${eventId}`), {type: 'game', divisionId: 'premier'});
     }

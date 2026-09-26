@@ -71,49 +71,6 @@ class _PublicPlayerDetailScreenState
         actions: [
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
-            key: const Key('follow-player-button'),
-            onPressed: _saving
-                ? null
-                : () async {
-                    if (user == null) {
-                      context.go(
-                        AppRouteContract.loginFor(
-                          Uri.parse(
-                            PublicRoutePaths.player(widget.detail.playerId),
-                          ),
-                        ),
-                      );
-                      return;
-                    }
-                    setState(() => _saving = true);
-                    try {
-                      await ref.read(authRepositoryProvider).updateUser(
-                        user.id,
-                        {
-                          'favoritePlayerIds': isFollowing
-                              ? FieldValue.arrayRemove([widget.detail.playerId])
-                              : FieldValue.arrayUnion([widget.detail.playerId]),
-                        },
-                      );
-                    } catch (_) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Could not update player follow. Try again.',
-                            ),
-                          ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) setState(() => _saving = false);
-                    }
-                  },
-            icon: Icon(isFollowing ? Icons.check : Icons.person_add_alt_1),
-            label: Text(isFollowing ? 'Following' : 'Follow'),
-          ),
-          TextButton.icon(
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
             icon: const Icon(Icons.compare_arrows, size: 20),
             label: const Text('Compare'),
             onPressed: () => context.push(
@@ -152,6 +109,56 @@ class _PublicPlayerDetailScreenState
                       snapshot: snapshot,
                       detail: detail,
                       teamId: teamId,
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      key: const Key('follow-player-button'),
+                      onPressed: _saving
+                          ? null
+                          : () async {
+                              if (user == null) {
+                                context.go(
+                                  AppRouteContract.loginFor(
+                                    Uri.parse(
+                                      PublicRoutePaths.player(
+                                        widget.detail.playerId,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              setState(() => _saving = true);
+                              try {
+                                await ref
+                                    .read(authRepositoryProvider)
+                                    .updateUser(user.id, {
+                                      'favoritePlayerIds': isFollowing
+                                          ? FieldValue.arrayRemove([
+                                              widget.detail.playerId,
+                                            ])
+                                          : FieldValue.arrayUnion([
+                                              widget.detail.playerId,
+                                            ]),
+                                    });
+                              } catch (_) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Could not update player follow. Try again.',
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted) setState(() => _saving = false);
+                              }
+                            },
+                      icon: Icon(
+                        isFollowing ? Icons.check : Icons.person_add_alt_1,
+                      ),
+                      label: Text(isFollowing ? 'Following' : 'Follow'),
                     ),
                     const SizedBox(height: 24),
                     Text(

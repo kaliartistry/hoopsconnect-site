@@ -20,6 +20,61 @@ void main() {
   });
   for (final isPlayer in [false, true]) {
     testWidgets(
+      '${isPlayer ? 'Player' : 'Team'} follow and compare remain usable on a narrow phone with large text',
+      (tester) async {
+        tester.view.physicalSize = const Size(375, 812);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final playerId = snapshot.leaderboards
+            .expand((board) => board.rankings)
+            .firstWhere((entry) => entry.playerId != null)
+            .playerId!;
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              currentUserProvider.overrideWithValue(
+                const AsyncValue.data(null),
+              ),
+              publicLeagueSnapshotProvider.overrideWith(
+                (ref) => Stream.value(snapshot),
+              ),
+            ],
+            child: MaterialApp(
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: const TextScaler.linear(1.3)),
+                child: child!,
+              ),
+              home: isPlayer
+                  ? PublicPlayerDetailScreen(
+                      snapshot: snapshot,
+                      detail: snapshot.playerDetail(playerId)!,
+                    )
+                  : PublicTeamDetailScreen(
+                      snapshot: snapshot,
+                      detail: snapshot.teamDetail('st-georges-slayers')!,
+                    ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final follow = find.byKey(
+          Key(isPlayer ? 'follow-player-button' : 'follow-team-button'),
+        );
+        final compare = find.widgetWithText(TextButton, 'Compare');
+        expect(follow.hitTestable(), findsOneWidget);
+        expect(compare.hitTestable(), findsOneWidget);
+        for (final control in [follow, compare]) {
+          final rect = tester.getRect(control);
+          expect(rect.left, greaterThanOrEqualTo(control == compare ? 56 : 0));
+          expect(rect.right, lessThanOrEqualTo(375));
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+    testWidgets(
       '${isPlayer ? 'Player' : 'Team'} profile has visible Compare and both comparison choices',
       (tester) async {
         tester.view.physicalSize = const Size(390, 844);
