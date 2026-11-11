@@ -19,7 +19,8 @@ const baselineGitBlobHashes = Object.freeze({
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; AD02 candidate imports stay excluded.
   // Reviewed league-management route; AD02 candidate imports stay excluded.
-  'lib/app/router/app_router.dart': '8005df8d18dec38fc6f64bf7bd1c47bad128f5f9',
+  // Active fan invite entry and assigned-team redirect; no lifecycle activation.
+  'lib/app/router/app_router.dart': '750f9fe39b336ce3ffc2bc6d79ad2c09f95b4173',
   'lib/services/notification_service.dart': '923d67b6823b64af8edf17f1362a6dd298b24a00',
   'lib/services/repositories/auth_repository.dart': '3ac1870e9f078090c8c1f2ebe857b4c9f76ef564',
   'lib/core/constants/firestore_paths.dart': '6523b5f6b2fe01619e6e8d67a273930f070c99a7',

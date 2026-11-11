@@ -16,7 +16,8 @@ const baselineGitBlobHashes = Object.freeze({
   'lib/main.dart': '44069fb8be78b6bef7c30dbac812b3b1ae673ba9',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; V2 candidate imports stay excluded.
-  'lib/app/router/app_router.dart': '8005df8d18dec38fc6f64bf7bd1c47bad128f5f9',
+  // Active fan invite entry and assigned-team redirect; no lifecycle activation.
+  'lib/app/router/app_router.dart': '750f9fe39b336ce3ffc2bc6d79ad2c09f95b4173',
   'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
 });
 
