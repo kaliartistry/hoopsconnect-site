@@ -98,6 +98,30 @@ class PublicLeagueScreen extends ConsumerWidget {
               ),
           ],
         ),
+        bottomNavigationBar: Builder(
+          builder: (context) {
+            final tabs = DefaultTabController.of(context);
+            return ListenableBuilder(
+              listenable: tabs,
+              builder: (context, _) {
+                if (tabs.index != 0) return const SizedBox.shrink();
+
+                final theme = Theme.of(context);
+                return SafeArea(
+                  top: false,
+                  minimum: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                  child: Text(
+                    'App donated by Kali Artistry',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
         body: snapshot.when(
           loading: () => const Center(
             child: AppLoadingState(label: 'Loading published league data'),

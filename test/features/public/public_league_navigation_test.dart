@@ -90,9 +90,11 @@ void main() {
 
     expect(find.byKey(const Key('public-games-home-tab')), findsOneWidget);
     expect(find.byIcon(Icons.home_rounded), findsOneWidget);
+    expect(find.text('App donated by Kali Artistry'), findsNothing);
     await tester.tap(find.byKey(const Key('public-association-home')));
     await tester.pumpAndSettle();
 
     expect(router.routeInformationProvider.value.uri.path, '/public/games');
+    expect(find.text('App donated by Kali Artistry'), findsOneWidget);
   });
 }
