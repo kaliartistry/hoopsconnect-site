@@ -14,7 +14,7 @@ const fixturePath = 'contracts/account_deletion/ad03/ownership_fixtures_v2.json'
 
 const pinnedMergedMainBlobs = Object.freeze({
   // Reconciled native/follow-inbox production roots; AD03 stays absent.
-  'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
+  'functions/src/index.ts': '34f9ca43ce09326a9a4baaefcd744e4f8c158c0c',
   'firestore.rules': '2c1554fd7623fb9cbeb9423b192b1bdd3b674143',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
