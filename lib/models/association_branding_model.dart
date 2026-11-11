@@ -21,7 +21,7 @@ class SponsorBrandingModel {
       enabled: data['enabled'] as bool? ?? false,
       name: (data['name'] as String? ?? '').trim(),
       label: (data['label'] as String? ?? 'Presented by').trim(),
-      logoUrl: _imageReferenceOrNull(data['logoUrl']),
+      logoUrl: brandingImageReferenceOrNull(data['logoUrl']),
       websiteUrl: _httpsUrlOrNull(data['websiteUrl']),
     );
   }
@@ -32,7 +32,7 @@ class SponsorBrandingModel {
     'enabled': enabled,
     'name': name.trim(),
     'label': label.trim().isEmpty ? 'Presented by' : label.trim(),
-    'logoUrl': _imageReferenceOrNull(logoUrl),
+    'logoUrl': brandingImageReferenceOrNull(logoUrl),
     'websiteUrl': _httpsUrlOrNull(websiteUrl),
   };
 
@@ -108,7 +108,9 @@ class AssociationBrandingModel {
         branding['shortName'] ?? data['shortName'],
         defaults.shortName,
       ),
-      logoUrl: _imageReferenceOrNull(branding['logoUrl'] ?? data['logoUrl']),
+      logoUrl: brandingImageReferenceOrNull(
+        branding['logoUrl'] ?? data['logoUrl'],
+      ),
       primaryColorHex: _colorOrFallback(
         branding['primaryColorHex'],
         defaults.primaryColorHex,
@@ -129,7 +131,7 @@ class AssociationBrandingModel {
     'schemaVersion': 1,
     'leagueName': leagueName.trim(),
     'shortName': shortName.trim(),
-    'logoUrl': _imageReferenceOrNull(logoUrl),
+    'logoUrl': brandingImageReferenceOrNull(logoUrl),
     'primaryColorHex': _colorOrFallback(primaryColorHex, '#2E7D32'),
     'secondaryColorHex': _colorOrFallback(secondaryColorHex, '#1B5E20'),
     'accentColorHex': _colorOrFallback(accentColorHex, '#F9A825'),
@@ -189,7 +191,7 @@ String? _httpsUrlOrNull(Object? value) {
   return uri.toString();
 }
 
-String? _imageReferenceOrNull(Object? value) {
+String? brandingImageReferenceOrNull(Object? value) {
   if (value is! String || value.trim().isEmpty) return null;
   final candidate = value.trim();
   final bundledPresentationAsset =

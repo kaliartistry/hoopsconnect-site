@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import '../core/utils/jamaica_date.dart';
+
 enum PublicReleaseState { published, unavailable, retracted }
 
 enum PublicGameStatus { scheduled, finalResult, postponed, canceled }
@@ -756,8 +758,10 @@ class PublicBrandIdentity {
     this.primaryColorHex = '#2E7D32',
     this.secondaryColorHex = '#1B5E20',
     this.accentColorHex = '#F9A825',
-    this.sponsor = const PublicSponsor(),
-  });
+    PublicSponsor sponsor = const PublicSponsor(),
+    this.scheduledSponsor,
+    this.sponsorStartsOn,
+  }) : baseSponsor = sponsor;
 
   final String name;
   final String shortName;
@@ -765,7 +769,18 @@ class PublicBrandIdentity {
   final String primaryColorHex;
   final String secondaryColorHex;
   final String accentColorHex;
-  final PublicSponsor sponsor;
+  final PublicSponsor baseSponsor;
+  final PublicSponsor? scheduledSponsor;
+  final String? sponsorStartsOn;
+
+  PublicSponsor sponsorAt(DateTime instant) =>
+      scheduledSponsor != null &&
+          sponsorStartsOn != null &&
+          jamaicaDateKey(instant).compareTo(sponsorStartsOn!) >= 0
+      ? scheduledSponsor!
+      : baseSponsor;
+
+  PublicSponsor get sponsor => sponsorAt(DateTime.now());
 
   factory PublicBrandIdentity.fromMap(
     Map<String, dynamic> map, {
@@ -773,6 +788,7 @@ class PublicBrandIdentity {
     required String fallbackShortName,
   }) {
     final sponsor = _optionalMap(map['sponsor']);
+    final scheduled = _optionalMap(map['scheduledSponsor']);
     return PublicBrandIdentity(
       name: _optionalText(map['name']) ?? fallbackName,
       shortName: _optionalText(map['shortName']) ?? fallbackShortName,
@@ -787,6 +803,10 @@ class PublicBrandIdentity {
         fallback: '#F9A825',
       ),
       sponsor: PublicSponsor.fromMap(sponsor),
+      scheduledSponsor: PublicSponsor.fromMap(
+        _optionalMap(scheduled['sponsor']),
+      ),
+      sponsorStartsOn: calendarDateKey(scheduled['startsOn']),
     );
   }
 }
@@ -826,6 +846,8 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
     super.secondaryColorHex,
     super.accentColorHex,
     super.sponsor,
+    super.scheduledSponsor,
+    super.sponsorStartsOn,
   });
 
   final String leagueId;
@@ -879,7 +901,9 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
       primaryColorHex: identity.primaryColorHex,
       secondaryColorHex: identity.secondaryColorHex,
       accentColorHex: identity.accentColorHex,
-      sponsor: identity.sponsor,
+      sponsor: identity.baseSponsor,
+      scheduledSponsor: identity.scheduledSponsor,
+      sponsorStartsOn: identity.sponsorStartsOn,
     );
   }
 }

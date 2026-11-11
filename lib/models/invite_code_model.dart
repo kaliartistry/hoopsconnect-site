@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class InviteCodeModel {
   final String inviteId;
   final String? teamId;
+  final String? teamName;
   final String role;
   final int usesRemaining;
   final String status;
@@ -14,6 +15,7 @@ class InviteCodeModel {
   const InviteCodeModel({
     required this.inviteId,
     required this.teamId,
+    this.teamName,
     required this.role,
     required this.usesRemaining,
     required this.status,
@@ -45,6 +47,7 @@ class InviteCodeModel {
     return InviteCodeModel(
       inviteId: inviteId,
       teamId: data['teamId']?.toString(),
+      teamName: data['teamName'] as String?,
       role: data['role'] as String,
       usesRemaining: (data['usesRemaining'] as num?)?.toInt() ?? 1,
       status: data['status']?.toString() ?? 'active',

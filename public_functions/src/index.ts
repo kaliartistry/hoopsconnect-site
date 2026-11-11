@@ -153,6 +153,11 @@ function publicBrand(
   fallback: {name: string; shortName: string},
 ) {
   const brand = objectValue(value);
+  const schedule = objectValue(brand.scheduledSponsor);
+  const startsOn = nullableText(schedule.startsOn);
+  const date = startsOn && /^\d{4}-\d{2}-\d{2}$/.test(startsOn) ? new Date(startsOn + "T00:00:00Z") : null;
+  const validSchedule = date && Number.isFinite(date.getTime()) &&
+    date.toISOString().slice(0, 10) === startsOn;
   return {
     name: text(brand.leagueName ?? brand.name, fallback.name),
     shortName: text(brand.shortName, fallback.shortName),
@@ -161,6 +166,7 @@ function publicBrand(
     secondaryColorHex: colorHex(brand.secondaryColorHex ?? brand.secondaryColor, "#1B5E20"),
     accentColorHex: colorHex(brand.accentColorHex ?? brand.accentColor, "#F9A825"),
     sponsor: publicSponsor(brand.sponsor),
+    ...(validSchedule ? {scheduledSponsor: {startsOn, sponsor: publicSponsor(schedule.sponsor)}} : {}),
   };
 }
 

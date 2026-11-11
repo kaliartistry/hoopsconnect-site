@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, codex/qa-remediation-integration]
+    branches: [main, codex/qa-remediation-integration, codex/testing-release-reconciliation]
 
 jobs:
   build-and-test:

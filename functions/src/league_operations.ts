@@ -60,12 +60,16 @@ export interface Authority {
   accountLifecycleEpochV2: number;
 }
 
+const rosterSizeKeys = ["shorts", "vest", "shoe"] as const;
+type RosterUniformSizes = Partial<Record<(typeof rosterSizeKeys)[number], string>>;
+
 interface RosterFacts {
   playerId: string | null;
   registrationId: string | null;
   displayName: string;
   jerseyNumber: string;
   position: string | null;
+  uniformSizes?: RosterUniformSizes;
 }
 
 interface ScheduleInput {
@@ -603,6 +607,19 @@ async function requireSchedulingAuthority(
   });
 }
 
+function readRosterUniformSizes(data: Json): {uniformSizes?: RosterUniformSizes} {
+  if (data.uniformSizes === undefined) return {};
+  const sizes = object(data.uniformSizes);
+  exactKeys(sizes, [], rosterSizeKeys);
+  const uniformSizes: RosterUniformSizes = {};
+  for (const key of rosterSizeKeys) {
+    if (sizes[key] !== undefined) {
+      uniformSizes[key] = text(sizes[key], `uniformSizes.${key}`, 24)!;
+    }
+  }
+  return {uniformSizes};
+}
+
 function requestRosterFacts(data: Json, kind: RosterKind): RosterFacts | null {
   if (kind === "removePlayer") return null;
   const jersey = data.jerseyNumber;
@@ -616,6 +633,7 @@ function requestRosterFacts(data: Json, kind: RosterKind): RosterFacts | null {
     displayName: text(data.displayName, "displayName", 120)!,
     jerseyNumber: jersey,
     position: text(data.position, "position", 40, true),
+    ...readRosterUniformSizes(data),
   };
 }
 
@@ -629,13 +647,14 @@ function storedRosterFacts(data: DocumentData, registrationId: string): RosterFa
     displayName: data.displayName,
     jerseyNumber: data.jerseyNumber,
     position: typeof data.position === "string" ? data.position : null,
+    ...readRosterUniformSizes(data),
   };
 }
 
 function immutableRosterFacts(value: unknown, field: string): RosterFacts | null {
   if (value === null) return null;
   const data = object(value);
-  exactKeys(data, ["playerId", "registrationId", "displayName", "jerseyNumber", "position"]);
+  exactKeys(data, ["playerId", "registrationId", "displayName", "jerseyNumber", "position"], ["uniformSizes"]);
   if (typeof data.jerseyNumber !== "string" || data.jerseyNumber.length < 1 || data.jerseyNumber.length > 8 ||
       data.jerseyNumber.trim() !== data.jerseyNumber || /[\u0000-\u001f\u007f]/.test(data.jerseyNumber)) {
     throw new HttpsError("failed-precondition", `${field} has an invalid jersey number.`);
@@ -647,6 +666,7 @@ function immutableRosterFacts(value: unknown, field: string): RosterFacts | null
     displayName: text(data.displayName, `${field}.displayName`, 120)!,
     jerseyNumber: data.jerseyNumber,
     position: text(data.position, `${field}.position`, 40, true),
+    ...readRosterUniformSizes(data),
   };
 }
 
@@ -770,6 +790,7 @@ async function applyRosterChange(input: {
       displayName: input.after!.displayName,
       jerseyNumber: input.after!.jerseyNumber,
       position: input.after!.position,
+      ...(input.after!.uniformSizes === undefined ? {} : {uniformSizes: input.after!.uniformSizes}),
       status: "active",
       effectiveTo: null,
     }, {merge: false});
@@ -869,6 +890,7 @@ export async function getRosterWorkspaceHandler(request: CallableRequest<unknown
         seasonId,
         jerseyNumber: entry.get("jerseyNumber"),
         ...(typeof entry.get("position") === "string" ? {position: entry.get("position")} : {}),
+        ...readRosterUniformSizes(entry.data()),
         status: "active",
       })),
       proposals: proposals.map((entry) => {
@@ -895,7 +917,7 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
   const actor = caller(request);
   const data = object(request.data);
   exactKeys(data, ["schemaVersion", "operationId", "teamId", "seasonId", "expectedRosterVersion", "kind", "requestedOutcome", "reason"],
-    ["playerId", "registrationId", "displayName", "jerseyNumber", "position"]);
+    ["playerId", "registrationId", "displayName", "jerseyNumber", "position", "uniformSizes"]);
   schema(data);
   const operationId = id(data.operationId, "operationId", true);
   const teamId = id(data.teamId, "teamId");
@@ -913,7 +935,7 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
   if (kind === "addPlayer" && (data.playerId !== undefined || data.registrationId !== undefined)) {
     throw new HttpsError("invalid-argument", "New identities are issued by the server.");
   }
-  if (kind === "removePlayer" && [data.displayName, data.jerseyNumber, data.position].some((value) => value !== undefined)) {
+  if (kind === "removePlayer" && [data.displayName, data.jerseyNumber, data.position, data.uniformSizes].some((value) => value !== undefined)) {
     throw new HttpsError("invalid-argument", "Remove requests cannot replace player facts.");
   }
   const semanticRequest = {
@@ -925,13 +947,7 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
     kind,
     requestedOutcome: data.requestedOutcome,
     reason,
-    after: after === null ? null : {
-      playerId: after.playerId,
-      registrationId: after.registrationId,
-      displayName: after.displayName,
-      jerseyNumber: after.jerseyNumber,
-      position: after.position,
-    },
+    after,
     requestedPlayerId: kind === "addPlayer" ? null : id(data.playerId, "playerId"),
     requestedRegistrationId: kind === "addPlayer" ? null : id(data.registrationId, "registrationId"),
   };
@@ -972,7 +988,13 @@ export async function submitRosterChangeHandler(request: CallableRequest<unknown
       before = storedRosterFacts(registration.data()!, registration.id);
       await requireRosterIdentity(transaction, db, authority, workflow, registration);
     }
-    const normalizedAfter = after === null ? null : {...after, playerId: before?.playerId ?? null, registrationId: before?.registrationId ?? null};
+    // Older clients omit sizes. An explicit empty map clears them.
+    const normalizedAfter = after === null ? null : {
+      ...(before?.uniformSizes === undefined ? {} : {uniformSizes: before.uniformSizes}),
+      ...after,
+      playerId: before?.playerId ?? null,
+      registrationId: before?.registrationId ?? null,
+    };
     const manager = rosterAuthority.manager;
     if (!manager) {
       const proposalQueue = await transaction.get(refs.proposalQueue);

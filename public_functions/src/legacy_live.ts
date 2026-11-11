@@ -79,3 +79,19 @@ export const onPublicLeagueSourceWritten = onDocumentWritten({
       Date.parse(event.time) <= through.toMillis()) return;
   await rebuildLegacyLiveSnapshot(db);
 });
+
+export const onPublicLeagueBrandingWritten = onDocumentWritten({
+  document: "associations/{associationId}",
+  region: "us-central1", maxInstances: 1, concurrency: 8,
+  labels: {"jbl-compatibility": "v1-branding"},
+  timeoutSeconds: 120, memory: "256MiB", retry: false,
+}, async (event) => {
+  if (event.params.associationId !== "jba" || !event.data?.after.exists) return;
+  const before = event.data.before.data();
+  const after = event.data.after.data();
+  const brandFields = (data: admin.firestore.DocumentData | undefined) => [
+    data?.leagueCatalogV1, data?.brandingV1,
+  ];
+  if (JSON.stringify(brandFields(before)) === JSON.stringify(brandFields(after))) return;
+  await rebuildLegacyLiveSnapshot(admin.firestore());
+});

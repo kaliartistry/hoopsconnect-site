@@ -199,7 +199,7 @@ function requireInviteShape(invite: InviteData, inviteId: string): {
   };
 }
 
-function authorityFromSnapshot(snapshot: DocumentSnapshot, requiredCapability: string): Authority {
+export function authorityFromSnapshot(snapshot: DocumentSnapshot, requiredCapability: string): Authority {
   if (!snapshot.exists) {
     throw new HttpsError("permission-denied", "Active membership is required.");
   }
@@ -392,17 +392,22 @@ export async function inspectPrivilegedInviteHandler(request: CallableRequest<un
   requireAuthorizationSchema(data);
   const token = normalizeToken(data.code);
   const inviteId = inviteIdForToken(token);
-  const inviteSnap = await admin.firestore().doc(`inviteCodes/${inviteId}`).get();
+  const db = admin.firestore();
+  const inviteSnap = await db.doc(`inviteCodes/${inviteId}`).get();
   const now = Timestamp.now();
   if (!inviteSnap.exists || !inviteIsActive(inviteSnap.data() as InviteData, inviteId, now)) {
     throw new HttpsError("not-found", "Invite code is invalid, expired, revoked, or already used.");
   }
   const invite = requireInviteShape(inviteSnap.data() as InviteData, inviteId);
+  const teamName = invite.teamId === null
+    ? undefined
+    : (await db.doc(`associations/${invite.associationId}/teams/${invite.teamId}`).get()).get("name");
   return {
     inviteId,
     role: invite.role,
     associationId: invite.associationId,
     teamId: invite.teamId,
+    ...(typeof teamName === "string" && teamName.trim() ? {teamName: teamName.trim()} : {}),
     expiresAt: timestampOrNull((inviteSnap.data() as InviteData).expiresAt)?.toDate().toISOString(),
   };
 }

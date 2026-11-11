@@ -15,6 +15,7 @@ import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
 import '../../services/repositories/roster_workflow_repository.dart';
 import 'roster_management_panel.dart';
+import 'team_registration_panel.dart';
 
 class TeamViewScreen extends ConsumerWidget {
   final String teamId;
@@ -200,6 +201,18 @@ class TeamViewScreen extends ConsumerWidget {
                   ),
                 ),
 
+              if (seasonId != null &&
+                  team.seasonId == seasonId &&
+                  team.acceptsNewReferences &&
+                  currentUser != null &&
+                  (currentUser.hasCapability('teams.manage') ||
+                      (currentUser.hasCapability('teams.represent') &&
+                          currentUser.teamId == team.id))) ...[
+                TeamRegistrationPanel(
+                  target: (teamId: team.id, seasonId: seasonId),
+                ),
+                const SizedBox(height: 24),
+              ],
               TeamRosterManagementPanel(
                 team: team,
                 seasonId: seasonId,

@@ -1,5 +1,15 @@
 # Presentation image provenance
 
+## `jbl_registration_badge.png`
+
+- Source: page 2 header of `JBL Registration Form 2026.pdf`, the blank 2026–2027
+  form Kurt shared on WhatsApp on 2026-11-10 at 7:37 a.m.
+- The 501 × 402 RGB image was extracted from the embedded PDF image and saved
+  as PNG at its original dimensions. The PDF SHA-256 is
+  `ff71f71ed0d2f4fc3ae5dc0e9c58904e5ad258b45e03f617493e1a274e02c4`.
+- This badge is distinct from the straight wordmark in `jbl_full.png` and
+  the ball mark in `jbl_sub.png`.
+
 ## `nbl_jamaica_logo.png`
 
 - Source: the public profile image used by the official `@nbljamaica` Instagram account, also visible on the Jamaica Basketball Association's coauthored announcement at <https://www.instagram.com/p/DVpNtElAIHN/>.

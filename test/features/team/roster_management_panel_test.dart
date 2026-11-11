@@ -8,6 +8,7 @@ import 'package:hoops_connect/models/team_model.dart';
 import 'package:hoops_connect/models/user_model.dart';
 import 'package:hoops_connect/providers/auth_providers.dart';
 import 'package:hoops_connect/providers/roster_workflow_providers.dart';
+import 'package:hoops_connect/services/repositories/roster_workflow_repository.dart';
 
 UserModel representative({required String teamId}) => UserModel(
   id: 'rep_1',
@@ -36,6 +37,97 @@ final team = TeamModel(
 );
 
 void main() {
+  testWidgets('uniform sizes can be edited and reviewed before saving', (
+    tester,
+  ) async {
+    final calls = <Map<String, Object?>>[];
+    final repository = RosterWorkflowRepository(
+      callable: (name, data) async {
+        expect(name, 'submitRosterChange');
+        calls.add(data);
+        return {
+          'operationId': data['operationId'],
+          'status': 'approved',
+          'rosterVersion': 1,
+        };
+      },
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(AsyncValue.data(manager())),
+          rosterWorkspaceProvider.overrideWith(
+            (ref, target) async => const RosterWorkspace(rosterVersion: 0),
+          ),
+          rosterWorkflowRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TeamRosterManagementPanel(
+              team: team,
+              seasonId: 'season_1',
+              legacyRoster: const AsyncValue.data([]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Add player'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Player name'),
+      'Aaliyah Brown',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Jersey number'),
+      '00',
+    );
+    final chooseShorts = find.byTooltip('Choose Shorts size');
+    await tester.ensureVisible(chooseShorts);
+    await tester.tap(chooseShorts);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('M'));
+    await tester.pumpAndSettle();
+    final vestField = find.widgetWithText(
+      TextFormField,
+      'Vest size (optional)',
+    );
+    await tester.ensureVisible(vestField);
+    await tester.enterText(vestField, 'Youth XL');
+    final shoeField = find.widgetWithText(
+      TextFormField,
+      'Shoe size (optional)',
+    );
+    await tester.ensureVisible(shoeField);
+    await tester.enterText(shoeField, 'US 10.5');
+
+    await tester.tap(find.text('Review'));
+    await tester.pumpAndSettle();
+    expect(calls, isEmpty);
+    expect(find.text('Review roster change'), findsOneWidget);
+    expect(find.text('Jersey number: 00'), findsOneWidget);
+    expect(
+      find.text('Shorts: M • Vest: Youth XL • Shoe: US 10.5'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(shoeField);
+    await tester.enterText(shoeField, 'UK 10');
+    await tester.tap(find.text('Review'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save roster change'));
+    await tester.pumpAndSettle();
+    expect(calls.single['uniformSizes'], {
+      'shorts': 'M',
+      'vest': 'Youth XL',
+      'shoe': 'UK 10',
+    });
+  });
+
   testWidgets('unrelated representative sees an explicit view-only denial', (
     tester,
   ) async {

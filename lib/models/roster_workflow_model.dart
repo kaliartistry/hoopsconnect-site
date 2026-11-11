@@ -4,6 +4,33 @@ enum RosterApprovalStatus { pending, approved, rejected }
 
 enum RosterProposalDecision { approve, reject }
 
+class RosterUniformSizes {
+  static const maxLength = 24;
+  static final _controlCharacters = RegExp(r'[\x00-\x1f\x7f]');
+
+  final String? shorts;
+  final String? vest;
+  final String? shoe;
+
+  const RosterUniformSizes({this.shorts, this.vest, this.shoe});
+
+  factory RosterUniformSizes.fromMap(Map<String, dynamic> map) =>
+      RosterUniformSizes(
+        shorts: _optionalText(map['shorts']),
+        vest: _optionalText(map['vest']),
+        shoe: _optionalText(map['shoe']),
+      );
+
+  static bool isValid(String value) =>
+      value.trim().length <= maxLength && !_controlCharacters.hasMatch(value);
+
+  Map<String, String> toMap() => {
+    if (shorts?.trim().isNotEmpty == true) 'shorts': shorts!.trim(),
+    if (vest?.trim().isNotEmpty == true) 'vest': vest!.trim(),
+    if (shoe?.trim().isNotEmpty == true) 'shoe': shoe!.trim(),
+  };
+}
+
 class RosterRegistration {
   final String registrationId;
   final String playerId;
@@ -12,6 +39,7 @@ class RosterRegistration {
   final String seasonId;
   final String jerseyNumber;
   final String? position;
+  final RosterUniformSizes? uniformSizes;
   final String status;
 
   const RosterRegistration({
@@ -22,6 +50,7 @@ class RosterRegistration {
     required this.seasonId,
     required this.jerseyNumber,
     this.position,
+    this.uniformSizes,
     required this.status,
   });
 
@@ -34,6 +63,10 @@ class RosterRegistration {
       seasonId: _requiredText(map, 'seasonId'),
       jerseyNumber: _requiredJersey(map['jerseyNumber']),
       position: _optionalText(map['position']),
+      uniformSizes: _optionalMap(
+        map['uniformSizes'],
+        RosterUniformSizes.fromMap,
+      ),
       status: _requiredText(map, 'status'),
     );
   }
@@ -120,6 +153,7 @@ class RosterPlayerFacts {
   final String displayName;
   final String jerseyNumber;
   final String? position;
+  final RosterUniformSizes? uniformSizes;
 
   const RosterPlayerFacts({
     this.playerId,
@@ -127,6 +161,7 @@ class RosterPlayerFacts {
     required this.displayName,
     required this.jerseyNumber,
     this.position,
+    this.uniformSizes,
   });
 
   bool get hasCanonicalIdentity => playerId != null && registrationId != null;
@@ -157,6 +192,10 @@ class RosterPlayerFacts {
       displayName: displayName,
       jerseyNumber: _requiredJersey(map['jerseyNumber']),
       position: position,
+      uniformSizes: _optionalMap(
+        map['uniformSizes'],
+        RosterUniformSizes.fromMap,
+      ),
     );
   }
 }
@@ -225,6 +264,7 @@ class RosterChangeRequest {
   final String? displayName;
   final String? jerseyNumber;
   final String? position;
+  final RosterUniformSizes? uniformSizes;
   final String reason;
 
   RosterChangeRequest({
@@ -238,6 +278,7 @@ class RosterChangeRequest {
     this.displayName,
     this.jerseyNumber,
     this.position,
+    this.uniformSizes,
     required this.reason,
   }) {
     _requireId('operationId', operationId);
@@ -267,7 +308,8 @@ class RosterChangeRequest {
         _requiredJersey(jerseyNumber);
       } else if (displayName != null ||
           jerseyNumber != null ||
-          position != null) {
+          position != null ||
+          uniformSizes != null) {
         throw ArgumentError('Remove requests do not replace player facts');
       }
     }
@@ -277,6 +319,13 @@ class RosterChangeRequest {
         'position',
         'must be at most 40 characters',
       );
+    }
+    final sizes = uniformSizes;
+    if (sizes != null &&
+        [sizes.shorts, sizes.vest, sizes.shoe].whereType<String>().any(
+          (value) => !RosterUniformSizes.isValid(value),
+        )) {
+      throw ArgumentError('Uniform sizes must be at most 24 characters');
     }
   }
 
@@ -293,6 +342,7 @@ class RosterChangeRequest {
     if (displayName != null) 'displayName': displayName!.trim(),
     if (jerseyNumber != null) 'jerseyNumber': jerseyNumber,
     if (position?.trim().isNotEmpty == true) 'position': position!.trim(),
+    if (uniformSizes != null) 'uniformSizes': uniformSizes!.toMap(),
     'reason': reason.trim(),
   };
 }

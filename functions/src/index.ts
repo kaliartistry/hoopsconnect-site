@@ -42,3 +42,6 @@ export {
   seasonArchive,
   seasonRestore,
 } from "./season_operations";
+
+export {teamRegistration} from "./team_registration";
+export {uploadLeagueBrandingAsset} from "./league_branding_assets";

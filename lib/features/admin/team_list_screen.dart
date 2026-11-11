@@ -11,11 +11,25 @@ import '../../core/widgets/app_form_controls.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../core/widgets/sponsor_banner.dart';
 import '../../models/division_model.dart';
+import '../../models/league_catalog_model.dart';
 import '../../models/team_model.dart';
+import '../../providers/association_branding_providers.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/division_providers.dart';
 import '../../providers/season_providers.dart';
 import '../../providers/team_providers.dart';
+
+String _divisionLabel(DivisionModel division, LeagueCatalogModel? catalog) {
+  final league = catalog?.leagues
+      .where(
+        (league) => division.leagueId == null
+            ? league.divisionIds.contains(division.id)
+            : league.id == division.leagueId,
+      )
+      .firstOrNull;
+  if (league == null || league.name == division.name) return division.name;
+  return '${league.name} · ${division.name}';
+}
 
 class TeamListScreen extends ConsumerWidget {
   const TeamListScreen({super.key});
@@ -27,10 +41,11 @@ class TeamListScreen extends ConsumerWidget {
     final seasonAsync = ref.watch(activeSeasonIdProvider);
     final currentUser = ref.watch(currentUserProvider).valueOrNull;
     final canManage = currentUser?.hasCapability('teams.manage') ?? false;
+    final catalog = ref.watch(leagueCatalogProvider).valueOrNull;
     final divisionNames = {
       for (final division
           in divisionsAsync.valueOrNull ?? const <DivisionModel>[])
-        division.id: division.name,
+        division.id: _divisionLabel(division, catalog),
     };
 
     return Scaffold(
@@ -160,6 +175,7 @@ class TeamListScreen extends ConsumerWidget {
   }) async {
     await showDialog<void>(
       context: context,
+      barrierDismissible: false,
       builder: (_) => _TeamEditorDialog(
         teams: teams,
         seasonId: seasonId,
@@ -239,8 +255,17 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
     }
   }
 
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _reviewAndSave(
+    List<DivisionModel> divisions,
+    String? divisionId,
+  ) async {
+    if (_saving || !_formKey.currentState!.validate() || divisionId == null) {
+      return;
+    }
+    final division = divisions.firstWhere(
+      (division) => division.id == divisionId,
+    );
+    final catalog = ref.read(leagueCatalogProvider).valueOrNull;
     final name = _nameController.text.trim();
     final conflicts = teamNameConflicts(
       teams: widget.teams,
@@ -253,7 +278,7 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
         for (final division
             in ref.read(divisionsStreamProvider).valueOrNull ??
                 const <DivisionModel>[])
-          division.id: division.name,
+          division.id: _divisionLabel(division, catalog),
       };
       final conflict = conflicts.first;
       setState(() {
@@ -268,6 +293,66 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
       setState(() => _formError = 'Your association could not be confirmed.');
       return;
     }
+    final logoBytes = _selectedLogoBytes;
+    final logoName = _selectedLogoName;
+    FocusScope.of(context).unfocus();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: const Text('Review team'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(name, style: Theme.of(context).textTheme.titleMedium),
+            Text(_divisionLabel(division, catalog)),
+            Text(
+              logoName != null
+                  ? 'Logo: $logoName'
+                  : widget.existing?.logoUrl == null
+                  ? 'No logo selected'
+                  : 'Current team logo',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Edit details'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              widget.existing == null ? 'Create team' : 'Save changes',
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    if (ref.read(currentAssociationIdProvider) != assocId) {
+      setState(
+        () => _formError = 'Your association changed. Review the team again.',
+      );
+      return;
+    }
+    await _save(
+      assocId: assocId,
+      name: name,
+      divisionId: divisionId,
+      logoBytes: logoBytes,
+      logoName: logoName,
+    );
+  }
+
+  Future<void> _save({
+    required String assocId,
+    required String name,
+    required String divisionId,
+    required Uint8List? logoBytes,
+    required String? logoName,
+  }) async {
     setState(() {
       _saving = true;
       _formError = null;
@@ -281,28 +366,28 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
           TeamModel(
             id: '',
             name: name,
-            divisionId: _divisionId!,
+            divisionId: divisionId,
             seasonId: widget.seasonId,
           ),
         );
         _createdTeamId = teamId;
       }
       var logoUrl = widget.existing?.logoUrl;
-      if (_selectedLogoBytes != null && _selectedLogoName != null) {
+      if (logoBytes != null && logoName != null) {
         logoUrl = await ref
             .read(teamLogoStorageProvider)
             .upload(
               associationId: assocId,
               teamId: teamId,
-              bytes: _selectedLogoBytes!,
-              fileName: _selectedLogoName!,
+              bytes: logoBytes,
+              fileName: logoName,
             );
       }
       await repository.updateTeamIdentity(
         assocId: assocId,
         teamId: teamId,
         name: name,
-        divisionId: _divisionId!,
+        divisionId: divisionId,
         logoUrl: logoUrl,
       );
       if (mounted) Navigator.of(context).pop();
@@ -318,6 +403,7 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final catalog = ref.watch(leagueCatalogProvider).valueOrNull;
     final allDivisions =
         ref.watch(divisionsStreamProvider).valueOrNull ??
         const <DivisionModel>[];
@@ -328,10 +414,16 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
               division.id == widget.existing?.divisionId,
         )
         .toList(growable: false);
+    final divisionId = divisions.any((division) => division.id == _divisionId)
+        ? _divisionId
+        : divisions.length == 1
+        ? divisions.single.id
+        : null;
     return AlertDialog(
+      scrollable: true,
       title: Text(widget.existing == null ? 'Create team' : 'Edit team'),
       content: AppFormFocusGroup(
-        onCancel: () => Navigator.of(context).pop(),
+        onCancel: _saving ? null : () => Navigator.of(context).pop(),
         child: SizedBox(
           width: 440,
           child: Form(
@@ -430,22 +522,21 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  initialValue: divisions.any((d) => d.id == _divisionId)
-                      ? _divisionId
-                      : null,
-                  decoration: const InputDecoration(labelText: 'Division'),
-                  items: divisions
-                      .map(
-                        (division) => DropdownMenuItem(
-                          value: division.id,
-                          child: Text(
-                            division.isArchived
-                                ? '${division.name} (Archived)'
-                                : division.name,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                  initialValue: divisionId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'League and division',
+                  ),
+                  items: divisions.map((division) {
+                    final label = _divisionLabel(division, catalog);
+                    return DropdownMenuItem(
+                      value: division.id,
+                      child: Text(
+                        division.isArchived ? '$label (Archived)' : label,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
                   onChanged: _saving
                       ? null
                       : (value) => setState(() => _divisionId = value),
@@ -482,13 +573,15 @@ class _TeamEditorDialogState extends ConsumerState<_TeamEditorDialog> {
           child: const Text('Cancel'),
         ),
         AppAsyncActionButton(
-          label: widget.existing == null ? 'Create team' : 'Save changes',
+          label: 'Review team',
           busyLabel: 'Saving team',
           isBusy: _saving,
           disabledHint: divisions.isEmpty
               ? 'Create or restore an active division first'
               : null,
-          onPressed: divisions.isEmpty ? null : _save,
+          onPressed: divisions.isEmpty
+              ? null
+              : () => _reviewAndSave(divisions, divisionId),
         ),
       ],
     );

@@ -1,6 +1,31 @@
+import '../core/utils/jamaica_date.dart';
 import 'association_branding_model.dart';
 
 enum LeagueProfileStatus { active, archived }
+
+class ScheduledLeagueSponsor {
+  const ScheduledLeagueSponsor({required this.startsOn, required this.sponsor});
+
+  static ScheduledLeagueSponsor? fromValue(Object? value) {
+    if (value is! Map || value['sponsor'] is! Map) return null;
+    final date = calendarDateKey(value['startsOn']);
+    if (date == null) return null;
+    return ScheduledLeagueSponsor(
+      startsOn: date,
+      sponsor: SponsorBrandingModel.fromMap(
+        Map<String, dynamic>.from(value['sponsor'] as Map),
+      ),
+    );
+  }
+
+  final String startsOn;
+  final SponsorBrandingModel sponsor;
+
+  Map<String, dynamic> toMap() => {
+    'startsOn': startsOn,
+    'sponsor': sponsor.toMap(),
+  };
+}
 
 class LeagueProfileModel {
   const LeagueProfileModel({
@@ -14,6 +39,7 @@ class LeagueProfileModel {
     this.secondaryColorHex = '#1B5E20',
     this.accentColorHex = '#F9A825',
     this.sponsor = const SponsorBrandingModel(),
+    this.scheduledSponsor,
     this.status = LeagueProfileStatus.active,
     this.sortOrder = 0,
     this.historicalStatistics = false,
@@ -33,6 +59,7 @@ class LeagueProfileModel {
   final String secondaryColorHex;
   final String accentColorHex;
   final SponsorBrandingModel sponsor;
+  final ScheduledLeagueSponsor? scheduledSponsor;
   final LeagueProfileStatus status;
   final int sortOrder;
   final bool historicalStatistics;
@@ -43,6 +70,14 @@ class LeagueProfileModel {
 
   bool get isArchived => status == LeagueProfileStatus.archived;
 
+  SponsorBrandingModel sponsorAt(DateTime instant) {
+    final scheduled = scheduledSponsor;
+    return scheduled != null &&
+            jamaicaDateKey(instant).compareTo(scheduled.startsOn) >= 0
+        ? scheduled.sponsor
+        : sponsor;
+  }
+
   AssociationBrandingModel asBranding(String associationId) =>
       AssociationBrandingModel(
         associationId: associationId,
@@ -52,7 +87,7 @@ class LeagueProfileModel {
         primaryColorHex: primaryColorHex,
         secondaryColorHex: secondaryColorHex,
         accentColorHex: accentColorHex,
-        sponsor: sponsor,
+        sponsor: sponsorAt(DateTime.now()),
       );
 
   factory LeagueProfileModel.fromMap(Map<String, dynamic> data) {
@@ -94,7 +129,7 @@ class LeagueProfileModel {
       standingsAsOf: _text(data['standingsAsOf']),
       standingsSourceUrl: _safeHttpsUrl(data['standingsSourceUrl']),
       divisionIds: List.unmodifiable(divisionIds),
-      logoUrl: _safeHttpsUrl(branding['logoUrl']),
+      logoUrl: brandingImageReferenceOrNull(branding['logoUrl']),
       primaryColorHex: _safeColor(branding['primaryColorHex'], '#2E7D32'),
       secondaryColorHex: _safeColor(branding['secondaryColorHex'], '#1B5E20'),
       accentColorHex: _safeColor(branding['accentColorHex'], '#F9A825'),
@@ -102,6 +137,9 @@ class LeagueProfileModel {
         branding['sponsor'] is Map
             ? Map<String, dynamic>.from(branding['sponsor'] as Map)
             : null,
+      ),
+      scheduledSponsor: ScheduledLeagueSponsor.fromValue(
+        branding['scheduledSponsor'],
       ),
       status: status,
       sortOrder: data['sortOrder'] is int ? data['sortOrder'] as int : 0,
@@ -123,11 +161,13 @@ class LeagueProfileModel {
     'sortOrder': sortOrder,
     'branding': {
       'schemaVersion': 1,
-      'logoUrl': _safeHttpsUrl(logoUrl),
+      'logoUrl': brandingImageReferenceOrNull(logoUrl),
       'primaryColorHex': _safeColor(primaryColorHex, '#2E7D32'),
       'secondaryColorHex': _safeColor(secondaryColorHex, '#1B5E20'),
       'accentColorHex': _safeColor(accentColorHex, '#F9A825'),
       'sponsor': sponsor.toMap(),
+      if (scheduledSponsor != null)
+        'scheduledSponsor': scheduledSponsor!.toMap(),
     },
   };
 
@@ -160,6 +200,7 @@ class LeagueProfileModel {
     secondaryColorHex: secondaryColorHex ?? this.secondaryColorHex,
     accentColorHex: accentColorHex ?? this.accentColorHex,
     sponsor: sponsor ?? this.sponsor,
+    scheduledSponsor: scheduledSponsor,
     status: status ?? this.status,
     sortOrder: sortOrder ?? this.sortOrder,
   );

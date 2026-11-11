@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../core/constants/firestore_paths.dart';
@@ -63,6 +65,56 @@ class AssociationRepository {
       'leagueCatalogV1': validated.toMap(),
       'leagueCatalogUpdatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  Future<void> saveLeagueProfile({
+    required String associationId,
+    required LeagueProfileModel? previous,
+    required LeagueProfileModel profile,
+  }) async {
+    final association = _db.doc(FirestorePaths.association(associationId));
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(association);
+      if (!snapshot.exists) throw StateError('Association not found.');
+      final data = snapshot.data()!;
+      final catalog = LeagueCatalogModel.fromAssociationMap(data);
+      final live = catalog.leagues
+          .where((league) => league.id == profile.id)
+          .firstOrNull;
+      String fingerprint(LeagueProfileModel? league) =>
+          jsonEncode(league?.toMap(), toEncodable: (value) => value.toString());
+      if (fingerprint(live) != fingerprint(previous)) {
+        throw StateError(
+          'This league changed. Reopen it to review the latest details.',
+        );
+      }
+      final raw = data['leagueCatalogV1'] as Map?;
+      final rows = [...?raw?['leagues'] as List?];
+      final index = rows.indexWhere(
+        (row) => (row as Map)['leagueId'] == profile.id,
+      );
+      final old = index < 0
+          ? const <String, dynamic>{}
+          : Map<String, dynamic>.from(rows[index] as Map);
+      final replacement = profile.toMap();
+      final branding = {
+        ...?old['branding'] as Map?,
+        ...replacement['branding'] as Map,
+      };
+      if (profile.scheduledSponsor == null) branding.remove('scheduledSponsor');
+      final row = {...old, ...replacement, 'branding': branding};
+      if (index < 0) {
+        rows.add(row);
+      } else {
+        rows[index] = row;
+      }
+      final updated = {...?raw, 'schemaVersion': 1, 'leagues': rows};
+      LeagueCatalogModel.fromAssociationMap({'leagueCatalogV1': updated});
+      transaction.update(association, {
+        'leagueCatalogV1': updated,
+        'leagueCatalogUpdatedAt': FieldValue.serverTimestamp(),
+      });
+    });
   }
 
   /// Creates a division and attaches it to its parent league in one atomic

@@ -233,13 +233,19 @@ class _WorkspaceStatusState extends ConsumerState<_WorkspaceStatus> {
 
   @override
   Widget build(BuildContext context) {
+    final canReview =
+        rosterClientAuthority(
+          user: widget.user,
+          teamId: widget.target.teamId,
+        ) ==
+        RosterClientAuthority.manage;
     final pending = widget.workspace.proposals
         .where((proposal) => proposal.status == RosterApprovalStatus.pending)
         .toList(growable: false);
     if (pending.isEmpty) {
       return AppStateMessage(
         title: 'Roster controls ready',
-        message: widget.user.hasCapability('teams.manage')
+        message: canReview
             ? 'Admin changes apply after server validation.'
             : 'Your changes are proposals until a roster administrator approves them.',
         tone: AppStateTone.info,
@@ -252,7 +258,7 @@ class _WorkspaceStatusState extends ConsumerState<_WorkspaceStatus> {
         AppStateMessage(
           title:
               '${pending.length} pending roster request${pending.length == 1 ? '' : 's'}',
-          message: widget.user.hasCapability('teams.manage')
+          message: canReview
               ? 'Review each request. Approval applies it to the current roster version.'
               : 'An administrator must approve these requests before the roster changes.',
           tone: AppStateTone.warning,
@@ -284,7 +290,7 @@ class _WorkspaceStatusState extends ConsumerState<_WorkspaceStatus> {
                       height: 24,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : widget.user.hasCapability('teams.manage')
+                  : canReview
                   ? Wrap(
                       spacing: 4,
                       children: [
@@ -611,12 +617,19 @@ class _RosterChangeDialog extends ConsumerStatefulWidget {
 }
 
 class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
+  static const _apparelSizes = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'];
+
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
   late final TextEditingController _jerseyController;
   late final TextEditingController _positionController;
   late final TextEditingController _reasonController;
+  late final TextEditingController _shortsController;
+  late final TextEditingController _vestController;
+  late final TextEditingController _shoeController;
   late final String _operationId;
+  RosterChangeRequest? _reviewRequest;
+  bool _attempted = false;
   bool _saving = false;
   String? _error;
 
@@ -628,6 +641,10 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
       text: widget.player?.jerseyNumber,
     );
     _positionController = TextEditingController(text: widget.player?.position);
+    final sizes = widget.player?.uniformSizes;
+    _shortsController = TextEditingController(text: sizes?.shorts);
+    _vestController = TextEditingController(text: sizes?.vest);
+    _shoeController = TextEditingController(text: sizes?.shoe);
     _reasonController = TextEditingController(
       text: widget.removing
           ? ''
@@ -644,38 +661,56 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
     _jerseyController.dispose();
     _positionController.dispose();
     _reasonController.dispose();
+    _shortsController.dispose();
+    _vestController.dispose();
+    _shoeController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  void _review() {
     if (!_formKey.currentState!.validate()) return;
+    final sizes = RosterUniformSizes(
+      shorts: _shortsController.text,
+      vest: _vestController.text,
+      shoe: _shoeController.text,
+    );
+    final hasSizes =
+        sizes.toMap().isNotEmpty ||
+        widget.player?.uniformSizes?.toMap().isNotEmpty == true;
+    setState(() {
+      _reviewRequest = RosterChangeRequest(
+        operationId: _operationId,
+        teamId: widget.target.teamId,
+        seasonId: widget.target.seasonId,
+        expectedRosterVersion: widget.rosterVersion,
+        kind: widget.removing
+            ? RosterChangeKind.removePlayer
+            : widget.player == null
+            ? RosterChangeKind.addPlayer
+            : RosterChangeKind.updatePlayer,
+        playerId: widget.player?.playerId,
+        registrationId: widget.player?.registrationId,
+        displayName: widget.removing ? null : _nameController.text.trim(),
+        jerseyNumber: widget.removing ? null : _jerseyController.text,
+        position: widget.removing ? null : _positionController.text.trim(),
+        uniformSizes: !widget.removing && hasSizes ? sizes : null,
+        reason: _reasonController.text.trim(),
+      );
+    });
+  }
+
+  Future<void> _submit() async {
+    if (_saving) return;
+    final request = _reviewRequest!;
     setState(() {
       _saving = true;
+      _attempted = true;
       _error = null;
     });
     try {
       final receipt = await ref
           .read(rosterWorkflowRepositoryProvider)
-          .submitChange(
-            user: widget.user,
-            request: RosterChangeRequest(
-              operationId: _operationId,
-              teamId: widget.target.teamId,
-              seasonId: widget.target.seasonId,
-              expectedRosterVersion: widget.rosterVersion,
-              kind: widget.removing
-                  ? RosterChangeKind.removePlayer
-                  : widget.player == null
-                  ? RosterChangeKind.addPlayer
-                  : RosterChangeKind.updatePlayer,
-              playerId: widget.player?.playerId,
-              registrationId: widget.player?.registrationId,
-              displayName: widget.removing ? null : _nameController.text,
-              jerseyNumber: widget.removing ? null : _jerseyController.text,
-              position: widget.removing ? null : _positionController.text,
-              reason: _reasonController.text,
-            ),
-          );
+          .submitChange(user: widget.user, request: request);
       if (mounted) Navigator.of(context).pop(receipt);
     } catch (error) {
       if (mounted) {
@@ -695,9 +730,12 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
           teamId: widget.target.teamId,
         ) ==
         RosterClientAuthority.propose;
+    final review = _reviewRequest;
     return AlertDialog(
       title: Text(
-        widget.removing
+        review != null
+            ? 'Review roster change'
+            : widget.removing
             ? 'Remove ${widget.player!.displayName}?'
             : widget.player == null
             ? 'Add roster player'
@@ -712,6 +750,7 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (proposes) ...[
                     const AppStateMessage(
@@ -723,62 +762,108 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  if (widget.removing)
-                    const AppStateMessage(
-                      title: 'Historical records are preserved',
-                      message:
-                          'This changes the current roster registration only. Approved game and season statistics remain.',
-                      tone: AppStateTone.warning,
-                      compact: true,
-                    )
-                  else ...[
-                    TextFormField(
-                      controller: _nameController,
-                      autofocus: true,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: const InputDecoration(
-                        labelText: 'Player name',
-                      ),
-                      validator: _required,
+                  if (review != null) ...[
+                    Text(
+                      widget.removing
+                          ? 'Remove ${widget.player!.displayName}'
+                          : review.displayName!,
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
+                    if (!widget.removing) ...[
+                      Text('Jersey number: ${review.jerseyNumber}'),
+                      if (review.position?.isNotEmpty == true)
+                        Text('Position: ${review.position}'),
+                      Text(
+                        _uniformSizeSummary(review.uniformSizes) ??
+                            'Uniform sizes: Not provided',
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Text('Reason: ${review.reason}'),
+                  ] else ...[
+                    if (widget.removing)
+                      const AppStateMessage(
+                        title: 'Historical records are preserved',
+                        message:
+                            'This changes the current roster registration only. Approved game and season statistics remain.',
+                        tone: AppStateTone.warning,
+                        compact: true,
+                      )
+                    else ...[
+                      TextFormField(
+                        controller: _nameController,
+                        autofocus: true,
+                        readOnly: widget.player != null,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: const InputDecoration(
+                          labelText: 'Player name',
+                        ),
+                        validator: (value) =>
+                            _required(value) ??
+                            (value!.trim().length > 120
+                                ? 'Use up to 120 characters'
+                                : null),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _jerseyController,
+                        decoration: const InputDecoration(
+                          labelText: 'Jersey number',
+                          helperText:
+                              'Stored as entered, so 0 and 00 remain different.',
+                        ),
+                        validator: (value) {
+                          final text = value ?? '';
+                          if (text.isEmpty) return 'Enter a jersey number';
+                          if (text.trim() != text ||
+                              text.length > 8 ||
+                              RegExp(r'[\x00-\x1f\x7f]').hasMatch(text)) {
+                            return 'Use 1-8 characters without outside spaces';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _positionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Position (optional)',
+                        ),
+                        validator: (value) => (value?.trim().length ?? 0) > 40
+                            ? 'Use up to 40 characters'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      _sizeField(
+                        _shortsController,
+                        'Shorts size',
+                        apparel: true,
+                      ),
+                      const SizedBox(height: 12),
+                      _sizeField(_vestController, 'Vest size', apparel: true),
+                      const SizedBox(height: 12),
+                      _sizeField(
+                        _shoeController,
+                        'Shoe size',
+                        hint: 'e.g. US 10.5',
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     TextFormField(
-                      controller: _jerseyController,
-                      decoration: const InputDecoration(
-                        labelText: 'Jersey number',
-                        helperText:
-                            'Stored as entered, so 0 and 00 remain different.',
-                      ),
-                      validator: (value) {
-                        final text = value ?? '';
-                        if (text.isEmpty) return 'Enter a jersey number';
-                        if (text.trim() != text ||
-                            text.length > 8 ||
-                            RegExp(r'[\x00-\x1f\x7f]').hasMatch(text)) {
-                          return 'Use 1-8 characters without outside spaces';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _positionController,
-                      decoration: const InputDecoration(
-                        labelText: 'Position (optional)',
-                      ),
+                      controller: _reasonController,
+                      decoration: const InputDecoration(labelText: 'Reason'),
+                      maxLines: 2,
+                      validator: (value) =>
+                          _required(value) ??
+                          (value!.trim().length > 500
+                              ? 'Use up to 500 characters'
+                              : null),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _reasonController,
-                    decoration: const InputDecoration(labelText: 'Reason'),
-                    maxLines: 2,
-                    validator: _required,
-                  ),
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     AppStateMessage(
-                      title: 'Roster change not submitted',
+                      title: 'Roster change could not be confirmed',
                       message: _error!,
                       tone: AppStateTone.error,
                       compact: true,
@@ -795,19 +880,53 @@ class _RosterChangeDialogState extends ConsumerState<_RosterChangeDialog> {
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
+        if (review != null && !_attempted)
+          TextButton(
+            onPressed: () => setState(() => _reviewRequest = null),
+            child: const Text('Edit'),
+          ),
         AppAsyncActionButton(
-          label: proposes
+          label: review == null
+              ? 'Review'
+              : proposes
               ? 'Submit proposal'
               : widget.removing
               ? 'Remove player'
               : 'Save roster change',
           busyLabel: 'Submitting roster change',
           isBusy: _saving,
-          onPressed: _submit,
+          onPressed: review == null ? _review : _submit,
         ),
       ],
     );
   }
+
+  Widget _sizeField(
+    TextEditingController controller,
+    String label, {
+    bool apparel = false,
+    String? hint,
+  }) => TextFormField(
+    controller: controller,
+    textCapitalization: TextCapitalization.characters,
+    decoration: InputDecoration(
+      labelText: '$label (optional)',
+      hintText: hint,
+      suffixIcon: apparel
+          ? PopupMenuButton<String>(
+              tooltip: 'Choose $label',
+              onSelected: (value) => controller.text = value,
+              itemBuilder: (context) => [
+                for (final size in _apparelSizes)
+                  PopupMenuItem(value: size, child: Text(size)),
+              ],
+            )
+          : null,
+    ),
+    validator: (value) => RosterUniformSizes.isValid(value ?? '')
+        ? null
+        : 'Use up to 24 characters without line breaks',
+  );
 
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'This field is required' : null;
@@ -827,8 +946,20 @@ String _proposalLabel(RosterChangeKind kind) => switch (kind) {
 String _formatFacts(RosterPlayerFacts facts) => [
   facts.displayName,
   '#${facts.jerseyNumber}',
-  if (facts.position != null) facts.position!,
+  ?facts.position,
+  if (facts.uniformSizes != null)
+    _uniformSizeSummary(facts.uniformSizes) ?? 'Uniform sizes: None',
 ].join(' • ');
+
+String? _uniformSizeSummary(RosterUniformSizes? sizes) {
+  final values = sizes?.toMap() ?? const <String, String>{};
+  if (values.isEmpty) return null;
+  return [
+    if (values['shorts'] case final value?) 'Shorts: $value',
+    if (values['vest'] case final value?) 'Vest: $value',
+    if (values['shoe'] case final value?) 'Shoe: $value',
+  ].join(' • ');
+}
 
 String _receiptMessage(RosterChangeReceipt receipt) => switch (receipt.status) {
   RosterApprovalStatus.pending =>
