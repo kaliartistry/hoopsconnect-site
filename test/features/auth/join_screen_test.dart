@@ -8,6 +8,30 @@ import 'package:hoops_connect/services/repositories/auth_repository.dart';
 import 'package:hoops_connect/services/repositories/invite_code_repository.dart';
 
 class _SignedInUser implements User {
+  bool verified = false;
+  int verificationEmails = 0;
+  int tokenRefreshes = 0;
+
+  @override
+  bool get emailVerified => verified;
+
+  @override
+  Future<void> reload() async {}
+
+  @override
+  Future<void> sendEmailVerification([
+    ActionCodeSettings? actionCodeSettings,
+  ]) async {
+    verificationEmails++;
+  }
+
+  @override
+  Future<String?> getIdToken([bool forceRefresh = false]) async {
+    expect(forceRefresh, true);
+    tokenRefreshes++;
+    return null;
+  }
+
   @override
   String get uid => 'team-rep';
 
@@ -114,6 +138,72 @@ void main() {
     expect(redemptions.single['code'], 'test-invite');
     expect(redemptions.single['displayName'], 'Updated Name');
   });
+
+  testWidgets(
+    'an existing lead verifies their email and reuses their account',
+    (tester) async {
+      final lead = _SignedInUser();
+      final auth = _TestAuth(currentUser: lead);
+      var redemptions = 0;
+      final invites = InviteCodeRepository(
+        callable: (name, data) async {
+          if (name == 'inspectPrivilegedInvite') {
+            return {
+              'inviteId': 'invite-3',
+              'teamId': 'team-1',
+              'teamName': 'Kingston Lions',
+              'role': 'rep',
+              'associationId': 'jba',
+              'requiresVerifiedEmail': true,
+              'expiresAt': '2099-01-01T00:00:00.000Z',
+            };
+          }
+          expect(name, 'redeemPrivilegedInvite');
+          expect(lead.tokenRefreshes, 1);
+          redemptions++;
+          return {};
+        },
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(auth),
+            inviteCodeRepositoryProvider.overrideWithValue(invites),
+          ],
+          child: const MaterialApp(home: JoinScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'team-invite');
+      await tester.tap(find.text('Verify Code'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Review details'));
+      await tester.pumpAndSettle();
+      expect(find.text('Kingston Lions'), findsOneWidget);
+
+      final join = find.text('Join Team');
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+      expect(lead.verificationEmails, 1);
+      expect(
+        find.textContaining('Check your email for the verification link'),
+        findsOneWidget,
+      );
+      expect(redemptions, 0);
+
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+      expect(lead.verificationEmails, 1);
+      expect(redemptions, 0);
+
+      lead.verified = true;
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+      expect(redemptions, 1);
+      expect(auth.signUps, 0);
+      expect(auth.currentUser, same(lead));
+    },
+  );
 
   testWidgets('a new account is created only after the invite review', (
     tester,

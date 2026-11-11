@@ -20,13 +20,14 @@ const {
   setMemberRoleHandler,
 } = require('../lib/membership');
 const {capabilitiesForRole} = require('../lib/authorization');
+const {teamRegistrationHandler} = require('../lib/team_registration');
 
 const db = admin.firestore();
 const schema = {authorizationSchemaVersion: 1};
 
-function request(uid, email, data) {
+function request(uid, email, data, emailVerified = false) {
   return {
-    auth: uid ? {uid, token: {email}} : undefined,
+    auth: uid ? {uid, token: {email, email_verified: emailVerified}} : undefined,
     data: Object.assign({}, data, schema),
     rawRequest: {},
   };
@@ -204,6 +205,77 @@ test('invite issuance is high-entropy, hash-addressed, idempotent, and never per
     })),
     (error) => error.code === 'failed-precondition',
   );
+});
+
+test('bound team invite upgrades only its verified fan and gives roster access for the assigned team', async () => {
+  await seedMember('root', 'superAdmin');
+  await seedMember('lead', 'fan');
+  const profile = db.doc('users/lead');
+  await profile.update({displayName: 'Original name', favoriteTeamIds: ['team-2']});
+  await db.doc('associations/jba/divisions/division-1').set({status: 'active', leagueId: 'jbl'});
+  for (const teamId of ['team-1', 'team-2']) {
+    await db.doc('associations/jba/teams/' + teamId).set({
+      name: teamId, divisionId: 'division-1', seasonId: 'season-1', status: 'active',
+    });
+  }
+
+  const issue = data => createPrivilegedInviteHandler(request('root', 'root@example.com', {
+    role: 'rep', teamId: 'team-1', daysValid: 7,
+    operationId: 'bound_issue_operation_0001', ...data,
+  }));
+  const invite = await issue({recipientEmail: ' Lead@Example.com '});
+  assert.equal(invite.requiresVerifiedEmail, true);
+  assert.equal((await issue({recipientEmail: 'lead@example.com'})).code, invite.code);
+  await assert.rejects(issue({recipientEmail: 'wrong@example.com'}),
+    error => error.code === 'failed-precondition');
+  const inspected = await inspectPrivilegedInviteHandler(request(null, null, {code: invite.code}));
+  assert.equal(inspected.teamName, 'team-1');
+  assert.equal(inspected.requiresVerifiedEmail, true);
+  assert.ok(!JSON.stringify(inspected).includes('lead@example.com'));
+  assert.ok(!JSON.stringify(await allSecurityDocuments()).includes('lead@example.com'));
+  const redeem = (uid, email, emailVerified, code = invite.code) =>
+    redeemPrivilegedInviteHandler(request(uid, email, {
+      code, displayName: 'Do not rename', operationId: 'bound_redeem_operation_0001',
+    }, emailVerified));
+  await assert.rejects(redeem('lead', 'lead@example.com', false),
+    error => error.code === 'permission-denied');
+  await assert.rejects(redeem('other', 'other@example.com', true),
+    error => error.code === 'permission-denied');
+  assert.equal((await db.doc('inviteCodes/' + invite.inviteId).get()).get('status'), 'active');
+  assert.equal((await profile.get()).get('role'), 'fan');
+
+  const unbound = await issue({operationId: 'legacy_issue_operation_0001'});
+  await assert.rejects(redeem('lead', 'lead@example.com', true, unbound.code),
+    error => error.code === 'already-exists');
+
+  const result = await redeem('lead', 'LEAD@example.com', true);
+  assert.deepEqual(result, {role: 'rep', teamId: 'team-1', associationId: 'jba'});
+  assert.deepEqual(await redeem('lead', 'lead@example.com', true), result);
+  const updated = (await profile.get()).data();
+  assert.equal(updated.displayName, 'Original name');
+  assert.deepEqual(updated.favoriteTeamIds, ['team-2']);
+  assert.equal(updated.teamId, 'team-1');
+
+  const registration = (teamId, action, extra = {}) => teamRegistrationHandler({
+    auth: {uid: 'lead', token: {email: 'lead@example.com'}},
+    data: {schemaVersion: 1, action, teamId, seasonId: 'season-1', ...extra},
+  });
+  assert.equal((await registration('team-1', 'load')).canEdit, true);
+  const saved = await registration('team-1', 'savePlayer', {
+    expectedRevision: 0, operationId: 'roster_save_operation_0001',
+    player: {id: 'player-1', name: 'Roster player', jersey: '7'},
+  });
+  assert.equal(saved.players.length, 1);
+  await assert.rejects(registration('team-2', 'load'), error => error.code === 'permission-denied');
+
+  const differentTeam = await issue({
+    teamId: 'team-2', recipientEmail: 'lead@example.com', operationId: 'bound_issue_operation_0002',
+  });
+  await assert.rejects(redeemPrivilegedInviteHandler(request('lead', 'lead@example.com', {
+    code: differentTeam.code, displayName: 'Original name', operationId: 'bound_redeem_operation_0002',
+  }, true)), error => error.code === 'already-exists');
+  assert.equal((await db.doc('inviteCodes/' + differentTeam.inviteId).get()).get('status'), 'active');
+  assert.equal((await profile.get()).get('teamId'), 'team-1');
 });
 
 test('representative invite team must remain active in the association current season', async () => {

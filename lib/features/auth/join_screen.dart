@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/invite_code_model.dart';
 import '../../providers/auth_providers.dart';
@@ -27,6 +28,8 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
   String? _validatedSecret;
   String? _redeemOperationId;
   bool _ownsPendingAuthIdentity = false;
+  bool _verificationSent = false;
+  String? _verificationNotice;
 
   @override
   void dispose() {
@@ -62,10 +65,9 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
           _validatedSecret = null;
         });
       } else {
-        final existingName = ref
-            .read(authRepositoryProvider)
-            .currentUser
-            ?.displayName;
+        final existingName =
+            ref.read(currentUserProvider).valueOrNull?.displayName ??
+            ref.read(authRepositoryProvider).currentUser?.displayName;
         if (_nameController.text.isEmpty && existingName != null) {
           _nameController.text = existingName;
         }
@@ -125,6 +127,8 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
       setState(() {
         _error = 'The signed-in account changed. Review your details again.';
         _reviewing = false;
+        _verificationSent = false;
+        _verificationNotice = null;
         _joinAttempted = false;
         _ownsPendingAuthIdentity = false;
         _redeemOperationId = newInviteOperationId();
@@ -151,6 +155,45 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
           throw StateError(
             'Sign in to the new account and verify your invite again.',
           );
+        }
+      }
+
+      if (!mounted) return;
+      if (_validatedCode?.requiresVerifiedEmail == true) {
+        try {
+          await authRepository.currentUser!.reload();
+          final current = authRepository.currentUser;
+          if (!mounted) return;
+          if (current == null || current.uid != _reviewedUid) {
+            throw StateError('The signed-in account changed.');
+          }
+          if (!current.emailVerified) {
+            if (!_verificationSent) {
+              await current.sendEmailVerification();
+              _verificationSent = true;
+            }
+            if (mounted) {
+              setState(
+                () => _verificationNotice =
+                    'Check your email for the verification link, then return here and select Join Team.',
+              );
+            }
+            return;
+          }
+          await current.getIdToken(true);
+          if (!mounted) return;
+          if (authRepository.currentUser?.uid != _reviewedUid) {
+            throw StateError('The signed-in account changed.');
+          }
+          setState(() => _verificationNotice = null);
+        } catch (_) {
+          if (mounted) {
+            setState(
+              () => _error =
+                  'We could not verify your account email. Check your connection and try again.',
+            );
+          }
+          return;
         }
       }
 
@@ -435,6 +478,10 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                     ),
                 ],
 
+                if (_verificationNotice case final notice?) ...[
+                  const SizedBox(height: 12),
+                  Semantics(liveRegion: true, child: Text(notice)),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -451,7 +498,9 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                   const SizedBox.shrink()
                 else if (existingAuth == null)
                   TextButton(
-                    onPressed: () => context.go('/login'),
+                    onPressed: () => context.go(
+                      AppRouteContract.loginFor(Uri(path: '/join')),
+                    ),
                     child: const Text(
                       'Already have an account? Sign in',
                       style: TextStyle(color: AppColors.primary),

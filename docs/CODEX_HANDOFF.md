@@ -62,6 +62,17 @@ Route access is enforced in [../lib/app/router/app_router.dart](../lib/app/route
 Firestore access is enforced in [../firestore.rules](../firestore.rules). Keep
 both in sync when changing permissions.
 
+## Invite an existing team representative
+
+In **Admin → Invite Codes**, choose **Generate invite**, select **Representative**
+and the existing team, then enter the representative's account email. Share the
+one-time code privately. The representative signs in with that account, opens
+**Profile → Join Team**, verifies the code, and confirms the team shown. If the
+account email is unverified, they verify it and return to finish joining.
+HoopsConnect keeps their existing profile and opens their team page, where they
+can edit and submit their roster draft. Representatives who already manage the
+correct team can use **My Team** without another invite.
+
 ## Admin And Statistician PWA Direction
 
 Keep one Flutter codebase. Do not split into a separate admin web app yet. The

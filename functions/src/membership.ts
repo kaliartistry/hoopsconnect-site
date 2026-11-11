@@ -22,6 +22,7 @@ const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
 interface CallerIdentity {
   uid: string;
   email: string;
+  emailVerified: boolean;
 }
 
 interface Authority {
@@ -44,6 +45,7 @@ interface InviteData {
   expiresAt?: unknown;
   redeemedBy?: unknown;
   revokedAt?: unknown;
+  recipientEmailBinding?: unknown;
 }
 
 function requireCaller(request: CallableRequest<unknown>): CallerIdentity {
@@ -54,7 +56,11 @@ function requireCaller(request: CallableRequest<unknown>): CallerIdentity {
   if (typeof email !== "string" || email.trim().length === 0) {
     throw new HttpsError("failed-precondition", "The signed-in account must have an email address.");
   }
-  return {uid: request.auth.uid, email: email.trim().toLowerCase()};
+  return {
+    uid: request.auth.uid,
+    email: email.trim().toLowerCase(),
+    emailVerified: request.auth.token.email_verified === true,
+  };
 }
 
 function requireObject(data: unknown): Record<string, unknown> {
@@ -121,6 +127,11 @@ export function inviteIdForToken(token: string): string {
   return `v2_${sha256(normalizeToken(token))}`;
 }
 
+// Only someone holding the bearer can check the binding against an address.
+function bindRecipient(token: string, email: string): string {
+  return createHmac("sha256", token).update(email, "utf8").digest("hex");
+}
+
 function receiptId(actorId: string, operation: string, operationId: string): string {
   return sha256(`${actorId}\u0000${operation}\u0000${operationId}`);
 }
@@ -170,6 +181,7 @@ function requireInviteShape(invite: InviteData, inviteId: string): {
   divisionId: string | null;
   seasonId: string | null;
   role: Role;
+  recipientEmailBinding: string | null;
 } {
   if (
     invite.authorizationSchemaVersion !== AUTHORIZATION_SCHEMA_VERSION
@@ -190,7 +202,13 @@ function requireInviteShape(invite: InviteData, inviteId: string): {
   if (invite.role === "rep" && teamId === null) {
     throw new HttpsError("failed-precondition", "Representative invites must identify a team.");
   }
+  const binding = invite.recipientEmailBinding ?? null;
+  if (binding !== null && (invite.role !== "rep" ||
+      typeof binding !== "string" || !/^[a-f0-9]{64}$/.test(binding))) {
+    throw new HttpsError("failed-precondition", "Invite recipient is malformed.");
+  }
   return {
+    recipientEmailBinding: binding,
     associationId: invite.associationId,
     teamId,
     divisionId: typeof invite.divisionId === "string" ? invite.divisionId : null,
@@ -407,6 +425,7 @@ export async function inspectPrivilegedInviteHandler(request: CallableRequest<un
     role: invite.role,
     associationId: invite.associationId,
     teamId: invite.teamId,
+    requiresVerifiedEmail: invite.recipientEmailBinding !== null,
     ...(typeof teamName === "string" && teamName.trim() ? {teamName: teamName.trim()} : {}),
     expiresAt: timestampOrNull((inviteSnap.data() as InviteData).expiresAt)?.toDate().toISOString(),
   };
@@ -452,11 +471,27 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
     if (!inviteSnap.exists || !inviteIsActive(inviteSnap.data() as InviteData, inviteId, Timestamp.now())) {
       throw new HttpsError("failed-precondition", "Invite code is invalid, expired, revoked, or already used.");
     }
-    if (userSnap.exists || membershipSnap.exists) {
-      throw new HttpsError("already-exists", "This account already has authorization records.");
-    }
-
     const invite = requireInviteShape(inviteSnap.data() as InviteData, inviteId);
+    const binding = invite.recipientEmailBinding;
+    if (binding !== null) {
+      if (!caller.emailVerified) {
+        throw new HttpsError("permission-denied", "Verify your account email before joining.");
+      }
+      if (bindRecipient(token, caller.email) !== binding) {
+        throw new HttpsError("permission-denied", "Sign in with the email address this invite was sent to.");
+      }
+    }
+    const existingAccount = userSnap.exists || membershipSnap.exists;
+    if (existingAccount) {
+      const authority = validMembershipAuthority(membershipSnap);
+      if (invite.role !== "rep" || binding === null || authority?.role !== "fan" ||
+          authority.associationId !== invite.associationId ||
+          membershipSnap.get("teamId") != null || membershipSnap.get("divisionId") != null ||
+          userSnap.get("teamId") != null || userSnap.get("divisionId") != null ||
+          !userMatchesAuthority(userSnap, caller, authority, membershipSnap)) {
+        throw new HttpsError("already-exists", "This account already has authorization records.");
+      }
+    }
     const associationSnap = await transaction.get(db.doc(`associations/${invite.associationId}`));
     if (!associationSnap.exists) {
       throw new HttpsError("failed-precondition", "Invite association no longer exists.");
@@ -491,42 +526,46 @@ export async function redeemPrivilegedInviteHandler(request: CallableRequest<unk
 
     const serverNow = FieldValue.serverTimestamp();
     const result = {role: invite.role, associationId: invite.associationId, teamId: invite.teamId};
-    transaction.create(userRef, {
-      email: caller.email,
-      displayName,
-      phone: null,
+    const assignment = {
       associationId: invite.associationId,
       teamId: invite.teamId,
       role: invite.role,
       divisionId: resolvedDivisionId,
-      fcmTokens: [],
-      notificationPrefs: {
-        ackReminders: true,
-        statReminders: true,
-        newPosts: true,
-        favoriteTeamUpdates: true,
-      },
-      favoriteLeagueIds: [],
-      favoriteTeamIds: [],
-      favoritePlayerIds: [],
-      authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
-      createdAt: serverNow,
       updatedAt: serverNow,
-    });
-    transaction.create(membershipRef, {
-      associationId: invite.associationId,
-      role: invite.role,
+    };
+    const membership = {
+      ...assignment,
       capabilities: capabilitiesForRole(invite.role),
       status: "active",
-      teamId: invite.teamId,
-      divisionId: resolvedDivisionId,
       seasonId: invite.seasonId,
       competitionId: null,
       authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
       source: "privilegedInvite",
-      createdAt: serverNow,
-      updatedAt: serverNow,
-    });
+    };
+    if (existingAccount) {
+      transaction.update(userRef, assignment);
+      transaction.update(membershipRef, membership);
+    } else {
+      transaction.create(userRef, {
+        ...assignment,
+        email: caller.email,
+        displayName,
+        phone: null,
+        fcmTokens: [],
+        notificationPrefs: {
+          ackReminders: true,
+          statReminders: true,
+          newPosts: true,
+          favoriteTeamUpdates: true,
+        },
+        favoriteLeagueIds: [],
+        favoriteTeamIds: [],
+        favoritePlayerIds: [],
+        authorizationSchemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+        createdAt: serverNow,
+      });
+      transaction.create(membershipRef, {...membership, createdAt: serverNow});
+    }
     transaction.update(inviteRef, {
       status: "redeemed",
       usesRemaining: 0,
@@ -572,6 +611,10 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
   if (role === "rep" && !teamId) {
     throw new HttpsError("invalid-argument", "Representative invites require a team.");
   }
+  const recipientEmail = optionalText(data, "recipientEmail", 254)?.toLowerCase() ?? null;
+  if (recipientEmail !== null && (role !== "rep" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recipientEmail))) {
+    throw new HttpsError("invalid-argument", "Enter a valid account email for the team representative.");
+  }
   const requestedDays = data.daysValid;
   if (typeof requestedDays !== "number" || !Number.isInteger(requestedDays) || requestedDays < 1 || requestedDays > 30) {
     throw new HttpsError("invalid-argument", "daysValid must be an integer from 1 to 30.");
@@ -579,7 +622,11 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
 
   const token = deriveToken(caller.uid, operationId);
   const inviteId = inviteIdForToken(token);
-  const fingerprint = requestFingerprint({role, teamId, daysValid: requestedDays});
+  const recipientEmailBinding = recipientEmail === null ? null : bindRecipient(token, recipientEmail);
+  const fingerprint = requestFingerprint({
+    role, teamId, daysValid: requestedDays,
+    ...(recipientEmailBinding !== null ? {recipientEmailBinding} : {}),
+  });
   const operationReceiptId = receiptId(caller.uid, "invite.create", operationId);
   const db = admin.firestore();
   const inviteRef = db.doc(`inviteCodes/${inviteId}`);
@@ -641,11 +688,13 @@ export async function createPrivilegedInviteHandler(request: CallableRequest<unk
       role,
       usesRemaining: 1,
       status: "active",
+      requiresVerifiedEmail: recipientEmailBinding !== null,
       expiresAt: expiresAt.toDate().toISOString(),
     };
     transaction.create(inviteRef, {
       inviteId,
       credentialVersion: INVITE_CREDENTIAL_VERSION,
+      ...(recipientEmailBinding !== null ? {recipientEmailBinding} : {}),
       associationId: authority.associationId,
       seasonId: currentSeasonId,
       competitionId: null,

@@ -261,6 +261,25 @@ void main() {
       },
     );
 
+    test(
+      'existing fans can redeem invites and assigned leads open My Team',
+      () {
+        String? redirect(UserModel user) => resolveAppRedirect(
+          location: Uri.parse('/join'),
+          matchedLocation: '/join',
+          accessStatus: AccountAccessStatus.active,
+          isLoggedIn: true,
+          user: user,
+        );
+        expect(redirect(users[UserRole.fan]!), isNull);
+        expect(
+          redirect(users[UserRole.rep]!.copyWith(teamId: 'team-blue')),
+          '/team/team-blue',
+        );
+        expect(redirect(users[UserRole.admin]!), isNotNull);
+      },
+    );
+
     test('loading exits cover every resolved account state and cold start', () {
       final fan = users[UserRole.fan]!;
       final cases =

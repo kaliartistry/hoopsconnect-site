@@ -176,8 +176,15 @@ String? resolveAppRedirect({
 
   if (user == null) return '/access-blocked';
 
+  if (matchedLocation == '/join') {
+    if (user.role == UserRole.fan) return null;
+    if (user.role == UserRole.rep && user.teamId != null) {
+      return '/team/${Uri.encodeComponent(user.teamId!)}';
+    }
+    return AppRouteContract.landingFor(user);
+  }
+
   if (matchedLocation == '/login' ||
-      matchedLocation == '/join' ||
       matchedLocation == '/loading' ||
       matchedLocation == '/access-blocked') {
     final requested = matchedLocation == '/login'
