@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../app/router/app_route_contract.dart';
 import '../../core/widgets/sponsor_banner.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../platform/presentation_preview_environment.dart';
 import 'public_team_identity.dart';
 
 /// Historical aggregates are not a schedule, official standing, or live roster.
@@ -161,7 +162,8 @@ class HistoricalLeagueOverview extends StatelessWidget {
                 );
               },
             ),
-            if (league.supportingSponsorExamples.isNotEmpty) ...[
+            if (PresentationPreviewEnvironment.enabled &&
+                league.supportingSponsorExamples.isNotEmpty) ...[
               const SizedBox(height: 28),
               const Divider(),
               const SizedBox(height: 12),
