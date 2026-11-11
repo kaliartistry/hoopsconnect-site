@@ -105,11 +105,10 @@ scoped JBL presentation source imports, not a claim of one database.
   Results 2025 workbooks into both projects. Original files and pre-import
   backups are retained locally. Existing season totals and standings were not
   recalculated from this incomplete game ledger.
-- Completed game-detail presentation statistics are deterministic client-side
-  examples using known performers and familiar roster names. Final scores stay
-  unchanged, player points reconcile, and two inconsistent quarter tables are
-  adjusted only in the presentation layer. Nothing writes these completions
-  back into source game stats, player season totals or standings.
+- Public game detail uses the supplied results and recaps. Player box scores and
+  period totals only appear when included in the published records; incomplete
+  or inconsistent figures are left out. Existing team and player season
+  statistics remain available separately.
 - Team pages default to Games, with upcoming fixtures, five recent results and
   an expandable list of the remaining results. Tapping a result opens its box
   score. Players & stats is one tap away and defaults to Per game, with Totals
