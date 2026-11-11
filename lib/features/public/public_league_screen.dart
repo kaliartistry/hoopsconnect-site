@@ -111,7 +111,7 @@ class PublicLeagueScreen extends ConsumerWidget {
                   top: false,
                   minimum: const EdgeInsets.fromLTRB(16, 6, 16, 8),
                   child: Text(
-                    'App donated by Kali Artistry',
+                    'App donated by Kali McCarthy',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
