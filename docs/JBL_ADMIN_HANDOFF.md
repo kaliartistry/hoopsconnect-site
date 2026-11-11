@@ -9,7 +9,7 @@
 ## Collect and review a roster
 
 1. Representatives open **My Team → Team registration → Add player**. Enter the player’s name and jersey number, choose a single position if known, and add height, weight or kit sizes if available.
-2. Use **Save player** after each entry. The draft stays on the team’s active-season page and is available when the representative signs in again.
+2. Use **Save player** after each entry. The draft stays on the team’s active-season page and is available when the representative signs in again. JBL allows up to 20 players per team.
 3. Use **Review roster → Submit roster** to send the draft to league staff. Staff open the team through **Admin → Teams & Rosters**. Use **Mark reviewed** to confirm receipt or **Return to team** to request edits.
 
 Keep dates of birth, contact information, signatures and supporting paperwork in the league’s existing registration process. Reviewing a submitted list records staff review in HoopsConnect.

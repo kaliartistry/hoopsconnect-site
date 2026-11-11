@@ -19,7 +19,8 @@ interface PlayerEntry {
   shoeSize: string | null;
 }
 
-const maxPlayers = 100;
+const maxStoredPlayers = 100;
+const jblRegistrationLimit = 20;
 const actions = ["load", "savePlayer", "removePlayer", "submit", "review", "return"];
 
 function measurement(value: unknown, field: string): number | null {
@@ -107,6 +108,7 @@ export async function teamRegistrationHandler(request: CallableRequest<unknown>)
         (rep && membership.get("divisionId") !== divisionId)) {
       throw new HttpsError("failed-precondition", "The team's division is unavailable.");
     }
+    const maxPlayers = division.get("leagueId") === "jbl" ? jblRegistrationLimit : maxStoredPlayers;
     const storedData = stored.data();
     if (storedData && (storedData.schemaVersion !== 1 || storedData.associationId !== associationId ||
         storedData.teamId !== teamId || storedData.seasonId !== seasonId ||
@@ -144,7 +146,9 @@ export async function teamRegistrationHandler(request: CallableRequest<unknown>)
       const previous = players.findIndex(row => row.id === entry.id);
       players = [...players];
       if (previous < 0) {
-        if (players.length >= maxPlayers) throw new HttpsError("resource-exhausted", "This draft is full.");
+        if (players.length >= maxPlayers) {
+          throw new HttpsError("resource-exhausted", `This roster can hold up to ${maxPlayers} players.`);
+        }
         players.push(entry);
       } else {
         players[previous] = entry;
@@ -154,6 +158,9 @@ export async function teamRegistrationHandler(request: CallableRequest<unknown>)
       if (players.length === current.players.length) throw new HttpsError("not-found", "That player is no longer in the draft.");
     } else if (action === "submit") {
       if (!players.length) throw new HttpsError("failed-precondition", "Save at least one player before submitting.");
+      if (players.length > maxPlayers) {
+        throw new HttpsError("failed-precondition", `Remove players until this roster has at most ${maxPlayers} players.`);
+      }
       status = "submitted";
     } else {
       if (status === "draft" || (action === "review" && status !== "submitted")) {

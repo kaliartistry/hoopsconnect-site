@@ -1620,6 +1620,7 @@ test('season activation rejects malformed current and target version state', asy
 
 test('team registration saves players privately, resumes, and supports staff review', async () => {
   await seedLeagueOperations();
+  await adminDb.doc('associations/jba/divisions/premier').update({leagueId: 'jbl'});
   const repEmail = 'registration-rep@example.com';
   const repId = await createLeagueOperator(repEmail, 'rep', [
     'association.read', 'teams.represent',
@@ -1672,6 +1673,16 @@ test('team registration saves players privately, resumes, and supports staff rev
   const returned = (await load()).data;
   assert.equal(returned.players.length, 5);
   assert.equal((await mutate('removePlayer', 8, 'remove', {playerId: 'player-0'})).data.players.length, 4);
+  for (let i = 4; i < 20; i++) {
+    await mutate('savePlayer', i + 5, `fill_${i}`, {
+      player: {id: `extra-${i}`, name: `Sample Extra ${i}`, jersey: String(i + 1)},
+    });
+  }
+  assert.equal((await load()).data.players.length, 20);
+  await assert.rejects(mutate('savePlayer', 25, 'over_limit', {
+    player: {id: 'over-limit', name: 'Sample Extra', jersey: '21'},
+  }), error => error.code === 'functions/resource-exhausted');
+  assert.equal((await mutate('submit', 25, 'submit_full')).data.status, 'submitted');
 });
 
 test('league logo uploads require branding authority and issue a working image link', async () => {
