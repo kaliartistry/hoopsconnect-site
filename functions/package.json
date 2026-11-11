@@ -65,5 +65,10 @@
     "firebase": "^12.18.0",
     "typescript": "^5.3.0"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "1.14.5"
+    }
+  }
 }
