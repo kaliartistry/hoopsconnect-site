@@ -45,11 +45,13 @@
       text-transform: uppercase;
     }
     .hero .eyebrow { color: #ffe1a4; }
-    h1, h2, p { margin: 0; }
+    h1, h2, h3, p { margin: 0; }
     h1 { font-size: clamp(2.05rem, 6vw, 3.9rem); line-height: 1.06; }
-    h2 { font-size: clamp(1.5rem, 4vw, 2.1rem); line-height: 1.17; }
+    h2 { font-size: clamp(1.125rem, 3vw, 1.4rem); line-height: 1.25; margin-bottom: 12px; }
+    h3 { font-size: clamp(1.5rem, 4vw, 2.1rem); line-height: 1.17; }
     .hero p:last-child { margin-top: 12px; max-width: 63ch; color: #edf2ff; }
     main { padding-block: 26px 44px; }
+    main section + section { margin-top: 24px; }
     .card {
       display: grid;
       grid-template-columns: minmax(140px, 210px) minmax(0, 1fr);
@@ -62,7 +64,7 @@
     }
     .card + .card { margin-top: 16px; }
     .card .eyebrow { color: #224caa; }
-    .card h2 + p { margin-top: 12px; }
+    .card h3 + p { margin-top: 12px; }
     .card p + p { margin-top: 10px; }
     .logo-panel {
       min-height: 128px;
@@ -94,27 +96,33 @@
   </header>
   <section class="hero" aria-labelledby="title">
     <div class="wrap">
-      <p class="eyebrow">Jamaica Basketball League</p>
+      <p class="eyebrow">Jamaica Basketball</p>
       <h1 id="title">Sponsor Kit</h1>
-      <p>Meet the people and organizations supporting the league and its coverage on HoopsConnect.</p>
+      <p>Meet the people and organizations supporting Jamaican basketball and HoopsConnect.</p>
     </div>
   </section>
   <main class="wrap">
-    <article class="card" aria-labelledby="foska-title">
-      <div class="logo-panel"><img src="/assets/assets/images/jbl_foska.png" alt="Foska Oats logo"></div>
-      <div>
-        <p class="eyebrow">Main sponsor</p>
-        <h2 id="foska-title">Foska Oats</h2>
-        <p>Foska Oats is a Jamaican brand from Caribbean Foods Limited. Its range includes rolled oats and instant oatmeal. Foska Oats supports the Jamaica Basketball League as its main sponsor.</p>
-        <a class="site-link" rel="sponsored" href="https://chaseramson.com/our-brand/foska/">Visit the official Foska brand page</a>
-      </div>
-    </article>
-    <article class="card donor" id="app-donor" aria-labelledby="donor-title">
-      <p class="eyebrow">App donor</p>
-      <h2 id="donor-title">Kali McCarthy</h2>
-      <p>Kali represented Jamaica on the national basketball team. He played for St. George’s College and for St. George’s Slayers in the National Basketball League, now the Jamaica Basketball League.</p>
-      <p>He built and donated HoopsConnect to support the people who run Jamaican basketball and the fans who follow it. His other ventures include ShipSafe SDK, EventSync Day-Of, and Kali Artistry, which includes Kali Love Stories.</p>
-    </article>
+    <section aria-labelledby="jbl-sponsors">
+      <h2 id="jbl-sponsors">Jamaica Basketball League</h2>
+      <article class="card" aria-labelledby="foska-title">
+        <div class="logo-panel"><img src="/assets/assets/images/jbl_foska.png" alt="Foska Oats logo"></div>
+        <div>
+          <p class="eyebrow">Main league sponsor</p>
+          <h3 id="foska-title">Foska Oats</h3>
+          <p>Foska Oats is a Jamaican brand from Caribbean Foods Limited. Its range includes rolled oats and instant oatmeal. Foska Oats supports the Jamaica Basketball League as its main sponsor.</p>
+          <a class="site-link" rel="sponsored" href="https://chaseramson.com/our-brand/foska/">Visit the official Foska brand page</a>
+        </div>
+      </article>
+    </section>
+    <section id="app-donor" aria-labelledby="app-contributors">
+      <h2 id="app-contributors">HoopsConnect</h2>
+      <article class="card donor" aria-labelledby="donor-title">
+        <p class="eyebrow">App donor</p>
+        <h3 id="donor-title">Kali McCarthy</h3>
+        <p>Kali represented Jamaica on the national basketball team. He played for St. George’s College and for St. George’s Slayers in the National Basketball League, now the Jamaica Basketball League.</p>
+        <p>He built and donated HoopsConnect to support the people who run Jamaican basketball and the fans who follow it. His other ventures include ShipSafe SDK, EventSync Day-Of, and Kali Artistry, which includes Kali Love Stories.</p>
+      </article>
+    </section>
   </main>
   <footer class="wrap">HoopsConnect</footer>
 </body>
