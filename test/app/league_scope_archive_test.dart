@@ -23,7 +23,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    const archive = '2025 NBL season';
+    const archive = '2025 National Basketball League (NBL) season';
     const league = LeagueProfileModel(
       id: 'jbl',
       name: 'Jamaica Basketball League',
@@ -92,7 +92,7 @@ void main() {
     expect(find.text(league.name), findsOneWidget);
     expect(find.text('All leagues'), findsNothing);
     expect(find.text('Premier Division'), findsNothing);
-    await tester.tap(find.widgetWithText(ActionChip, archive));
+    await tester.tap(find.widgetWithText(ActionChip, '2025 NBL season'));
     await tester.pumpAndSettle();
 
     expect(container.read(publicSelectedLeagueIdProvider), 'jbl');

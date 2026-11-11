@@ -447,8 +447,16 @@ class _LeagueScopeBar extends ConsumerWidget {
               const SizedBox(width: 8),
               Flexible(
                 child: ActionChip(
-                  label: Text(seasonLabel, overflow: TextOverflow.ellipsis),
-                  tooltip: 'Open historical records for ${league.name}',
+                  label: Text(
+                    seasonLabel.replaceFirst(
+                      'National Basketball League (NBL)',
+                      'NBL',
+                    ),
+                    semanticsLabel: seasonLabel,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  tooltip:
+                      'Open historical records for ${league.name}: $seasonLabel',
                   onPressed: () {
                     ref.read(publicSelectedLeagueIdProvider.notifier).state =
                         league.id;
