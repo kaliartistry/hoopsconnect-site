@@ -35,7 +35,7 @@ function buildEnrichment(backup, source) {
   const put = (record, data) => {
     if (digest(data) !== digest(record.data)) operations.push({path: record.path, before: record, data});
   };
-  league.seasonLabel = '2025 Season';
+  league.seasonLabel = source.seasonLabel;
   league.description = `Player statistics as of ${source.asOf}`;
   league.reportedStandings = Object.entries(REPORTED_POINTS).map(([teamId, leaguePoints]) => ({teamId, leaguePoints}));
   league.standingsAsOf = '2025-04-15';
@@ -45,9 +45,9 @@ function buildEnrichment(backup, source) {
     if (!record.path.startsWith('associations/jba/')) continue;
     const data = structuredClone(record.data);
     if (data.divisionId !== DIVISION && record.path !== `associations/jba/divisions/${DIVISION}`) continue;
-    if (record.path === `associations/jba/divisions/${DIVISION}`) data.name = '2025 Season';
-    if (data.statisticsPeriod) data.statisticsPeriod = '2025 Season';
-    if (data.qualificationLabel) data.qualificationLabel = '2025 Season · Per game · All recorded players';
+    if (record.path === `associations/jba/divisions/${DIVISION}`) data.name = source.seasonLabel;
+    if (data.statisticsPeriod) data.statisticsPeriod = source.seasonLabel;
+    if (data.qualificationLabel) data.qualificationLabel = `${source.seasonLabel} · Per game · All recorded players`;
     if (record.path.includes('/leaderboard/') && data.category === 'ppg') {
       data.rankings = data.rankings.map(row => {
         const player = byPlayer.get(row.playerId);

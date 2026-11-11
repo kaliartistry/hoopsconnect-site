@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import '../core/utils/jamaica_date.dart';
+
 enum PublicReleaseState { published, unavailable, retracted }
 
 enum PublicGameStatus { scheduled, finalResult, postponed, canceled }
@@ -274,6 +276,7 @@ class PublicPeriodScore {
 class PublicPlayerGameLine {
   final String playerId;
   final String displayName;
+  String get readableName => _readablePlayerName(displayName);
   final String teamId;
   final int? minutes;
   final int? points;
@@ -599,6 +602,7 @@ class PublicStanding {
 class PublicLeader {
   final String? playerId;
   final String displayName;
+  String get readableName => _readablePlayerName(displayName);
   final String? teamId;
   final String teamName;
   final String? divisionId;
@@ -661,6 +665,15 @@ class PublicLeaderboard {
     _ => category.toUpperCase(),
   };
 
+  String get metricName => switch (category.toLowerCase()) {
+    'ppg' => 'Points per game',
+    'rpg' => 'Rebounds per game',
+    'apg' => 'Assists per game',
+    'spg' => 'Steals per game',
+    'bpg' => 'Blocks per game',
+    _ => categoryLabel,
+  };
+
   factory PublicLeaderboard.fromMap(
     Map<String, dynamic> map, {
     required bool includePlayerIdentity,
@@ -710,6 +723,7 @@ class PublicTeamDetail {
 class PublicPlayerDetail {
   final String playerId;
   final String displayName;
+  String get readableName => _readablePlayerName(displayName);
   final String teamName;
   final List<({String category, String? divisionId, PublicLeader value})>
   categories;
@@ -721,6 +735,15 @@ class PublicPlayerDetail {
     required this.categories,
   });
 }
+
+// Display fixes for the supplied archive. Keep the raw names for identity
+// matching, source reconciliation and release fingerprints.
+String _readablePlayerName(String name) => switch (name) {
+  'TOMMY McDONALD' || 'TOMMY MCDONALD' => 'Tommy McDonald',
+  'KIMARY BROWN' => 'Kimary Brown',
+  'JORDAN ANDERSON' => 'Jordan Anderson',
+  _ => name,
+};
 
 class PublicSponsor {
   const PublicSponsor({
@@ -756,8 +779,10 @@ class PublicBrandIdentity {
     this.primaryColorHex = '#2E7D32',
     this.secondaryColorHex = '#1B5E20',
     this.accentColorHex = '#F9A825',
-    this.sponsor = const PublicSponsor(),
-  });
+    PublicSponsor sponsor = const PublicSponsor(),
+    this.scheduledSponsor,
+    this.sponsorStartsOn,
+  }) : baseSponsor = sponsor;
 
   final String name;
   final String shortName;
@@ -765,7 +790,18 @@ class PublicBrandIdentity {
   final String primaryColorHex;
   final String secondaryColorHex;
   final String accentColorHex;
-  final PublicSponsor sponsor;
+  final PublicSponsor baseSponsor;
+  final PublicSponsor? scheduledSponsor;
+  final String? sponsorStartsOn;
+
+  PublicSponsor sponsorAt(DateTime instant) =>
+      scheduledSponsor != null &&
+          sponsorStartsOn != null &&
+          jamaicaDateKey(instant).compareTo(sponsorStartsOn!) >= 0
+      ? scheduledSponsor!
+      : baseSponsor;
+
+  PublicSponsor get sponsor => sponsorAt(DateTime.now());
 
   factory PublicBrandIdentity.fromMap(
     Map<String, dynamic> map, {
@@ -773,6 +809,7 @@ class PublicBrandIdentity {
     required String fallbackShortName,
   }) {
     final sponsor = _optionalMap(map['sponsor']);
+    final scheduled = _optionalMap(map['scheduledSponsor']);
     return PublicBrandIdentity(
       name: _optionalText(map['name']) ?? fallbackName,
       shortName: _optionalText(map['shortName']) ?? fallbackShortName,
@@ -787,6 +824,10 @@ class PublicBrandIdentity {
         fallback: '#F9A825',
       ),
       sponsor: PublicSponsor.fromMap(sponsor),
+      scheduledSponsor: PublicSponsor.fromMap(
+        _optionalMap(scheduled['sponsor']),
+      ),
+      sponsorStartsOn: calendarDateKey(scheduled['startsOn']),
     );
   }
 }
@@ -795,9 +836,13 @@ class ReportedTeamStanding {
   const ReportedTeamStanding({
     required this.teamId,
     required this.leaguePoints,
+    this.wins,
+    this.losses,
   });
   final String teamId;
   final int leaguePoints;
+  final int? wins;
+  final int? losses;
 
   factory ReportedTeamStanding.fromMap(Map<String, dynamic> map) =>
       ReportedTeamStanding(
@@ -805,6 +850,8 @@ class ReportedTeamStanding {
         leaguePoints:
             _integer(map['leaguePoints']) ??
             (throw const FormatException('Standing league points required.')),
+        wins: _integer(map['wins']),
+        losses: _integer(map['losses']),
       );
 }
 
@@ -826,6 +873,8 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
     super.secondaryColorHex,
     super.accentColorHex,
     super.sponsor,
+    super.scheduledSponsor,
+    super.sponsorStartsOn,
   });
 
   final String leagueId;
@@ -837,6 +886,20 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
   final String? standingsSourceUrl;
   final List<PublicSponsor> supportingSponsorExamples;
   final List<String> divisionIds;
+
+  /// The supplied 2025 NBL workbook is a first-round snapshot, separate from
+  /// the midseason standings and the game reports. See JBL_LOCAL_IMPORT.md.
+  bool get isNbl2025Archive =>
+      historicalStatistics &&
+      leagueId == 'jbl' &&
+      divisionIds.contains('jbl-2025-first-round');
+
+  String? get firstRoundStatisticsLabel =>
+      isNbl2025Archive ? 'First-round statistics through Apr 10, 2025' : null;
+
+  String? qualificationFor(PublicLeaderboard board) => isNbl2025Archive
+      ? 'All recorded players, no minimum games'
+      : board.qualificationLabel;
 
   factory PublicLeagueDefinition.fromMap(Map<String, dynamic> map) {
     final branding = _optionalMap(map['branding']);
@@ -879,7 +942,9 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
       primaryColorHex: identity.primaryColorHex,
       secondaryColorHex: identity.secondaryColorHex,
       accentColorHex: identity.accentColorHex,
-      sponsor: identity.sponsor,
+      sponsor: identity.baseSponsor,
+      scheduledSponsor: identity.scheduledSponsor,
+      sponsorStartsOn: identity.sponsorStartsOn,
     );
   }
 }

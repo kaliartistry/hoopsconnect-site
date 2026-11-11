@@ -41,6 +41,26 @@ void main() {
     },
   );
 
+  testWidgets(
+    'historical games keep supplied recaps and leave missing stats blank',
+    (tester) async {
+      const gameId = 'jbl-2025-02-13-rae-town-raptors-vs-st-georges-slayers';
+      const recap =
+          'Recorded final result. The period totals did not reconcile.';
+      final snapshot = _legacySnapshot(gameId: gameId, historicalRecap: recap);
+      await _pumpDetail(
+        tester,
+        downloader: _RecordingDownloader(),
+        snapshotOverride: snapshot,
+      );
+
+      expect(find.text(recap), findsOneWidget);
+      expect(find.text('Period breakdown unavailable'), findsOneWidget);
+      expect(find.text('View quarter breakdown'), findsNothing);
+      expect(find.text('Share box score'), findsNothing);
+    },
+  );
+
   testWidgets('temporary server failure leaves the score Share retry enabled', (
     tester,
   ) async {
@@ -447,7 +467,7 @@ Future<void> _pumpDetail(
       child: MaterialApp(
         home: PublicGameDetailScreen(
           snapshot: snapshot,
-          detail: snapshot.gameDetail('game-1')!,
+          detail: snapshot.gameDetail(snapshot.schedule.single.gameId)!,
           canExportStats: true,
           downloader: downloader,
           releaseValidator: PublicArtifactReleaseValidator(reader),
@@ -460,7 +480,10 @@ Future<void> _pumpDetail(
   await tester.pumpAndSettle();
 }
 
-PublicLeagueSnapshot _legacySnapshot() => PublicLeagueSnapshot(
+PublicLeagueSnapshot _legacySnapshot({
+  String gameId = 'game-1',
+  String? historicalRecap,
+}) => PublicLeagueSnapshot(
   leagueName: 'Jamaica Basketball Association',
   leagueShortName: 'JBA',
   seasonId: 'season-1',
@@ -474,17 +497,30 @@ PublicLeagueSnapshot _legacySnapshot() => PublicLeagueSnapshot(
     privacyEpoch: null,
     generatedAt: DateTime.utc(2026, 9, 10, 21),
   ),
+  leagues: historicalRecap == null
+      ? const []
+      : const [
+          PublicLeagueDefinition(
+            leagueId: 'jbl',
+            name: 'Jamaica Basketball League',
+            shortName: 'JBL',
+            divisionIds: ['jbl-2025-first-round'],
+            historicalStatistics: true,
+          ),
+        ],
   schedule: [
     PublicGame(
-      gameId: 'game-1',
+      gameId: gameId,
+      divisionId: historicalRecap == null ? null : 'jbl-2025-first-round',
+      recap: historicalRecap,
       title: 'Public Home vs Public Away',
       startTime: DateTime.utc(2026, 9, 10, 20),
       homeTeamId: 'home',
       homeTeamName: 'Public Home',
       awayTeamId: 'away',
       awayTeamName: 'Public Away',
-      homeScore: 82,
-      awayScore: 79,
+      homeScore: historicalRecap == null ? 82 : 71,
+      awayScore: historicalRecap == null ? 79 : 60,
       status: PublicGameStatus.finalResult,
     ),
   ],

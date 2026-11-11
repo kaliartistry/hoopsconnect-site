@@ -48,9 +48,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('generate-invite-submit')));
     await tester.pumpAndSettle();
+    expect(repository.createCalls, isEmpty);
+    await _enterRepEmail(tester);
+    await tester.tap(find.byKey(const Key('generate-invite-submit')));
+    await tester.pumpAndSettle();
 
     expect(repository.createCalls, hasLength(1));
     expect(repository.createCalls.single.teamId, 'team-blue');
+    expect(repository.createCalls.single.recipientEmail, 'rep@example.com');
     expect(repository.verifiedCodes, [_issuedInvite.code]);
     expect(find.byKey(const Key('issued-invite-secret')), findsOneWidget);
     expect(store.attempt, isNull);
@@ -622,6 +627,15 @@ Future<void> _openAndSelectBlueTeam(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.text('Blue Mountains • Premier').last);
   await tester.pumpAndSettle();
+  await _enterRepEmail(tester);
+}
+
+Future<void> _enterRepEmail(WidgetTester tester) async {
+  final field = find.byKey(const Key('invite-recipient-email'));
+  await tester.ensureVisible(field);
+  await tester.enterText(field, 'Rep@Example.com');
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pumpAndSettle();
 }
 
 final _issuedInvite = IssuedInviteCode(
@@ -640,12 +654,14 @@ final _issuedInvite = IssuedInviteCode(
 class _CreateCall {
   final String role;
   final String? teamId;
+  final String? recipientEmail;
   final int daysValid;
   final String operationId;
 
   const _CreateCall({
     required this.role,
     required this.teamId,
+    required this.recipientEmail,
     required this.daysValid,
     required this.operationId,
   });
@@ -685,6 +701,7 @@ class _FakeInviteCodeRepository extends InviteCodeRepository {
   Future<IssuedInviteCode> createCode({
     required String role,
     String? teamId,
+    String? recipientEmail,
     required int daysValid,
     required String operationId,
     required String expectedAssociationId,
@@ -694,6 +711,7 @@ class _FakeInviteCodeRepository extends InviteCodeRepository {
       _CreateCall(
         role: role,
         teamId: teamId,
+        recipientEmail: recipientEmail,
         daysValid: daysValid,
         operationId: operationId,
       ),

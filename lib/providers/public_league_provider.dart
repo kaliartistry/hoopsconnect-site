@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/utils/jamaica_date.dart';
 import '../models/public_league_snapshot.dart';
 import '../platform/presentation_preview_environment.dart';
 import '../services/public_artifact_release_validator.dart';
@@ -17,6 +18,7 @@ final publicLeagueRepositoryProvider = Provider<PublicLeagueRepository>((ref) {
 final publicLeagueSnapshotProvider = StreamProvider<PublicLeagueSnapshot?>((
   ref,
 ) {
+  ref.watch(jamaicaDateProvider);
   if (PresentationPreviewEnvironment.enabled) {
     return ref.watch(presentationPublicSnapshotProvider).watchCurrentSnapshot();
   }

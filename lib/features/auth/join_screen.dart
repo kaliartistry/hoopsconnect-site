@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/invite_code_model.dart';
 import '../../providers/auth_providers.dart';
@@ -19,11 +20,16 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _loading = false;
+  bool _reviewing = false;
+  bool _joinAttempted = false;
+  String? _reviewedUid;
   String? _error;
   InviteCodeModel? _validatedCode;
   String? _validatedSecret;
   String? _redeemOperationId;
   bool _ownsPendingAuthIdentity = false;
+  bool _verificationSent = false;
+  String? _verificationNotice;
 
   @override
   void dispose() {
@@ -38,7 +44,7 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
 
   Future<void> _validateCode() async {
     final code = _codeController.text.trim();
-    if (code.isEmpty) return;
+    if (code.isEmpty || _loading || _validatedCode != null) return;
 
     setState(() {
       _loading = true;
@@ -59,6 +65,12 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
           _validatedSecret = null;
         });
       } else {
+        final existingName =
+            ref.read(currentUserProvider).valueOrNull?.displayName ??
+            ref.read(authRepositoryProvider).currentUser?.displayName;
+        if (_nameController.text.isEmpty && existingName != null) {
+          _nameController.text = existingName;
+        }
         setState(() {
           _validatedCode = inviteCode;
           // The inspection callable never echoes the bearer. Keep exactly the
@@ -74,41 +86,115 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
     }
   }
 
-  Future<void> _joinTeam() async {
-    if (_validatedCode == null || _validatedSecret == null) return;
-    final existingAuth = ref.read(authRepositoryProvider).currentUser != null;
-    if (_nameController.text.trim().isEmpty ||
-        (!existingAuth &&
+  void _reviewJoin() {
+    final authUser = ref.read(authRepositoryProvider).currentUser;
+    final name = _nameController.text.trim();
+    if (name.isEmpty ||
+        (authUser == null &&
             (_emailController.text.trim().isEmpty ||
                 _passwordController.text.isEmpty))) {
       setState(() => _error = 'Please fill in all fields');
       return;
     }
+    if (name.length > 120) {
+      setState(() => _error = 'Use up to 120 characters for your name');
+      return;
+    }
 
     final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-    if (!existingAuth && !emailRegex.hasMatch(_emailController.text.trim())) {
+    if (authUser == null &&
+        !emailRegex.hasMatch(_emailController.text.trim())) {
       setState(() => _error = 'Please enter a valid email address');
       return;
     }
 
-    if (!existingAuth && _passwordController.text.length < 6) {
+    if (authUser == null && _passwordController.text.length < 6) {
       setState(() => _error = 'Password must be at least 6 characters');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _reviewedUid = authUser?.uid;
+      _reviewing = true;
+      _error = null;
+    });
+  }
+
+  Future<void> _joinTeam() async {
+    if (_loading || !_reviewing || _validatedSecret == null) return;
+    final authRepository = ref.read(authRepositoryProvider);
+    if (authRepository.currentUser?.uid != _reviewedUid) {
+      setState(() {
+        _error = 'The signed-in account changed. Review your details again.';
+        _reviewing = false;
+        _verificationSent = false;
+        _verificationNotice = null;
+        _joinAttempted = false;
+        _ownsPendingAuthIdentity = false;
+        _redeemOperationId = newInviteOperationId();
+      });
       return;
     }
 
     setState(() {
       _loading = true;
+      _joinAttempted = true;
       _error = null;
     });
 
     try {
-      final authRepository = ref.read(authRepositoryProvider);
       if (authRepository.currentUser == null) {
-        await authRepository.signUp(
+        final credential = await authRepository.signUp(
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
-        _ownsPendingAuthIdentity = true;
+        _reviewedUid = credential.user?.uid;
+        _ownsPendingAuthIdentity = _reviewedUid != null;
+        if (_reviewedUid == null ||
+            authRepository.currentUser?.uid != _reviewedUid) {
+          throw StateError(
+            'Sign in to the new account and verify your invite again.',
+          );
+        }
+      }
+
+      if (!mounted) return;
+      if (_validatedCode?.requiresVerifiedEmail == true) {
+        try {
+          await authRepository.currentUser!.reload();
+          final current = authRepository.currentUser;
+          if (!mounted) return;
+          if (current == null || current.uid != _reviewedUid) {
+            throw StateError('The signed-in account changed.');
+          }
+          if (!current.emailVerified) {
+            if (!_verificationSent) {
+              await current.sendEmailVerification();
+              _verificationSent = true;
+            }
+            if (mounted) {
+              setState(
+                () => _verificationNotice =
+                    'Check your email for the verification link, then return here and select Join Team.',
+              );
+            }
+            return;
+          }
+          await current.getIdToken(true);
+          if (!mounted) return;
+          if (authRepository.currentUser?.uid != _reviewedUid) {
+            throw StateError('The signed-in account changed.');
+          }
+          setState(() => _verificationNotice = null);
+        } catch (_) {
+          if (mounted) {
+            setState(
+              () => _error =
+                  'We could not verify your account email. Check your connection and try again.',
+            );
+          }
+          return;
+        }
       }
 
       await ref
@@ -126,10 +212,12 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
       final disposition = inviteFailureDisposition(e);
       if (disposition == InviteFailureDisposition.terminal) {
         if (shouldDeletePendingAuthIdentity(
-          ownsPendingIdentity: _ownsPendingAuthIdentity,
+          ownsPendingIdentity:
+              _ownsPendingAuthIdentity &&
+              authRepository.currentUser?.uid == _reviewedUid,
           error: e,
         )) {
-          await ref.read(authRepositoryProvider).deleteCurrentAuthUser();
+          await authRepository.deleteCurrentAuthUser();
         }
         _codeController.clear();
         _validatedSecret = null;
@@ -138,6 +226,11 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
       }
       if (mounted) {
         setState(() {
+          if (disposition == InviteFailureDisposition.terminal) {
+            _validatedCode = null;
+            _reviewing = false;
+            _joinAttempted = false;
+          }
           _error = disposition == InviteFailureDisposition.ambiguous
               ? 'We could not confirm the result. Your account was kept safe; tap Join again to resume the same request.'
               : _friendlyInviteError(e);
@@ -207,42 +300,44 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                 ),
                 const SizedBox(height: 32),
 
-                // Invite code input
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'INVITE CODE',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: _codeController,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
-                    fontFamily: 'monospace',
-                  ),
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSizes.radiusMd),
-                      borderSide: const BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
+                if (_validatedCode == null) ...[
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'INVITE CODE',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ),
-                  onSubmitted: (_) => _validateCode(),
-                ),
-                const SizedBox(height: 12),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: _codeController,
+                    enabled: !_loading,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                      fontFamily: 'monospace',
+                    ),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppSizes.radiusMd),
+                        borderSide: const BorderSide(
+                          color: AppColors.primary,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => _validateCode(),
+                  ),
+                  const SizedBox(height: 12),
 
-                if (_validatedCode == null)
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
@@ -256,8 +351,8 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                           : const Text('Verify Code'),
                     ),
                   ),
+                ],
 
-                // Code verified — show form
                 if (_validatedCode != null) ...[
                   Container(
                     width: double.infinity,
@@ -270,63 +365,89 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Code verified',
-                          style: TextStyle(
+                        Text(
+                          _reviewing
+                              ? 'Review your details'
+                              : 'Invite verified',
+                          style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: AppColors.infoDark,
                             fontSize: 13,
                           ),
                         ),
                         Text(
-                          'Joining as ${_validatedCode!.role.toUpperCase()}',
+                          'Joining as ${_validatedCode!.role == 'rep' ? 'team representative' : _validatedCode!.role}',
                           style: const TextStyle(
                             color: AppColors.info,
                             fontSize: 12,
                           ),
                         ),
+                        if (_validatedCode!.teamName case final teamName?)
+                          Text(teamName),
                       ],
                     ),
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Full Name',
-                      prefixIcon: Icon(Icons.person_outlined),
+                  if (_reviewing) ...[
+                    Text(
+                      _nameController.text.trim(),
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                  ),
-                  if (existingAuth == null) ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _emailController,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'Email',
-                        prefixIcon: Icon(Icons.email_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Password',
-                        prefixIcon: Icon(Icons.lock_outlined),
-                      ),
+                    Text(
+                      existingAuth?.email ??
+                          (_reviewedUid == null
+                              ? _emailController.text.trim()
+                              : 'Signed-in account'),
                     ),
                   ] else ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      'Continue as ${existingAuth.email ?? 'the signed-in account'}',
-                      style: const TextStyle(color: AppColors.textSecondary),
+                    TextField(
+                      controller: _nameController,
+                      textCapitalization: TextCapitalization.words,
+                      autofillHints: const [AutofillHints.name],
+                      decoration: const InputDecoration(
+                        labelText: 'Full Name',
+                        prefixIcon: Icon(Icons.person_outlined),
+                      ),
                     ),
+                    if (existingAuth == null) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _emailController,
+                        keyboardType: TextInputType.emailAddress,
+                        autocorrect: false,
+                        autofillHints: const [AutofillHints.email],
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          prefixIcon: Icon(Icons.email_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        autofillHints: const [AutofillHints.newPassword],
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                          prefixIcon: Icon(Icons.lock_outlined),
+                        ),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'Continue as ${existingAuth.email ?? 'the signed-in account'}',
+                        style: const TextStyle(color: AppColors.textSecondary),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _loading ? null : _joinTeam,
+                      onPressed: _loading
+                          ? null
+                          : _reviewing
+                          ? _joinTeam
+                          : _reviewJoin,
                       child: _loading
                           ? const SizedBox(
                               height: 20,
@@ -336,11 +457,31 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Join Team'),
+                          : Text(_reviewing ? 'Join Team' : 'Review details'),
                     ),
                   ),
+                  if (!_loading && !_joinAttempted)
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _error = null;
+                        if (_reviewing) {
+                          _reviewing = false;
+                        } else {
+                          _validatedCode = null;
+                          _validatedSecret = null;
+                          _redeemOperationId = null;
+                        }
+                      }),
+                      child: Text(
+                        _reviewing ? 'Edit details' : 'Use a different code',
+                      ),
+                    ),
                 ],
 
+                if (_verificationNotice case final notice?) ...[
+                  const SizedBox(height: 12),
+                  Semantics(liveRegion: true, child: Text(notice)),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -353,9 +494,13 @@ class _JoinScreenState extends ConsumerState<JoinScreen> {
                 ],
 
                 const SizedBox(height: 16),
-                if (existingAuth == null)
+                if (_loading)
+                  const SizedBox.shrink()
+                else if (existingAuth == null)
                   TextButton(
-                    onPressed: () => context.go('/login'),
+                    onPressed: () => context.go(
+                      AppRouteContract.loginFor(Uri(path: '/join')),
+                    ),
                     child: const Text(
                       'Already have an account? Sign in',
                       style: TextStyle(color: AppColors.primary),

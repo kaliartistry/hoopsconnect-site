@@ -82,88 +82,14 @@ class PublicTeamMark extends StatelessWidget {
         .where((t) => t.teamId == teamId)
         .firstOrNull
         ?.logoUrl;
-    if (logo != null && logo.isNotEmpty) {
-      final Widget image;
-      if (logo.startsWith('asset:')) {
-        image = Image.asset(
-          logo.substring('asset:'.length),
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-          errorBuilder: (_, _, _) =>
-              _TeamInitials(name: name, fontSize: size <= 34 ? 9 : 11),
-        );
-      } else {
-        image = SponsorLogo(
-          reference: logo,
-          width: size,
-          height: size,
-          onPlate: false,
-          semanticLabel: '$name logo',
-        );
-      }
-      return Semantics(
-        image: true,
-        label: '$name logo',
-        child: ExcludeSemantics(
-          child: Container(
-            width: size,
-            height: size,
-            padding: onDarkSurface ? const EdgeInsets.all(2) : EdgeInsets.zero,
-            decoration: onDarkSurface
-                ? BoxDecoration(
-                    color: const Color(0xFFF9FBFF),
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x2406172F),
-                        blurRadius: 6,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  )
-                : null,
-            child: image,
-          ),
-        ),
-      );
-    }
-    return Container(
+    return SponsorLogo(
+      reference: logo,
       width: size,
       height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFD6DDE7)),
-      ),
-      child: _TeamInitials(name: name, fontSize: size <= 34 ? 9 : 11),
-    );
-  }
-}
-
-class _TeamInitials extends StatelessWidget {
-  const _TeamInitials({required this.name, required this.fontSize});
-
-  final String name;
-  final double fontSize;
-
-  @override
-  Widget build(BuildContext context) {
-    final words = name
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((word) => word.isNotEmpty)
-        .toList(growable: false);
-    final initials = words.isEmpty
-        ? 'T'
-        : words.take(2).map((word) => word[0]).join().toUpperCase();
-    return Text(
-      initials,
-      style: TextStyle(
-        color: const Color(0xFF184A9E),
-        fontSize: fontSize,
-        fontWeight: FontWeight.w900,
-      ),
+      semanticLabel: '$name logo',
+      onPlate: onDarkSurface || logo == null,
+      lightBackground: Theme.of(context).brightness == Brightness.light,
+      platePadding: const EdgeInsets.all(2),
     );
   }
 }

@@ -57,8 +57,7 @@ class PublicBrandContext extends StatelessWidget {
                   if (league.seasonLabel != null || divisionName != null)
                     Text(
                       league.seasonLabel ?? divisionName!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 3,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: const Color(0xFF5F6F86),
                       ),
@@ -102,9 +101,11 @@ class _LeagueBadge extends StatelessWidget {
         child: SponsorLogo(
           reference: league.logoUrl!,
           semanticLabel: '${league.name} logo',
+          initials: league.shortName,
           width: 34,
           height: 34,
           onPlate: false,
+          lightBackground: true,
         ),
       );
     }

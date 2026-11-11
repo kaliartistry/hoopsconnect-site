@@ -15,6 +15,7 @@ import '../../providers/stats_providers.dart';
 import '../../providers/team_providers.dart';
 import '../../services/repositories/roster_workflow_repository.dart';
 import 'roster_management_panel.dart';
+import 'team_registration_panel.dart';
 
 class TeamViewScreen extends ConsumerWidget {
   final String teamId;
@@ -55,10 +56,17 @@ class TeamViewScreen extends ConsumerWidget {
             )),
           );
 
+    final isMyTeam =
+        currentUser?.teamId == teamId &&
+        currentUser?.hasCapability('teams.represent') == true;
     return Scaffold(
       appBar: AppBar(
-        leading: const BackButton(),
-        title: const Text('Team Details'),
+        leading: BackButton(
+          onPressed: () => context.canPop()
+              ? context.pop()
+              : context.go(isMyTeam ? '/board' : '/standings'),
+        ),
+        title: Text(isMyTeam ? 'My Team' : 'Team Details'),
       ),
       body: teamAsync.when(
         data: (team) {
@@ -161,6 +169,19 @@ class TeamViewScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 16),
+
+              if (seasonId != null &&
+                  team.seasonId == seasonId &&
+                  team.acceptsNewReferences &&
+                  currentUser != null &&
+                  (currentUser.hasCapability('teams.manage') ||
+                      (currentUser.hasCapability('teams.represent') &&
+                          currentUser.teamId == team.id))) ...[
+                TeamRegistrationPanel(
+                  target: (teamId: team.id, seasonId: seasonId),
+                ),
+                const SizedBox(height: 24),
+              ],
 
               // Quick stats
               Row(

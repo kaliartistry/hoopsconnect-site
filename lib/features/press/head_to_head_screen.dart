@@ -121,41 +121,51 @@ class _HeadToHeadScreenState extends ConsumerState<HeadToHeadScreen> {
     }
 
     return ListView(
+      primary: true,
       padding: const EdgeInsets.all(AppSizes.paddingMd),
       children: [
         const PublicStatsNavigation(selected: 'compare'),
-        DropdownButtonFormField<String>(
-          initialValue: league.leagueId,
-          isExpanded: true,
-          decoration: const InputDecoration(labelText: 'League / season'),
-          items: [
-            for (final l in leagues)
-              DropdownMenuItem(
-                value: l.leagueId,
-                child: Text(
-                  '${l.name} · ${l.seasonLabel ?? snapshot.seasonName}',
-                  overflow: TextOverflow.ellipsis,
+        if (leagues.length > 1)
+          DropdownButtonFormField<String>(
+            initialValue: league.leagueId,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'League / season'),
+            items: [
+              for (final l in leagues)
+                DropdownMenuItem(
+                  value: l.leagueId,
+                  child: Text(
+                    '${l.name} · ${l.seasonLabel ?? snapshot.seasonName}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-          ],
-          onChanged: (id) => setState(() {
-            _leagueId = id;
-            _teamAId = null;
-            _teamBId = null;
-            _playerAId = null;
-            _playerBId = null;
-          }),
-        ),
+            ],
+            onChanged: (id) => setState(() {
+              _leagueId = id;
+              _teamAId = null;
+              _teamBId = null;
+              _playerAId = null;
+              _playerBId = null;
+            }),
+          )
+        else ...[
+          Text(league.name, style: Theme.of(context).textTheme.titleMedium),
+          if (league.seasonLabel case final String season) Text(season),
+        ],
         const SizedBox(height: 16),
         Text(
-          'Season averages & head-to-head',
+          league.isNbl2025Archive
+              ? 'First-round averages & head-to-head'
+              : 'Season averages & head-to-head',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 4),
         Text(
-          'Choose two teams or players. Share the comparison and start the conversation.',
+          'Choose two teams or players.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (league.firstRoundStatisticsLabel case final String scope)
+          Text('$scope. Head-to-head uses the separate recorded game reports.'),
         const SizedBox(height: 16),
         SegmentedButton<_CompareMode>(
           segments: const [
@@ -247,7 +257,7 @@ class _HeadToHeadScreenState extends ConsumerState<HeadToHeadScreen> {
     }
     final entries = {
       for (final entry in players.entries)
-        entry.key: '${entry.value.displayName} · ${entry.value.teamName}',
+        entry.key: '${entry.value.readableName} · ${entry.value.teamName}',
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -652,7 +662,7 @@ class _RecentMeetings extends StatelessWidget {
     final player = snapshot.playerDetail(id);
     final line = game.playerLines.where((p) => p.playerId == id).firstOrNull;
     final points = line?.points ?? recordedMatchupPoints(game, player);
-    return '${player?.displayName ?? 'Player'}: ${points == null ? 'points not recorded' : '$points PTS'}';
+    return '${player?.readableName ?? 'Player'}: ${points == null ? 'points not recorded' : '$points PTS'}';
   }
 }
 
@@ -703,8 +713,8 @@ class _PlayerComparison extends StatelessWidget {
     final categories = <String>{...valuesA.keys, ...valuesB.keys}.toList()
       ..sort();
     return _ComparisonCard(
-      first: playerA.displayName,
-      second: playerB.displayName,
+      first: playerA.readableName,
+      second: playerB.readableName,
       rows: categories
           .map(
             (category) => (

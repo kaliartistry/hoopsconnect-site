@@ -1,7 +1,12 @@
+import 'dart:convert';
+
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/utils/jamaica_date.dart';
 import '../../core/widgets/app_state_message.dart';
 import '../../core/widgets/sponsor_banner.dart';
 import '../../models/association_branding_model.dart';
@@ -61,9 +66,9 @@ class LeagueManagementScreen extends ConsumerWidget {
           padding: EdgeInsets.fromLTRB(16, 16, 16, compact ? 24 : 96),
           children: [
             const AppStateMessage(
-              title: 'Set up the league hierarchy in 3 steps',
+              title: 'Manage your competitions',
               message:
-                  '1. Create the parent league.\n2. Add divisions beneath that league.\n3. Add its colors and optional title sponsor.\n\nA division can belong to only one league. Association-wide branding and the mega sponsor are managed separately.',
+                  'Open a league to edit its name, logo or title sponsor. Use View league hierarchy to manage its divisions.',
               icon: Icons.account_tree_outlined,
               compact: true,
             ),
@@ -185,221 +190,436 @@ class LeagueManagementScreen extends ConsumerWidget {
     final name = TextEditingController(text: existing?.name);
     final shortName = TextEditingController(text: existing?.shortName);
     final description = TextEditingController(text: existing?.description);
-    final sponsorName = TextEditingController(text: existing?.sponsor.name);
+    final leagueLogoUrl = TextEditingController(text: existing?.logoUrl);
+    final now = DateTime.now();
+    final today = jamaicaDateKey(now);
+    final currentSponsor = existing?.sponsorAt(now);
+    final scheduled = existing?.scheduledSponsor;
+    final upcoming =
+        scheduled != null && scheduled.startsOn.compareTo(today) > 0
+        ? scheduled
+        : null;
+    final sponsorName = TextEditingController(text: currentSponsor?.name);
     final sponsorLabel = TextEditingController(
-      text: existing?.sponsor.label ?? 'Title sponsor',
+      text: currentSponsor?.label ?? 'Title sponsor',
     );
-    final sponsorLogoUrl = TextEditingController(
-      text: existing?.sponsor.logoUrl,
-    );
+    final sponsorLogoUrl = TextEditingController(text: currentSponsor?.logoUrl);
     final sponsorWebsiteUrl = TextEditingController(
-      text: existing?.sponsor.websiteUrl,
+      text: currentSponsor?.websiteUrl,
     );
     final primaryColor = TextEditingController(
       text: existing?.primaryColorHex ?? '#2E7D32',
     );
-    var sponsorEnabled = existing?.sponsor.enabled ?? false;
+    final nextName = TextEditingController(text: upcoming?.sponsor.name);
+    final nextLogo = TextEditingController(text: upcoming?.sponsor.logoUrl);
+    final nextWebsite = TextEditingController(
+      text: upcoming?.sponsor.websiteUrl,
+    );
+    var sponsorEnabled = currentSponsor?.enabled ?? false;
+    var scheduledDate = upcoming?.startsOn;
+    var scheduleEnabled = upcoming != null;
+    var uploading = false;
+    String? uploadMessage;
     final saved = await showDialog<LeagueProfileModel>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(existing == null ? 'Add league' : 'Edit league'),
-          content: SizedBox(
-            width: 560,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: name,
-                    decoration: const InputDecoration(labelText: 'League name'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: shortName,
-                    decoration: const InputDecoration(labelText: 'Short name'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: description,
-                    decoration: const InputDecoration(labelText: 'Description'),
-                    maxLines: 2,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: primaryColor,
-                    decoration: const InputDecoration(
-                      labelText: 'Primary color',
-                      hintText: '#2E7D32',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.account_tree_outlined),
-                      title: Text(
-                        existing == null
-                            ? 'Divisions come after the league'
-                            : '${existing.divisionIds.length} ${existing.divisionIds.length == 1 ? 'division' : 'divisions'} beneath this league',
-                      ),
-                      subtitle: Text(
-                        existing == null
-                            ? 'Save the parent league, then open the league hierarchy to add Division A, Premier, Community League, or any other child division.'
-                            : 'Use View league hierarchy to add or manage child divisions. Divisions cannot be assigned at the association level.',
-                      ),
-                    ),
-                  ),
-                  const Divider(),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Show a league title sponsor'),
-                    value: sponsorEnabled,
-                    onChanged: (value) =>
-                        setDialogState(() => sponsorEnabled = value),
-                  ),
-                  if (sponsorEnabled) ...[
-                    TextField(
-                      controller: sponsorName,
-                      decoration: const InputDecoration(
-                        labelText: 'Sponsor name',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: sponsorLabel,
-                      decoration: const InputDecoration(
-                        labelText: 'Sponsor label',
-                        hintText: 'Title sponsor',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: sponsorLogoUrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Sponsor logo (HTTPS URL or bundled asset)',
-                        hintText: 'https://… or asset:assets/images/…',
-                      ),
-                      onChanged: (_) => setDialogState(() {}),
-                    ),
-                    if (sponsorLogoUrl.text.trim().isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      _SponsorLogoPreview(
-                        name: sponsorName.text.trim().isEmpty
-                            ? 'Sponsor'
-                            : sponsorName.text.trim(),
-                        reference: sponsorLogoUrl.text.trim(),
-                      ),
+        builder: (context, setDialogState) {
+          Future<void> upload(TextEditingController controller) async {
+            final id = existing?.id ?? LeagueProfileModel.stableId(name.text);
+            if (id.isEmpty) {
+              setDialogState(
+                () => uploadMessage = 'Enter a league name first.',
+              );
+              return;
+            }
+            setDialogState(() {
+              uploading = true;
+              uploadMessage = null;
+            });
+            try {
+              final file = await openFile(
+                acceptedTypeGroups: const [
+                  XTypeGroup(
+                    label: 'Images',
+                    extensions: ['png', 'jpg', 'jpeg', 'webp'],
+                    mimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+                    uniformTypeIdentifiers: [
+                      'public.png',
+                      'public.jpeg',
+                      'org.webmproject.webp',
                     ],
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: sponsorWebsiteUrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Sponsor website (optional)',
-                        hintText: 'https://…',
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final trimmedName = name.text.trim();
-                final color = primaryColor.text.trim();
-                if (trimmedName.isEmpty ||
-                    !AssociationBrandingModel.isValidColorHex(color) ||
-                    (sponsorEnabled && sponsorName.text.trim().isEmpty) ||
-                    !_validImageReferenceOrEmpty(sponsorLogoUrl.text) ||
-                    !_validHttpsOrEmpty(sponsorWebsiteUrl.text)) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Add a league name, valid color, sponsor name when enabled, and valid logo or website references.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                final id =
-                    existing?.id ?? LeagueProfileModel.stableId(trimmedName);
-                if (id.isEmpty) return;
-                final duplicate = currentCatalog.leagues.any(
-                  (league) => league.id == id && league.id != existing?.id,
-                );
-                if (duplicate) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'A league with this name already exists. Edit that league or use a different name.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                Navigator.pop(
-                  context,
-                  LeagueProfileModel(
-                    id: id,
-                    name: trimmedName,
-                    shortName: shortName.text.trim().isEmpty
-                        ? trimmedName
-                        : shortName.text.trim(),
-                    description: description.text.trim().isEmpty
-                        ? null
-                        : description.text.trim(),
-                    divisionIds: existing?.divisionIds ?? const [],
-                    primaryColorHex: color,
-                    secondaryColorHex: existing?.secondaryColorHex ?? '#1B5E20',
-                    accentColorHex: existing?.accentColorHex ?? '#F9A825',
-                    sponsor: SponsorBrandingModel(
-                      enabled: sponsorEnabled,
-                      name: sponsorName.text.trim(),
-                      label: sponsorLabel.text.trim().isEmpty
-                          ? 'Title sponsor'
-                          : sponsorLabel.text.trim(),
-                      logoUrl: sponsorLogoUrl.text.trim().isEmpty
-                          ? null
-                          : sponsorLogoUrl.text.trim(),
-                      websiteUrl: sponsorWebsiteUrl.text.trim().isEmpty
-                          ? null
-                          : sponsorWebsiteUrl.text.trim(),
-                    ),
-                    sortOrder: existing?.sortOrder ?? 0,
+                    webWildCards: ['image/*'],
                   ),
+                ],
+              );
+              if (file == null || !context.mounted) return;
+              if (await file.length() > 2 * 1024 * 1024) {
+                throw StateError('Choose an image up to 2 MB.');
+              }
+              final response = await FirebaseFunctions.instance
+                  .httpsCallable('uploadLeagueBrandingAsset')
+                  .call<Map<Object?, Object?>>({
+                    'leagueId': id,
+                    'imageBase64': base64Encode(await file.readAsBytes()),
+                  });
+              if (context.mounted) {
+                setDialogState(
+                  () => controller.text = response.data['url'] as String,
                 );
-              },
-              child: const Text('Save league'),
+              }
+            } catch (error) {
+              if (context.mounted) {
+                setDialogState(
+                  () => uploadMessage = error is FirebaseFunctionsException
+                      ? error.message ?? 'The image could not be uploaded.'
+                      : error is StateError
+                      ? error.message
+                      : 'The image could not be uploaded.',
+                );
+              }
+            } finally {
+              if (context.mounted) setDialogState(() => uploading = false);
+            }
+          }
+
+          Widget imageField(String label, TextEditingController controller) =>
+              TextField(
+                controller: controller,
+                decoration: InputDecoration(
+                  labelText: label,
+                  suffixIcon: IconButton(
+                    tooltip: 'Upload $label',
+                    onPressed: uploading ? null : () => upload(controller),
+                    icon: const Icon(Icons.upload_outlined),
+                  ),
+                ),
+                onChanged: (_) => setDialogState(() {}),
+              );
+
+          return PopScope(
+            canPop: !uploading,
+            child: AlertDialog(
+              title: Text(existing == null ? 'Add league' : 'Edit league'),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: name,
+                        decoration: const InputDecoration(
+                          labelText: 'League name',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: shortName,
+                        decoration: const InputDecoration(
+                          labelText: 'Short name',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      imageField('League logo', leagueLogoUrl),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: description,
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                        ),
+                        maxLines: 2,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: primaryColor,
+                        decoration: const InputDecoration(
+                          labelText: 'Primary color',
+                          hintText: '#2E7D32',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.account_tree_outlined),
+                          title: Text(
+                            existing == null
+                                ? 'Divisions come after the league'
+                                : '${existing.divisionIds.length} ${existing.divisionIds.length == 1 ? 'division' : 'divisions'} beneath this league',
+                          ),
+                          subtitle: Text(
+                            existing == null
+                                ? 'Save the league, then open the league hierarchy to add its divisions.'
+                                : 'Use View league hierarchy to add or manage child divisions. Divisions cannot be assigned at the association level.',
+                          ),
+                        ),
+                      ),
+                      const Divider(),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Show a league title sponsor'),
+                        value: sponsorEnabled,
+                        onChanged: (value) =>
+                            setDialogState(() => sponsorEnabled = value),
+                      ),
+                      if (sponsorEnabled) ...[
+                        TextField(
+                          controller: sponsorName,
+                          decoration: const InputDecoration(
+                            labelText: 'Sponsor name',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: sponsorLabel,
+                          decoration: const InputDecoration(
+                            labelText: 'Sponsor label',
+                            hintText: 'Title sponsor',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        imageField('Sponsor logo', sponsorLogoUrl),
+                        if (sponsorLogoUrl.text.trim().isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          _SponsorLogoPreview(
+                            name: sponsorName.text.trim().isEmpty
+                                ? 'Sponsor'
+                                : sponsorName.text.trim(),
+                            reference: sponsorLogoUrl.text.trim(),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: sponsorWebsiteUrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Sponsor website (optional)',
+                            hintText: 'https://…',
+                          ),
+                        ),
+                      ],
+                      const Divider(),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Schedule the next sponsor'),
+                        value: scheduleEnabled,
+                        onChanged: (value) =>
+                            setDialogState(() => scheduleEnabled = value),
+                      ),
+                      if (scheduleEnabled) ...[
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            final firstDate = DateTime.parse(
+                              today,
+                            ).add(const Duration(days: 1));
+                            final initialDate = scheduledDate == null
+                                ? firstDate
+                                : DateTime.parse(scheduledDate!);
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: initialDate,
+                              firstDate: firstDate,
+                              lastDate: DateTime(firstDate.year + 3),
+                            );
+                            if (selected != null && context.mounted) {
+                              setDialogState(
+                                () => scheduledDate = selected
+                                    .toIso8601String()
+                                    .substring(0, 10),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.calendar_today_outlined),
+                          label: Text(
+                            scheduledDate == null
+                                ? 'Choose start date (Jamaica time)'
+                                : 'Starts $scheduledDate (Jamaica time)',
+                          ),
+                        ),
+                        TextField(
+                          controller: nextName,
+                          decoration: const InputDecoration(
+                            labelText: 'Next sponsor name',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        imageField('Next sponsor logo', nextLogo),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: nextWebsite,
+                          decoration: const InputDecoration(
+                            labelText: 'Next sponsor website',
+                          ),
+                        ),
+                      ],
+                      if (uploading) const LinearProgressIndicator(),
+                      if (uploadMessage != null) Text(uploadMessage!),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: uploading ? null : () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: uploading
+                      ? null
+                      : () {
+                          final trimmedName = name.text.trim();
+                          final color = primaryColor.text.trim();
+                          if (trimmedName.isEmpty ||
+                              !AssociationBrandingModel.isValidColorHex(
+                                color,
+                              ) ||
+                              !_validImageReferenceOrEmpty(
+                                leagueLogoUrl.text,
+                              ) ||
+                              (sponsorEnabled &&
+                                  sponsorName.text.trim().isEmpty) ||
+                              !_validImageReferenceOrEmpty(
+                                sponsorLogoUrl.text,
+                              ) ||
+                              !_validHttpsOrEmpty(sponsorWebsiteUrl.text) ||
+                              (scheduleEnabled &&
+                                  (scheduledDate == null ||
+                                      nextName.text.trim().isEmpty ||
+                                      !_validImageReferenceOrEmpty(
+                                        nextLogo.text,
+                                      ) ||
+                                      !_validHttpsOrEmpty(nextWebsite.text)))) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Check the league name, color, image and website references, and any scheduled sponsor name and date.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          final id =
+                              existing?.id ??
+                              LeagueProfileModel.stableId(trimmedName);
+                          if (id.isEmpty) return;
+                          final duplicate = currentCatalog.leagues.any(
+                            (league) =>
+                                league.id == id && league.id != existing?.id,
+                          );
+                          if (duplicate) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'A league with this name already exists. Edit that league or use a different name.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          Navigator.pop(
+                            context,
+                            LeagueProfileModel(
+                              id: id,
+                              name: trimmedName,
+                              shortName: shortName.text.trim().isEmpty
+                                  ? trimmedName
+                                  : shortName.text.trim(),
+                              description: description.text.trim().isEmpty
+                                  ? null
+                                  : description.text.trim(),
+                              divisionIds: existing?.divisionIds ?? const [],
+                              logoUrl: leagueLogoUrl.text.trim().isEmpty
+                                  ? null
+                                  : leagueLogoUrl.text.trim(),
+                              status:
+                                  existing?.status ??
+                                  LeagueProfileStatus.active,
+                              historicalStatistics:
+                                  existing?.historicalStatistics ?? false,
+                              seasonLabel: existing?.seasonLabel,
+                              reportedStandings:
+                                  existing?.reportedStandings ?? const [],
+                              standingsAsOf: existing?.standingsAsOf,
+                              standingsSourceUrl: existing?.standingsSourceUrl,
+                              primaryColorHex: color,
+                              secondaryColorHex:
+                                  existing?.secondaryColorHex ?? '#1B5E20',
+                              accentColorHex:
+                                  existing?.accentColorHex ?? '#F9A825',
+                              sponsor: SponsorBrandingModel(
+                                enabled: sponsorEnabled,
+                                name: sponsorName.text.trim(),
+                                label: sponsorLabel.text.trim().isEmpty
+                                    ? 'Title sponsor'
+                                    : sponsorLabel.text.trim(),
+                                logoUrl: sponsorLogoUrl.text.trim().isEmpty
+                                    ? null
+                                    : sponsorLogoUrl.text.trim(),
+                                websiteUrl:
+                                    sponsorWebsiteUrl.text.trim().isEmpty
+                                    ? null
+                                    : sponsorWebsiteUrl.text.trim(),
+                              ),
+                              scheduledSponsor: scheduleEnabled
+                                  ? ScheduledLeagueSponsor(
+                                      startsOn: scheduledDate!,
+                                      sponsor: SponsorBrandingModel(
+                                        enabled: true,
+                                        name: nextName.text.trim(),
+                                        label: 'Title sponsor',
+                                        logoUrl: nextLogo.text.trim(),
+                                        websiteUrl: nextWebsite.text.trim(),
+                                      ),
+                                    )
+                                  : null,
+                              sortOrder: existing?.sortOrder ?? 0,
+                            ),
+                          );
+                        },
+                  child: const Text('Save league'),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
     name.dispose();
     shortName.dispose();
     description.dispose();
+    leagueLogoUrl.dispose();
     sponsorName.dispose();
     sponsorLabel.dispose();
     sponsorLogoUrl.dispose();
     sponsorWebsiteUrl.dispose();
     primaryColor.dispose();
+    nextName.dispose();
+    nextLogo.dispose();
+    nextWebsite.dispose();
     if (saved == null || !context.mounted) return;
-    final current =
-        ref.read(leagueCatalogProvider).valueOrNull ??
-        const LeagueCatalogModel();
-    final retained =
-        current.leagues
-            .where((league) => league.id != saved.id)
-            .toList(growable: true)
-          ..add(saved);
-    await _save(context, ref, LeagueCatalogModel(leagues: retained));
+    try {
+      final associationId = ref.read(currentAssociationIdProvider);
+      if (associationId == null) throw StateError('No active association.');
+      await ref
+          .read(associationRepositoryProvider)
+          .saveLeagueProfile(
+            associationId: associationId,
+            previous: existing,
+            profile: saved,
+          );
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('League saved.')));
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('League could not be saved. $error')),
+        );
+      }
+    }
   }
 
   Future<void> _save(
@@ -443,6 +663,7 @@ class _LeagueCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sponsor = league.sponsorAt(DateTime.now());
     final names = divisions
         .where((division) => league.divisionIds.contains(division.id))
         .map((division) => division.name)
@@ -463,13 +684,13 @@ class _LeagueCard extends StatelessWidget {
           children: [
             Text(names.isEmpty ? 'No divisions assigned' : names),
             const SizedBox(height: 5),
-            if (league.sponsor.isActive)
+            if (sponsor.isActive)
               Row(
                 children: [
-                  if (league.sponsor.logoUrl != null) ...[
+                  if (sponsor.logoUrl != null) ...[
                     SponsorLogo(
-                      reference: league.sponsor.logoUrl!,
-                      semanticLabel: '${league.sponsor.name} logo',
+                      reference: sponsor.logoUrl!,
+                      semanticLabel: '${sponsor.name} logo',
                       width: 72,
                       height: 32,
                     ),
@@ -477,7 +698,7 @@ class _LeagueCard extends StatelessWidget {
                   ],
                   Flexible(
                     child: Text(
-                      'TITLE SPONSOR · ${league.sponsor.name}',
+                      'TITLE SPONSOR · ${sponsor.name}',
                       maxLines: 2,
                       overflow: TextOverflow.fade,
                     ),
@@ -564,12 +785,5 @@ bool _validHttpsOrEmpty(String value) {
   return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
 }
 
-bool _validImageReferenceOrEmpty(String value) {
-  final trimmed = value.trim();
-  if (trimmed.isEmpty) return true;
-  if (_validHttpsOrEmpty(trimmed)) return true;
-  if (!trimmed.startsWith('asset:assets/images/')) return false;
-  final path = trimmed.substring('asset:'.length);
-  return !path.contains('..') &&
-      RegExp(r'^assets/images/[A-Za-z0-9._/-]+$').hasMatch(path);
-}
+bool _validImageReferenceOrEmpty(String value) =>
+    value.trim().isEmpty || brandingImageReferenceOrNull(value) != null;

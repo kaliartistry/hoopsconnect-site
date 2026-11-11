@@ -14,7 +14,7 @@ const fixturePath = 'contracts/account_deletion/ad03/ownership_fixtures_v2.json'
 
 const pinnedMergedMainBlobs = Object.freeze({
   // Reconciled native/follow-inbox production roots; AD03 stays absent.
-  'functions/src/index.ts': '9819bfe400380e4c6e1fab1a4a2db23440b1f31c',
+  'functions/src/index.ts': '34f9ca43ce09326a9a4baaefcd744e4f8c158c0c',
   'firestore.rules': '2c1554fd7623fb9cbeb9423b192b1bdd3b674143',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
@@ -34,10 +34,13 @@ const pinnedMergedMainBlobs = Object.freeze({
   'docs/planning/local-game-journal-v1.md':
     'd63191edfe1de6ec26da2e2029c6260d255e9bcf',
   // Reviewed public deep-link transition: URL strategy only; AD03 stays absent.
-  'lib/main.dart': '44069fb8be78b6bef7c30dbac812b3b1ae673ba9',
+  // Reviewed web semantics only; no new startup services.
+  'lib/main.dart': '89a4aa3c2a62095b0e826551f181be1ffebae573',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; AD03 candidate imports stay excluded.
-  'lib/app/router/app_router.dart': '8005df8d18dec38fc6f64bf7bd1c47bad128f5f9',
+  // Active fan invite entry and assigned-team redirect; no lifecycle activation.
+  // Reviewed public not-found route; auth and lifecycle guards are unchanged.
+  'lib/app/router/app_router.dart': 'f511a046620d45fcc030537af4876d7f96b04e64',
 });
 
 function read(relativePath) {

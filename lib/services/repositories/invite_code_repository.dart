@@ -83,6 +83,7 @@ bool _issuedResponseMatchesRequest({
   required String expectedAssociationId,
   required String role,
   required String? teamId,
+  required bool requiresVerifiedEmail,
 }) {
   final code = issued.code;
   final invite = issued.invite;
@@ -92,9 +93,14 @@ bool _issuedResponseMatchesRequest({
       invite.associationId == expectedAssociationId &&
       invite.role == role &&
       invite.teamId == teamId &&
+      invite.requiresVerifiedEmail == requiresVerifiedEmail &&
       invite.status == 'active' &&
       invite.usesRemaining == 1;
 }
+
+bool isValidInviteRecipientEmail(String email) =>
+    email.length <= 254 &&
+    RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
 
 /// One logical invite-creation request.
 ///
@@ -106,12 +112,14 @@ bool _issuedResponseMatchesRequest({
 class InviteCreationAttempt {
   final String role;
   final String? teamId;
+  final String? recipientEmail;
   final int daysValid;
   final String operationId;
 
   const InviteCreationAttempt({
     required this.role,
     required this.teamId,
+    this.recipientEmail,
     required this.daysValid,
     required this.operationId,
   });
@@ -123,6 +131,7 @@ class InviteCreationAttempt {
     return repository.createCode(
       role: role,
       teamId: teamId,
+      recipientEmail: recipientEmail,
       daysValid: daysValid,
       operationId: operationId,
       expectedAssociationId: expectedAssociationId,
@@ -138,6 +147,7 @@ class InviteCreationAttempt {
     'associationId': associationId,
     'role': role,
     'teamId': teamId,
+    'recipientEmail': ?recipientEmail,
     'daysValid': daysValid,
     'operationId': operationId,
   };
@@ -155,6 +165,7 @@ class InviteCreationAttempt {
     }
     final role = value['role'];
     final teamId = value['teamId'];
+    final recipientEmail = value['recipientEmail'];
     final daysValid = value['daysValid'];
     final operationId = value['operationId'];
     final hasValidRepTeam =
@@ -169,6 +180,10 @@ class InviteCreationAttempt {
     if (role is! String ||
         !const {'rep', 'media', 'statistician'}.contains(role) ||
         (teamId != null && teamId is! String) ||
+        (recipientEmail != null &&
+            (role != 'rep' ||
+                recipientEmail is! String ||
+                !isValidInviteRecipientEmail(recipientEmail))) ||
         daysValid is! int ||
         daysValid < 1 ||
         daysValid > 30 ||
@@ -180,6 +195,7 @@ class InviteCreationAttempt {
     return InviteCreationAttempt(
       role: role,
       teamId: teamId as String?,
+      recipientEmail: recipientEmail as String?,
       daysValid: daysValid,
       operationId: operationId,
     );
@@ -334,6 +350,7 @@ class InviteCodeRepository {
   Future<IssuedInviteCode> createCode({
     required String role,
     String? teamId,
+    String? recipientEmail,
     required int daysValid,
     required String operationId,
     required String expectedAssociationId,
@@ -342,6 +359,7 @@ class InviteCodeRepository {
       final data = await _invoke('createPrivilegedInvite', {
         'role': role,
         'teamId': teamId,
+        'recipientEmail': ?recipientEmail,
         'daysValid': daysValid,
         'operationId': operationId,
         'authorizationSchemaVersion': authorizationSchemaVersion,
@@ -352,6 +370,7 @@ class InviteCodeRepository {
         expectedAssociationId: expectedAssociationId,
         role: role,
         teamId: teamId,
+        requiresVerifiedEmail: recipientEmail != null,
       )) {
         throw const FormatException('Invite response is inconsistent');
       }
@@ -384,6 +403,7 @@ class InviteCodeRepository {
         current.associationId != expected.associationId ||
         current.role != expected.role ||
         current.teamId != expected.teamId ||
+        current.requiresVerifiedEmail != expected.requiresVerifiedEmail ||
         current.expiresAt.toUtc() != expected.expiresAt.toUtc()) {
       throw const InviteReceiptUnknownException();
     }

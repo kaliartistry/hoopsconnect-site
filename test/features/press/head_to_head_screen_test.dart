@@ -53,7 +53,8 @@ void main() {
 
     expect(find.text('Season averages & head-to-head'), findsOneWidget);
     expect(find.text('Home Team'), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(3));
+    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
+    expect(find.text('League / season'), findsNothing);
     expect(find.textContaining('Private'), findsNothing);
   });
 

@@ -1,5 +1,22 @@
 # HoopsConnect presentation runbook
 
+## November 11 public review: 2025 NBL archive
+
+The website uses Jamaica Basketball League as the present-day heading and
+keeps the **National Basketball League (NBL)** name for its 2025 archive.
+Contemporary coverage establishes the historical name; the site does not
+assert a formal rename.
+
+| Public view | Coverage |
+| --- | --- |
+| Games | 46 supplied game reports, Feb 1 to Jul 1, 2025, from 24 Results 2025 workbooks. This is a partial ledger. [The Jamaica Star's July 2 report](https://jamaica-star.com/article/sports/20250702/record-seventh-nbl-title-urban-knights?qt-article_image_video=0) confirms the Knights' 67–56 final against the Eagles. |
+| Standings | [The Jamaica Gleaner's April 15 midseason report](https://past.jamaica-gleaner.com/article/sports/20250415/slayers-eagles-fight-mid-season-title) gives league points after nine games. It does not give win/loss totals. |
+| Stats | The [first-round workbook](JBL_LOCAL_IMPORT.md) is dated April 10 and has 188 player-team rows, with up to nine recorded appearances per row. Player averages use those appearances and have no minimum-games filter. |
+
+No results, standings, player identities, or historical totals are rebuilt
+from the partial game ledger. The web review build uses the same-origin copies
+of the exact published 2025 artwork, and labels unavailable images with initials.
+
 ## Current release: September 17, Build 33
 
 - Build 33 (`1.0.19+33`) makes both the team name and team logo actionable in
@@ -105,11 +122,10 @@ scoped JBL presentation source imports, not a claim of one database.
   Results 2025 workbooks into both projects. Original files and pre-import
   backups are retained locally. Existing season totals and standings were not
   recalculated from this incomplete game ledger.
-- Completed game-detail presentation statistics are deterministic client-side
-  examples using known performers and familiar roster names. Final scores stay
-  unchanged, player points reconcile, and two inconsistent quarter tables are
-  adjusted only in the presentation layer. Nothing writes these completions
-  back into source game stats, player season totals or standings.
+- Public game detail uses the supplied results and recaps. Player box scores and
+  period totals only appear when included in the published records; incomplete
+  or inconsistent figures are left out. Existing team and player season
+  statistics remain available separately.
 - Team pages default to Games, with upcoming fixtures, five recent results and
   an expandable list of the remaining results. Tapping a result opens its box
   score. Players & stats is one tap away and defaults to Per game, with Totals

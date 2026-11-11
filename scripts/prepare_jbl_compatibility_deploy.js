@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Generated deployment package explicitly exports only the legacy live trigger.
+// Generated deployment package explicitly exports the legacy publication triggers.
 // Never change the dormant official-stat v2 module's default entrypoint.
 const fs = require('node:fs');
 const path = require('node:path');

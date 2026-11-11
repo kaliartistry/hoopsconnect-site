@@ -1,10 +1,50 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hoops_connect/app/router/app_route_contract.dart';
 import 'package:hoops_connect/app/router/app_router.dart';
 import 'package:hoops_connect/models/user_model.dart';
 import 'package:hoops_connect/providers/auth_providers.dart';
+import 'package:hoops_connect/providers/public_league_provider.dart';
 
 void main() {
+  testWidgets(
+    'an unmatched public deep link keeps its URL and offers working navigation',
+    (tester) async {
+      const unknown = '/public/typo/more?source=qa';
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            initialBrowserLocationProvider.overrideWithValue(unknown),
+            authStateProvider.overrideWith((ref) => Stream.value(null)),
+            accountAccessStatusProvider.overrideWithValue(
+              AccountAccessStatus.signedOut,
+            ),
+            currentUserProvider.overrideWithValue(const AsyncData(null)),
+            publicLeagueSnapshotProvider.overrideWith(
+              (ref) => Stream.value(null),
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) =>
+                MaterialApp.router(routerConfig: ref.watch(routerProvider)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final scope = tester.element(find.byType(Consumer));
+      final router = ProviderScope.containerOf(scope).read(routerProvider);
+      expect(router.routeInformationProvider.value.uri.toString(), unknown);
+      expect(find.text('Page not found'), findsOneWidget);
+      await tester.tap(find.text('Games'));
+      await tester.pumpAndSettle();
+      expect(
+        router.routeInformationProvider.value.uri.path,
+        PublicRoutePaths.games,
+      );
+    },
+  );
+
   group('role and route matrix', () {
     final users = <UserRole, UserModel>{
       for (final role in UserRole.values) role: _user(role),
@@ -258,6 +298,25 @@ void main() {
           ),
           '/login?from=%2Faccount%2Fdelete',
         );
+      },
+    );
+
+    test(
+      'existing fans can redeem invites and assigned leads open My Team',
+      () {
+        String? redirect(UserModel user) => resolveAppRedirect(
+          location: Uri.parse('/join'),
+          matchedLocation: '/join',
+          accessStatus: AccountAccessStatus.active,
+          isLoggedIn: true,
+          user: user,
+        );
+        expect(redirect(users[UserRole.fan]!), isNull);
+        expect(
+          redirect(users[UserRole.rep]!.copyWith(teamId: 'team-blue')),
+          '/team/team-blue',
+        );
+        expect(redirect(users[UserRole.admin]!), isNotNull);
       },
     );
 

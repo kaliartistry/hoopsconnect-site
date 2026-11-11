@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -13,6 +14,111 @@ import 'package:hoops_connect/providers/auth_providers.dart';
 import 'package:hoops_connect/providers/public_league_provider.dart';
 
 void main() {
+  testWidgets('one-league archive uses the full header and PageDown scrolls', (
+    tester,
+  ) async {
+    const archiveId = 'jbl-2025-first-round';
+    await _pump(
+      tester,
+      _snapshot(
+        leagues: const [
+          PublicLeagueDefinition(
+            leagueId: 'jbl',
+            name: 'Jamaica Basketball League',
+            shortName: 'JBL',
+            historicalStatistics: true,
+            seasonLabel: '2025 National Basketball League (NBL) archive',
+            divisionIds: [archiveId],
+          ),
+        ],
+        schedule: [
+          for (var day = 1; day < 20; day++)
+            PublicGame(
+              gameId: 'archive-game-$day',
+              title: 'Home vs Away',
+              startTime: DateTime.utc(2025, 6, day),
+              divisionId: archiveId,
+              homeTeamName: 'Home',
+              awayTeamName: 'Away',
+              homeScore: 60,
+              awayScore: 50,
+              status: PublicGameStatus.finalResult,
+            ),
+        ],
+      ),
+      size: const Size(390, 844),
+    );
+    expect(find.byKey(const Key('public-league-dropdown')), findsNothing);
+    expect(
+      find.text('2025 National Basketball League (NBL) archive'),
+      findsOneWidget,
+    );
+    final scroller = find.descendant(
+      of: find.byKey(const Key('historical-league-scroll')),
+      matching: find.byType(Scrollable),
+    );
+    final position = tester.state<ScrollableState>(scroller).position;
+    expect(position.pixels, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(100));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'historical leaderboard shows short metrics, scope, and one-game rows',
+    (tester) async {
+      const id = 'jbl-2025-first-round';
+      const row = PublicLeader(
+        playerId: 'source-jordan-anderson',
+        displayName: 'JORDAN ANDERSON',
+        teamId: 'home',
+        teamName: 'Home',
+        divisionId: id,
+        value: 14,
+        gamesPlayed: 1,
+      );
+      await _pump(
+        tester,
+        _snapshot(
+          divisions: const [
+            PublicDivision(divisionId: id, name: '2025 archive'),
+          ],
+          leagues: const [
+            PublicLeagueDefinition(
+              leagueId: 'jbl',
+              name: 'Jamaica Basketball League',
+              shortName: 'JBL',
+              historicalStatistics: true,
+              divisionIds: [id],
+            ),
+          ],
+          leaderboards: const [
+            PublicLeaderboard(category: 'ppg', divisionId: id, rankings: [row]),
+            PublicLeaderboard(category: 'bpg', divisionId: id, rankings: [row]),
+          ],
+        ),
+        initialLocation: PublicRoutePaths.leaders,
+        size: const Size(390, 844),
+      );
+      expect(
+        find.text('First-round statistics through Apr 10, 2025'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('All recorded players, no minimum games'),
+        findsOneWidget,
+      );
+      expect(find.text('Jordan Anderson'), findsOneWidget);
+      expect(find.text('Home · 1 GP'), findsOneWidget);
+      expect(row.displayName, 'JORDAN ANDERSON');
+      await tester.tap(find.text('BLK'));
+      await tester.pumpAndSettle();
+      expect(find.text('Blocks per game'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('signed-in fan view offers a return to the member app', (
     tester,
   ) async {
@@ -439,10 +545,13 @@ void main() {
 
     final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
     expect(scaffold.backgroundColor, const Color(0xFFF4F5F6));
+    final semantics = tester.ensureSemantics();
+    await tester.pump();
     expect(
-      find.bySemanticsLabel('National Basketball League logo'),
+      find.bySemanticsLabel(RegExp('National Basketball League logo')),
       findsOneWidget,
     );
+    semantics.dispose();
     final hero = tester.widget<Container>(
       find.byKey(const Key('public-league-hero')),
     );
@@ -535,8 +644,12 @@ void main() {
 
     await tester.tap(find.text('Standings'));
     await tester.pumpAndSettle();
-    expect(find.text('TITLE SPONSOR'), findsNothing);
-    expect(find.text('Campus Courts'), findsNothing);
+    expect(find.text('TITLE SPONSOR'), findsOneWidget);
+    expect(find.text('Campus Courts'), findsOneWidget);
+    expect(
+      tester.widget<TabBar>(find.byType(TabBar)).indicatorSize,
+      TabBarIndicatorSize.tab,
+    );
 
     await tester.tap(find.text('Games'));
     await tester.pumpAndSettle();

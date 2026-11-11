@@ -767,6 +767,8 @@ class _SharePayloadBody extends StatelessWidget {
       );
     }
     if (payload.tableRows.isNotEmpty) {
+      final hasWins = payload.tableRows.any((row) => row.wins != null);
+      final hasLosses = payload.tableRows.any((row) => row.losses != null);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -776,9 +778,9 @@ class _SharePayloadBody extends StatelessWidget {
             compact: true,
           ),
           const SizedBox(height: 8),
-          const Row(
+          Row(
             children: [
-              Expanded(
+              const Expanded(
                 child: Text(
                   'TEAM',
                   style: TextStyle(
@@ -788,23 +790,25 @@ class _SharePayloadBody extends StatelessWidget {
                   ),
                 ),
               ),
-              SizedBox(
-                width: 22,
-                child: Text(
-                  'W',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 8),
+              if (hasWins)
+                const SizedBox(
+                  width: 22,
+                  child: Text(
+                    'W',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70, fontSize: 8),
+                  ),
                 ),
-              ),
-              SizedBox(
-                width: 22,
-                child: Text(
-                  'L',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 8),
+              if (hasLosses)
+                const SizedBox(
+                  width: 22,
+                  child: Text(
+                    'L',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70, fontSize: 8),
+                  ),
                 ),
-              ),
-              SizedBox(
+              const SizedBox(
                 width: 49,
                 child: Text(
                   'LEAGUE PTS',
@@ -858,7 +862,10 @@ class _SharePayloadBody extends StatelessWidget {
                               ),
                             ),
                           ),
-                          for (final record in [row.wins, row.losses])
+                          for (final record in [
+                            if (hasWins) row.wins,
+                            if (hasLosses) row.losses,
+                          ])
                             SizedBox(
                               width: 22,
                               child: Text(
@@ -892,7 +899,10 @@ class _SharePayloadBody extends StatelessWidget {
           const SizedBox(height: 5),
           Text(
             payload.tableRows.any(
-                  (row) => row.wins == null || row.losses == null,
+                  (row) =>
+                      (hasWins && row.wins == null) ||
+                      (hasLosses && row.losses == null) ||
+                      row.value == '—',
                 )
                 ? 'Equal points remain tied · — Not supplied'
                 : 'Equal points remain tied',

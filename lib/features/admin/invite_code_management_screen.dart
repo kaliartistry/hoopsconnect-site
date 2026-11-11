@@ -267,6 +267,7 @@ class _CreateInviteDialog extends ConsumerStatefulWidget {
 
 class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
   String _role = 'rep';
+  final _recipientEmail = TextEditingController();
   String? _teamId;
   int _daysValid = AppDefaults.inviteCodeDefaultDaysValid;
   InviteCreationAttempt? _attempt;
@@ -310,6 +311,12 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
     _restoreAttempt();
   }
 
+  @override
+  void dispose() {
+    _recipientEmail.dispose();
+    super.dispose();
+  }
+
   Future<void> _restoreAttempt() async {
     try {
       final attempt = await widget.attemptStore.load(
@@ -323,6 +330,7 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
           _attempt = attempt;
           _role = attempt.role;
           _teamId = attempt.teamId;
+          _recipientEmail.text = attempt.recipientEmail ?? '';
           _daysValid = attempt.daysValid;
           _ambiguous = true;
           _error =
@@ -364,11 +372,23 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
       return;
     }
 
+    final recipientEmail = _recipientEmail.text.trim().toLowerCase();
+    if (_role == 'rep' &&
+        _attempt == null &&
+        !isValidInviteRecipientEmail(recipientEmail)) {
+      setState(
+        () => _error =
+            'Enter the email address the representative uses to sign in.',
+      );
+      return;
+    }
+
     final attempt =
         _attempt ??
         InviteCreationAttempt(
           role: _role,
           teamId: _teamId,
+          recipientEmail: _role == 'rep' ? recipientEmail : null,
           daysValid: _daysValid,
           operationId: widget.operationIdFactory(),
         );
@@ -787,6 +807,20 @@ class _CreateInviteDialogState extends ConsumerState<_CreateInviteDialog> {
                         ),
                       ],
                       const SizedBox(height: 12),
+                      if (_role == 'rep') ...[
+                        TextField(
+                          key: const Key('invite-recipient-email'),
+                          controller: _recipientEmail,
+                          enabled: !_requestLocked,
+                          keyboardType: TextInputType.emailAddress,
+                          autocorrect: false,
+                          decoration: const InputDecoration(
+                            labelText: 'Representative’s account email',
+                            helperText: 'Use the email they sign in with.',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       DropdownButtonFormField<int>(
                         initialValue: _daysValid,
                         decoration: const InputDecoration(
@@ -936,6 +970,12 @@ class _IssuedInviteContent extends StatelessWidget {
         const Text(
           'Send this code now. It exists only in this window. Closing this window or the app will not recover or show it again.',
         ),
+        if (issued.invite.requiresVerifiedEmail) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'Ask the representative to sign in with the email you entered, open Profile → Join Team, and enter the code.',
+          ),
+        ],
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.all(14),

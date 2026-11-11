@@ -11,6 +11,7 @@ const {
   connectAuthEmulator,
   createUserWithEmailAndPassword,
   getAuth,
+  signInWithEmailAndPassword,
   signOut,
 } = require('firebase/auth');
 const {
@@ -20,12 +21,14 @@ const {
 } = require('firebase/functions');
 
 if (admin.apps.length === 0) {
-  admin.initializeApp({projectId: 'demo-hoopsconnect'});
+  admin.initializeApp({projectId: 'demo-hoopsconnect', storageBucket: 'demo-hoopsconnect.appspot.com'});
 }
 const adminDb = admin.firestore();
 const {capabilitiesForRole} = require('../lib/authorization');
 const leagueOperations = require('../lib/league_operations');
 const seasonOperations = require('../lib/season_operations');
+const {teamRegistrationHandler} = require('../lib/team_registration');
+const {uploadLeagueBrandingAssetHandler} = require('../lib/league_branding_assets');
 const clientApp = initializeApp({
   projectId: 'demo-hoopsconnect',
   apiKey: 'demo-key',
@@ -226,7 +229,8 @@ async function activateLeagueActor(user, authorizationSchemaVersion) {
 function leagueCallable(name) {
   return async (data) => {
     try {
-      const handler = leagueOperations[`${name}Handler`] || seasonOperations[`${name}Handler`];
+      const handler = leagueOperations[`${name}Handler`] || seasonOperations[`${name}Handler`] ||
+        {teamRegistration: teamRegistrationHandler, uploadLeagueBrandingAsset: uploadLeagueBrandingAssetHandler}[name];
       return {data: await handler(await leagueRequest(data))};
     } catch (error) {
       if (typeof error?.code === 'string' && !error.code.startsWith('functions/')) {
@@ -343,10 +347,18 @@ test('roster callables preserve exact jersey strings and representative proposal
     requestedOutcome: 'propose',
     displayName: '  Aaliyah Brown  ',
     jerseyNumber: '00',
+    uniformSizes: {shorts: ' M ', vest: 'XL', shoe: 'US 10.5'},
     reason: '  New registration  ',
   };
+  await assert.rejects(
+    submit({...firstRequest, uniformSizes: {shoe: '10\n5'}}),
+    (error) => error.code === 'functions/invalid-argument',
+  );
   const first = await submit(firstRequest);
-  const retry = await submit({...firstRequest, displayName: 'Aaliyah Brown', reason: 'New registration'});
+  const retry = await submit({
+    ...firstRequest, displayName: 'Aaliyah Brown', reason: 'New registration',
+    uniformSizes: {shorts: 'M', vest: 'XL', shoe: 'US 10.5'},
+  });
   assert.deepEqual(retry.data, first.data);
   assert.equal(first.data.status, 'approved');
   assert.equal(first.data.rosterVersion, 1);
@@ -356,6 +368,9 @@ test('roster callables preserve exact jersey strings and representative proposal
   const loaded = await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'});
   assert.equal(loaded.data.registrations[0].jerseyNumber, '00');
   assert.equal(Object.hasOwn(loaded.data.registrations[0], 'position'), false);
+  assert.deepEqual(loaded.data.registrations[0].uniformSizes, {
+    shorts: 'M', vest: 'XL', shoe: 'US 10.5',
+  });
 
   await assert.rejects(
     submit({...firstRequest, displayName: 'Changed semantics'}),
@@ -375,10 +390,15 @@ test('roster callables preserve exact jersey strings and representative proposal
     requestedOutcome: 'apply',
     displayName: 'Jordan Smith',
     jerseyNumber: 'GK-01',
+    uniformSizes: {shorts: 'Youth L', shoe: 'UK 9'},
     reason: 'Team request',
   });
   assert.equal(proposal.data.status, 'pending');
   assert.equal(proposal.data.rosterVersion, 1);
+  const pending = await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'});
+  assert.deepEqual(pending.data.proposals[0].after.uniformSizes, {
+    shorts: 'Youth L', shoe: 'UK 9',
+  });
   await assert.rejects(
     submit({
       schemaVersion: 1,
@@ -414,6 +434,38 @@ test('roster callables preserve exact jersey strings and representative proposal
   assert.equal(approved.data.rosterVersion, 2);
   const finalWorkspace = await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'});
   assert.deepEqual(finalWorkspace.data.registrations.map((entry) => entry.jerseyNumber).sort(), ['00', 'GK-01']);
+  assert.deepEqual(finalWorkspace.data.registrations.find((entry) => entry.jerseyNumber === 'GK-01').uniformSizes, {
+    shorts: 'Youth L', shoe: 'UK 9',
+  });
+
+  // An older client updating a jersey does not send the new field.
+  const legacyEdit = {
+    schemaVersion: 1,
+    operationId: 'roster_legacy_update_001',
+    teamId: 'team-a',
+    seasonId: 's2026',
+    expectedRosterVersion: 2,
+    kind: 'updatePlayer',
+    requestedOutcome: 'apply',
+    playerId: first.data.playerId,
+    registrationId: first.data.registrationId,
+    displayName: 'Aaliyah Brown',
+    jerseyNumber: '01',
+    reason: 'Correct jersey number',
+  };
+  assert.equal((await submit(legacyEdit)).data.rosterVersion, 3);
+  const afterLegacyEdit = await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'});
+  assert.deepEqual(afterLegacyEdit.data.registrations.find((entry) => entry.jerseyNumber === '01').uniformSizes, {
+    shorts: 'M', vest: 'XL', shoe: 'US 10.5',
+  });
+  assert.equal((await submit({
+    ...legacyEdit,
+    operationId: 'roster_clear_sizes_001',
+    expectedRosterVersion: 3,
+    uniformSizes: {},
+  })).data.rosterVersion, 4);
+  const afterClear = await workspace({schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'});
+  assert.deepEqual(afterClear.data.registrations.find((entry) => entry.jerseyNumber === '01').uniformSizes, {});
 
   await adminDb.doc('associations/jba/divisions/premier').update({
     deletionPending: {schemaVersion: 1, operationId: 'delete_in_progress_01'},
@@ -422,7 +474,7 @@ test('roster callables preserve exact jersey strings and representative proposal
     submit({
       ...firstRequest,
       operationId: 'roster_while_delete_01',
-      expectedRosterVersion: 2,
+      expectedRosterVersion: 4,
       displayName: 'Blocked Player',
     }),
     (error) => error.code === 'functions/failed-precondition',
@@ -1219,6 +1271,13 @@ test('invite creation and redemption cannot add membership references while a di
     operationId: 'invite_before_guard_001',
     authorizationSchemaVersion: 1,
   });
+  const inspect = httpsCallable(functions, 'inspectPrivilegedInvite');
+  const inspected = await inspect({
+    code: issued.data.code,
+    authorizationSchemaVersion: 1,
+  });
+  assert.equal(inspected.data.teamName, 'Team A');
+  assert.equal(JSON.stringify(inspected.data).includes(issued.data.code), false);
   await adminDb.doc('associations/jba/divisions/premier').update({
     deletionPending: {
       schemaVersion: 1,
@@ -1557,4 +1616,89 @@ test('season activation rejects malformed current and target version state', asy
     (error) => error.code === 'functions/failed-precondition',
   );
   assert.equal((await adminDb.doc('associations/jba').get()).get('currentSeasonId'), 's2026');
+});
+
+test('team registration saves players privately, resumes, and supports staff review', async () => {
+  await seedLeagueOperations();
+  await adminDb.doc('associations/jba/divisions/premier').update({leagueId: 'jbl'});
+  const repEmail = 'registration-rep@example.com';
+  const repId = await createLeagueOperator(repEmail, 'rep', [
+    'association.read', 'teams.represent',
+  ], 'team-a');
+  await adminDb.doc(`memberships/${repId}`).update({seasonId: 's2026', divisionId: 'premier'});
+  const registration = leagueCallable('teamRegistration');
+  const target = {schemaVersion: 1, teamId: 'team-a', seasonId: 's2026'};
+  const load = () => registration({...target, action: 'load'});
+  const mutate = (action, revision, operation, values = {}) => registration({
+    ...target, action, expectedRevision: revision, operationId: `registration_${operation}`, ...values,
+  });
+  assert.equal((await load()).data.revision, 0);
+  await assert.rejects(
+    registration({...target, teamId: 'team-b', action: 'load'}),
+    error => error.code === 'functions/permission-denied',
+  );
+  for (let i = 0; i < 5; i++) {
+    const player = {
+      id: `player-${i}`, name: `Sample Player ${i}`, jersey: i === 0 ? '00' : String(i),
+      ...(i === 0 ? {position: 'Guard', heightCm: 180.5, weightKg: 72, vestSize: 'M'} : {}),
+    };
+    const saved = (await mutate('savePlayer', i, `player_${i}`, {player})).data;
+    assert.equal(saved.revision, i + 1);
+    assert.equal(saved.players.length, i + 1);
+    if (i === 0) {
+      assert.deepEqual((await mutate('savePlayer', i, `player_${i}`, {player})).data, saved);
+      await assert.rejects(mutate('savePlayer', 0, 'stale_write', {player}),
+        error => error.code === 'functions/aborted');
+    }
+  }
+  const managerEmail = 'registration-manager@example.com';
+  await createLeagueOperator(managerEmail, 'admin', ['association.read', 'teams.manage']);
+  assert.deepEqual((await load()).data.players, []);
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, repEmail, 'correct-horse-battery-staple');
+  const resumed = (await load()).data;
+  assert.equal(resumed.players.length, 5);
+  assert.equal(resumed.players[0].jersey, '00');
+  assert.equal(resumed.players[0].heightCm, 180.5);
+  assert.equal((await mutate('submit', 5, 'submit')).data.status, 'submitted');
+  await assert.rejects(mutate('removePlayer', 6, 'locked', {playerId: 'player-0'}),
+    error => error.code === 'functions/failed-precondition');
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, managerEmail, 'correct-horse-battery-staple');
+  assert.equal((await load()).data.players.length, 5);
+  assert.equal((await mutate('review', 6, 'review')).data.status, 'reviewed');
+  assert.equal((await mutate('return', 7, 'return')).data.status, 'draft');
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, repEmail, 'correct-horse-battery-staple');
+  const returned = (await load()).data;
+  assert.equal(returned.players.length, 5);
+  assert.equal((await mutate('removePlayer', 8, 'remove', {playerId: 'player-0'})).data.players.length, 4);
+  for (let i = 4; i < 20; i++) {
+    await mutate('savePlayer', i + 5, `fill_${i}`, {
+      player: {id: `extra-${i}`, name: `Sample Extra ${i}`, jersey: String(i + 1)},
+    });
+  }
+  assert.equal((await load()).data.players.length, 20);
+  await assert.rejects(mutate('savePlayer', 25, 'over_limit', {
+    player: {id: 'over-limit', name: 'Sample Extra', jersey: '21'},
+  }), error => error.code === 'functions/resource-exhausted');
+  assert.equal((await mutate('submit', 25, 'submit_full')).data.status, 'submitted');
+});
+
+test('league logo uploads require branding authority and issue a working image link', async () => {
+  const asset = leagueCallable('uploadLeagueBrandingAsset');
+  const imageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYXQAAAAASUVORK5CYII=';
+  await createLeagueOperator('registration-upload-denied@example.com', 'admin', ['association.read', 'teams.manage']);
+  await assert.rejects(asset({leagueId: 'jbl', imageBase64}),
+    error => error.code === 'functions/permission-denied');
+  await createLeagueOperator('registration-upload-admin@example.com', 'superAdmin',
+    ['association.read', 'association.manage']);
+  await assert.rejects(asset({leagueId: 'jbl', imageBase64: 'YWJjZA=='}),
+    error => error.code === 'functions/invalid-argument');
+  const first = await asset({leagueId: 'jbl', imageBase64});
+  assert.match(first.data.url, /league-branding%2Fjbl%2F[a-f0-9]{64}\.png/);
+  const response = await fetch(first.data.url);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(imageBase64, 'base64'));
 });

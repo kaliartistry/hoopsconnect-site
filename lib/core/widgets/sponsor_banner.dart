@@ -1,10 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/association_branding_model.dart';
 import '../../providers/association_branding_providers.dart';
+import 'logo_image.dart';
 
 class SponsorBanner extends ConsumerWidget {
   final EdgeInsetsGeometry margin;
@@ -114,38 +114,54 @@ class SponsorLogo extends StatelessWidget {
     required this.width,
     required this.height,
     this.semanticLabel,
+    this.initials,
     this.onPlate = true,
+    this.lightBackground = false,
     this.platePadding,
   });
 
-  final String reference;
+  final String? reference;
   final double width;
   final double height;
   final String? semanticLabel;
+  final String? initials;
   final bool onPlate;
+  final bool lightBackground;
   final EdgeInsetsGeometry? platePadding;
 
   @override
   Widget build(BuildContext context) {
-    final fallback = _LogoFallback(label: semanticLabel);
-    final Widget image;
-    if (reference.startsWith('asset:')) {
-      image = Image.asset(
-        reference.substring('asset:'.length),
-        excludeFromSemantics: true,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
-        errorBuilder: (_, _, _) => fallback,
-      );
-    } else {
-      image = CachedNetworkImage(
-        imageUrl: reference,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
-        placeholder: (_, _) => fallback,
-        errorWidget: (_, _, _) => fallback,
-      );
-    }
+    final label = initials ?? _logoInitials(semanticLabel);
+    final fallback = Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: onPlate ? const Color(0xFF184A9E) : Colors.blue.shade700,
+            fontSize: height <= 40 ? 11 : 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+    final source = reference;
+    final pixels = width * MediaQuery.devicePixelRatioOf(context);
+    final image = source == null || source.isEmpty
+        ? fallback
+        : Image(
+            image: LogoImage(
+              source,
+              maxPixels: pixels <= 128 ? 128 : (pixels <= 256 ? 256 : 512),
+              onWhite: onPlate || lightBackground,
+            ),
+            excludeFromSemantics: true,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+            frameBuilder: (_, child, frame, _) =>
+                frame == null ? fallback : child,
+            errorBuilder: (_, _, _) => fallback,
+          );
 
     final content = SizedBox(
       width: width,
@@ -164,7 +180,10 @@ class SponsorLogo extends StatelessWidget {
               child: Padding(
                 padding:
                     platePadding ??
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    EdgeInsets.symmetric(
+                      horizontal: width < 64 ? 3 : 8,
+                      vertical: 3,
+                    ),
                 child: image,
               ),
             )
@@ -174,45 +193,6 @@ class SponsorLogo extends StatelessWidget {
       image: true,
       label: semanticLabel ?? 'Sponsor logo',
       child: ExcludeSemantics(child: content),
-    );
-  }
-}
-
-class _LogoFallback extends StatelessWidget {
-  const _LogoFallback({this.label});
-
-  final String? label;
-
-  @override
-  Widget build(BuildContext context) {
-    final initials = _logoInitials(label);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              initials,
-              style: const TextStyle(
-                color: Color(0xFF184A9E),
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.8,
-              ),
-            ),
-          ),
-          const SizedBox(height: 3),
-          Container(
-            width: 22,
-            height: 3,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE7BC5A),
-              borderRadius: BorderRadius.circular(99),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -79,7 +79,7 @@ def extract(source):
         raise ValueError(f'Totals do not reconcile: {totals} vs {source_totals}')
     return {
         'schemaVersion': 1, 'leagueName': 'Jamaica Basketball League',
-        'shortName': 'JBL', 'seasonLabel': '2025 Season', 'asOf': as_of,
+        'shortName': 'JBL', 'seasonLabel': '2025 National Basketball League (NBL) season', 'asOf': as_of,
         'source': {'fileName': Path(source).name, 'sheet': sheet.name,
                    'sha256': hashlib.sha256(Path(source).read_bytes()).hexdigest()},
         'teams': [{'teamId': tid, 'name': name, 'divisionId': 'jbl-2025-first-round',

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../app/router/app_route_contract.dart';
 import '../../core/widgets/sponsor_banner.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../platform/presentation_preview_environment.dart';
 import 'public_team_identity.dart';
 
 /// Historical aggregates are not a schedule, official standing, or live roster.
@@ -40,6 +41,12 @@ class HistoricalLeagueOverview extends StatelessWidget {
         .expand((board) => board.rankings)
         .toList();
     final theme = Theme.of(context);
+    final earliest = games.isEmpty
+        ? null
+        : DateFormat.MMMd().format(games.last.startTime.toUtc());
+    final latest = games.isEmpty
+        ? null
+        : DateFormat.yMMMd().format(games.first.startTime.toUtc());
     return Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
@@ -48,10 +55,13 @@ class HistoricalLeagueOverview extends StatelessWidget {
           key: const Key('historical-league-scroll'),
           padding: const EdgeInsets.all(20),
           children: [
-            Text(
-              league.seasonLabel ?? 'Historical statistics',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
+            Semantics(
+              header: true,
+              child: Text(
+                'Recorded results',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -60,9 +70,11 @@ class HistoricalLeagueOverview extends StatelessWidget {
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            Text(
-              '${league.description ?? ''}. Explore teams and player statistics. Per-game averages use each player’s recorded appearances.',
-            ),
+            if (earliest != null && latest != null)
+              Text(
+                '${games.length} recorded games, $earliest to $latest. '
+                'These reports cover part of the season, including games played after the first-round statistics and midseason standings.',
+              ),
             const SizedBox(height: 14),
             Align(
               alignment: Alignment.centerLeft,
@@ -73,14 +85,12 @@ class HistoricalLeagueOverview extends StatelessWidget {
                 label: const Text('Explore player statistics'),
               ),
             ),
-            const SizedBox(height: 24),
-            if (games.isNotEmpty) ...[
-              Text('Recorded results', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 6),
+            const SizedBox(height: 16),
+            if (games.isEmpty)
               const Text(
-                'Available game reports. Player season totals and standings retain their own reporting dates.',
-              ),
-              const SizedBox(height: 8),
+                'No game results have been published for this archive.',
+              )
+            else ...[
               for (final game in games)
                 _HistoricalResultCard(
                   snapshot: snapshot,
@@ -161,7 +171,8 @@ class HistoricalLeagueOverview extends StatelessWidget {
                 );
               },
             ),
-            if (league.supportingSponsorExamples.isNotEmpty) ...[
+            if (PresentationPreviewEnvironment.enabled &&
+                league.supportingSponsorExamples.isNotEmpty) ...[
               const SizedBox(height: 28),
               const Divider(),
               const SizedBox(height: 12),
@@ -236,40 +247,43 @@ class _HistoricalResultCard extends StatelessWidget {
       elevation: 2,
       shadowColor: const Color(0x220B1D3A),
       surfaceTintColor: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-          child: Column(
-            children: [
-              _HistoricalResultTeamRow(
-                snapshot: snapshot,
-                teamId: game.homeTeamId,
-                name: game.homeTeamName ?? 'Home team',
-                score: game.homeScore,
-                winner: homeWon,
-              ),
-              const SizedBox(height: 8),
-              _HistoricalResultTeamRow(
-                snapshot: snapshot,
-                teamId: game.awayTeamId,
-                name: game.awayTeamName ?? 'Away team',
-                score: game.awayScore,
-                winner: awayWon,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Text(
-                    DateFormat.yMMMd().format(game.startTime.toUtc()),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const Spacer(),
-                  const Icon(Icons.chevron_right, size: 20),
-                ],
-              ),
-            ],
+      child: Semantics(
+        button: true,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+            child: Column(
+              children: [
+                _HistoricalResultTeamRow(
+                  snapshot: snapshot,
+                  teamId: game.homeTeamId,
+                  name: game.homeTeamName ?? 'Home team',
+                  score: game.homeScore,
+                  winner: homeWon,
+                ),
+                const SizedBox(height: 8),
+                _HistoricalResultTeamRow(
+                  snapshot: snapshot,
+                  teamId: game.awayTeamId,
+                  name: game.awayTeamName ?? 'Away team',
+                  score: game.awayScore,
+                  winner: awayWon,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text(
+                      DateFormat.yMMMd().format(game.startTime.toUtc()),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const Spacer(),
+                    const Icon(Icons.chevron_right, size: 20),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -295,17 +309,19 @@ class _HistoricalResultTeamRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     children: [
-      PublicTeamMark(
-        snapshot: snapshot,
-        teamId: teamId,
-        name: name,
-        size: 34,
-        onDarkSurface: false,
+      ExcludeSemantics(
+        child: PublicTeamMark(
+          snapshot: snapshot,
+          teamId: teamId,
+          name: name,
+          size: 34,
+        ),
       ),
       const SizedBox(width: 10),
       Expanded(
         child: Text(
           compactTeamName(name),
+          semanticsLabel: name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(

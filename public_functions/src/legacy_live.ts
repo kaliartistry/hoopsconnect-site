@@ -7,16 +7,34 @@ import {buildPublicSnapshot} from "./index";
 const COLLECTIONS = ["seasons", "divisions", "events", "gameStats",
   "standings", "leaderboard", "teams", "posts"];
 
+type SourceRecord = {id: string; data: admin.firestore.DocumentData};
+
 export function buildApprovedLegacySnapshot(
   association: admin.firestore.DocumentData,
-  sources: Record<string, {id: string; data: admin.firestore.DocumentData}[]>,
+  sources: Record<string, SourceRecord[]>,
+  {excludeQaFixtures = false} = {},
 ) {
+  const published = (records: SourceRecord[]) => excludeQaFixtures ?
+    records.filter(({data}) => data.qaFixtureVersion == null) : records;
+  const divisions = published(sources.divisions);
+  const catalog = association.leagueCatalogV1;
+  if (excludeQaFixtures && catalog?.schemaVersion === 1 && Array.isArray(catalog.leagues)) {
+    const fixtureDivisions = new Set(sources.divisions
+      .filter(({data}) => data.qaFixtureVersion != null)
+      .map(({id}) => id));
+    const leagues = catalog.leagues.flatMap((league: admin.firestore.DocumentData) => {
+      if (!Array.isArray(league.divisionIds) || league.divisionIds.length === 0) return [league];
+      const divisionIds = league.divisionIds.filter((id) => !fixtureDivisions.has(id));
+      return divisionIds.length > 0 ? [{...league, divisionIds}] : [];
+    });
+    association = {...association, leagueCatalogV1: {...catalog, leagues}};
+  }
   const candidate = buildPublicSnapshot({associationId: "jba", association,
     season: sources.seasons.find((season) => season.id === association.currentSeasonId),
-    divisions: sources.divisions, events: sources.events, gameStats: sources.gameStats,
-    teams: sources.teams, posts: sources.posts,
-    standings: sources.standings.filter((row) => typeof row.data.divisionId === "string"),
-    leaderboards: sources.leaderboard.filter((row) => typeof row.data.divisionId === "string"),
+    divisions, events: published(sources.events), gameStats: published(sources.gameStats),
+    teams: published(sources.teams), posts: published(sources.posts),
+    standings: published(sources.standings).filter((row) => typeof row.data.divisionId === "string"),
+    leaderboards: published(sources.leaderboard).filter((row) => typeof row.data.divisionId === "string"),
   });
   const approved = {...candidate, certificationStatus: "certified",
     publication: {...candidate.publication, verificationStatus: "legacyApproved"}};
@@ -47,7 +65,7 @@ export async function rebuildLegacyLiveSnapshot(db: admin.firestore.Firestore) {
     const data = association.data()!;
     const seasonId = data.currentSeasonId;
     if (typeof seasonId !== "string" || !seasonId) throw new Error("Missing season");
-    const sources: Record<string, {id: string; data: admin.firestore.DocumentData}[]> = {};
+    const sources: Record<string, SourceRecord[]> = {};
     for (const name of COLLECTIONS) {
       const result = await tx.get(associationRef.collection(name).limit(1001));
       if (result.size > 1000) throw new Error("Public source bound exceeded");
@@ -55,7 +73,9 @@ export async function rebuildLegacyLiveSnapshot(db: admin.firestore.Firestore) {
     }
     const currentRef = db.doc("publicData/jba/snapshots/current");
     const current = await tx.get(currentRef);
-    const approved = buildApprovedLegacySnapshot(data, sources);
+    const approved = buildApprovedLegacySnapshot(data, sources, {
+      excludeQaFixtures: control.get("excludeQaFixtures") === true,
+    });
     if (current.data()?.snapshotVersion === approved.snapshotVersion) return;
     tx.set(currentRef, approved);
   });
@@ -78,4 +98,20 @@ export const onPublicLeagueSourceWritten = onDocumentWritten({
   if (through instanceof admin.firestore.Timestamp &&
       Date.parse(event.time) <= through.toMillis()) return;
   await rebuildLegacyLiveSnapshot(db);
+});
+
+export const onPublicLeagueBrandingWritten = onDocumentWritten({
+  document: "associations/{associationId}",
+  region: "us-central1", maxInstances: 1, concurrency: 8,
+  labels: {"jbl-compatibility": "v1-branding"},
+  timeoutSeconds: 120, memory: "256MiB", retry: false,
+}, async (event) => {
+  if (event.params.associationId !== "jba" || !event.data?.after.exists) return;
+  const before = event.data.before.data();
+  const after = event.data.after.data();
+  const brandFields = (data: admin.firestore.DocumentData | undefined) => [
+    data?.leagueCatalogV1, data?.brandingV1,
+  ];
+  if (JSON.stringify(brandFields(before)) === JSON.stringify(brandFields(after))) return;
+  await rebuildLegacyLiveSnapshot(admin.firestore());
 });

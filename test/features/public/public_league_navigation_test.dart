@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hoops_connect/features/public/public_league_screen.dart';
 import 'package:hoops_connect/models/public_league_snapshot.dart';
 import 'package:hoops_connect/providers/public_league_provider.dart';
+import 'package:url_launcher/link.dart';
 
 void main() {
   testWidgets('public Sign in goes explicitly to the login route', (
@@ -90,9 +91,14 @@ void main() {
 
     expect(find.byKey(const Key('public-games-home-tab')), findsOneWidget);
     expect(find.byIcon(Icons.home_rounded), findsOneWidget);
+    expect(find.text('App donated by Kali McCarthy'), findsNothing);
     await tester.tap(find.byKey(const Key('public-association-home')));
     await tester.pumpAndSettle();
 
     expect(router.routeInformationProvider.value.uri.path, '/public/games');
+    expect(find.text('App donated by Kali McCarthy'), findsOneWidget);
+    final kitLink = tester.widget<Link>(find.byType(Link));
+    expect(kitLink.uri?.path, '/sponsor-kit.html');
+    expect(kitLink.uri?.fragment, 'app-donor');
   });
 }

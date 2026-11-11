@@ -1,8 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'complete_game_example.dart';
-import 'jbl_presentation_game.dart';
 import 'public_team_identity.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -67,15 +65,7 @@ class _PublicGameDetailScreenState
         : _GameDetailSection.boxScore;
   }
 
-  bool get _presentation =>
-      widget.detail.game.gameId.startsWith('jbl-2025-') &&
-      widget.snapshot
-          .leagueForDivision(widget.detail.game.divisionId)
-          .historicalStatistics &&
-      (widget.detail.game.recap?.startsWith('Recorded final result.') ?? false);
-  PublicGame get game => _presentation
-      ? completeJblPresentationGame(widget.detail.game, widget.snapshot)
-      : widget.detail.game;
+  PublicGame get game => widget.detail.game;
   PublicLeagueDefinition get league =>
       widget.snapshot.leagueForDivision(game.divisionId);
 
@@ -150,7 +140,6 @@ class _PublicGameDetailScreenState
                 snapshot: widget.snapshot,
                 detail: widget.detail,
                 game: game,
-                presentation: _presentation,
               ),
               _GameDetailSection.boxScore =>
                 game.playerLines.isEmpty
@@ -177,7 +166,7 @@ class _PublicGameDetailScreenState
               canCopy: _canShare,
               shareLabel: _shareLabel,
               canShareBoxScore: _canShare && game.playerLines.isNotEmpty,
-              canExport: widget.canExportStats && _canShare && !_presentation,
+              canExport: widget.canExportStats && _canShare,
               downloadSupported: _downloader.isSupported,
               downloadingCsv: _downloadingCsv,
               actionPending: _artifactActionPending,
@@ -291,8 +280,7 @@ class _PublicGameDetailScreenState
         payload: game.isFinal
             ? BrandedSharePayload.publicGame(
                 snapshot: current.snapshot,
-                game: _presentation ? game : currentGame,
-                presentation: _presentation,
+                game: currentGame,
                 branding: branding,
                 canonicalUri: widget.canonicalUri,
               )
@@ -324,8 +312,7 @@ class _PublicGameDetailScreenState
         branding: branding,
         payload: BrandedSharePayload.publicBoxScore(
           snapshot: current.snapshot,
-          game: _presentation ? game : currentGame,
-          presentation: _presentation,
+          game: currentGame,
           branding: branding,
           canonicalUri: widget.canonicalUri,
         ),
@@ -344,17 +331,10 @@ class _PublicGameDetailScreenState
     var copied = false;
     try {
       final current = await _releaseValidator.requireCurrent(_artifactBinding);
-      final text = _presentation
-          ? BrandedSharePayload.publicBoxScore(
-              snapshot: current.snapshot,
-              game: game,
-              branding: branding,
-              presentation: true,
-            ).shareText
-          : PublicStatExportService.gameSummaryText(
-              snapshot: current.snapshot,
-              gameId: game.gameId,
-            );
+      final text = PublicStatExportService.gameSummaryText(
+        snapshot: current.snapshot,
+        gameId: game.gameId,
+      );
       await (widget.clipboardWriter ?? _writeClipboard)(text);
       copied = true;
       await _releaseValidator.requireCurrent(_artifactBinding);
@@ -766,13 +746,11 @@ class _SummarySection extends StatelessWidget {
     required this.snapshot,
     required this.detail,
     required this.game,
-    required this.presentation,
   });
 
   final PublicLeagueSnapshot snapshot;
   final PublicGameDetail detail;
   final PublicGame game;
-  final bool presentation;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -791,15 +769,6 @@ class _SummarySection extends StatelessWidget {
           : Text(game.recap!, style: Theme.of(context).textTheme.bodyLarge),
       const SizedBox(height: 20),
       Text('Period scores', style: Theme.of(context).textTheme.titleLarge),
-      if (!presentation && presentationQuarterScores(game).isNotEmpty)
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            icon: const Icon(Icons.table_rows_outlined),
-            label: const Text('View quarter breakdown'),
-            onPressed: () => showPresentationQuarters(context, game),
-          ),
-        ),
       const SizedBox(height: 8),
       game.periodScores.isEmpty
           ? const AppStateMessage(
@@ -1423,7 +1392,7 @@ class _PlayerNameCell extends StatelessWidget {
       children: [
         Expanded(
           child: Text(
-            line.displayName,
+            line.readableName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

@@ -124,7 +124,7 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('Compare'));
         await tester.pumpAndSettle();
-        expect(find.text('Season averages & head-to-head'), findsOneWidget);
+        expect(find.textContaining('averages & head-to-head'), findsOneWidget);
         expect(find.text('Players').last.hitTestable(), findsOneWidget);
         expect(find.text('Teams').last.hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);

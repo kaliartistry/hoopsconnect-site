@@ -341,6 +341,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 title: 'App',
                 child: Column(
                   children: [
+                    if (user.role == UserRole.fan) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.group_add_outlined),
+                        title: const Text('Join Team'),
+                        subtitle: const Text(
+                          'Use a team representative invite',
+                        ),
+                        onTap: () => context.push('/join'),
+                      ),
+                      const Divider(height: 1),
+                    ],
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(

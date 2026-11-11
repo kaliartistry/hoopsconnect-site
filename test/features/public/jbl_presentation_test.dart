@@ -67,19 +67,10 @@ void main() {
             matching: find.byType(Scrollable),
           )
           .first;
-      await tester.scrollUntilVisible(
-        find.text(
-          'Illustrative placements only. These are not confirmed JBL sponsors.',
-        ),
-        300,
-        scrollable: scrollable,
-      );
-      expect(
-        find.text(
-          'Illustrative placements only. These are not confirmed JBL sponsors.',
-        ),
-        findsOneWidget,
-      );
+      final position = tester.state<ScrollableState>(scrollable).position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(find.text('Demo supporting sponsor examples'), findsNothing);
       final firstTeam = find.byKey(
         const Key('historical-team-central-celtics'),
       );
