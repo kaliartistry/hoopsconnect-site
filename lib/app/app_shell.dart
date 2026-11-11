@@ -6,9 +6,11 @@ import '../core/widgets/offline_banner.dart';
 import '../core/widgets/responsive_layout.dart';
 import '../core/widgets/sponsor_banner.dart';
 import '../models/user_model.dart';
+import '../providers/association_branding_providers.dart';
 import '../providers/connectivity_providers.dart';
 import '../providers/auth_providers.dart';
 import '../providers/division_providers.dart';
+import '../providers/public_league_provider.dart';
 import '../providers/role_preview_provider.dart';
 import '../providers/team_providers.dart';
 import '../features/notifications/notifications_screen.dart';
@@ -207,7 +209,9 @@ class AppShell extends ConsumerWidget {
                             actualUser?.teamId != null)
                           _MyTeamLink(teamId: actualUser!.teamId!),
                         if (showLeagueScope)
-                          const _LeagueScopeBar()
+                          _LeagueScopeBar(
+                            archivePath: _archivePath(currentBranch),
+                          )
                         else
                           const Align(
                             alignment: Alignment.centerRight,
@@ -246,7 +250,7 @@ class AppShell extends ConsumerWidget {
                 if (actualUser?.isRep == true && actualUser?.teamId != null)
                   _MyTeamLink(teamId: actualUser!.teamId!),
                 if (showLeagueScope)
-                  const _LeagueScopeBar()
+                  _LeagueScopeBar(archivePath: _archivePath(currentBranch))
                 else
                   const Align(
                     alignment: Alignment.centerRight,
@@ -286,6 +290,12 @@ class AppShell extends ConsumerWidget {
       ),
     );
   }
+
+  String _archivePath(int branch) => switch (branch) {
+    1 => PublicRoutePaths.standings,
+    2 => PublicRoutePaths.leaders,
+    _ => PublicRoutePaths.games,
+  };
 }
 
 class _MyTeamLink extends ConsumerWidget {
@@ -317,14 +327,28 @@ class _MyTeamLink extends ConsumerWidget {
 }
 
 class _LeagueScopeBar extends ConsumerWidget {
-  const _LeagueScopeBar();
+  const _LeagueScopeBar({required this.archivePath});
+
+  final String archivePath;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final divisions =
-        ref.watch(divisionsStreamProvider).valueOrNull ?? const [];
-    final selectedDivisionId = ref.watch(selectedDivisionIdProvider);
-    final selectedDivision = ref.watch(selectedDivisionProvider);
+    final divisions = ref.watch(activeDivisionsProvider);
+    final leagues =
+        ref.watch(leagueCatalogProvider).valueOrNull?.orderedActive ?? const [];
+    final requestedDivisionId = ref.watch(selectedDivisionIdProvider);
+    final selectedDivision = divisions
+        .where((division) => division.id == requestedDivisionId)
+        .firstOrNull;
+    final selectedDivisionId = selectedDivision?.id;
+    final league = leagues.length == 1
+        ? leagues.first
+        : leagues
+              .where((entry) => entry.id == selectedDivision?.leagueId)
+              .firstOrNull;
+    final seasonLabel = league?.historicalStatistics == true
+        ? league?.seasonLabel
+        : null;
 
     if (divisions.isEmpty) {
       return const Align(
@@ -360,52 +384,81 @@ class _LeagueScopeBar extends ConsumerWidget {
               ),
             ),
             const SizedBox(width: 10),
-            Expanded(
-              child: Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.divisionTint(selectedDivisionId),
-                  border: Border.all(
-                    color: AppColors.divisionBorder(selectedDivisionId),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
+            if (leagues.length == 1 && divisions.length == 1)
+              Expanded(
+                child: Text(
+                  league!.name,
+                  style: Theme.of(context).textTheme.titleSmall,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String?>(
-                    value: selectedDivisionId,
-                    isExpanded: true,
+              )
+            else
+              Expanded(
+                child: Container(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.divisionTint(selectedDivisionId),
+                    border: Border.all(
+                      color: AppColors.divisionBorder(selectedDivisionId),
+                    ),
                     borderRadius: BorderRadius.circular(12),
-                    icon: Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: accentColor,
-                    ),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('All Leagues'),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String?>(
+                      value: selectedDivisionId,
+                      isExpanded: true,
+                      borderRadius: BorderRadius.circular(12),
+                      icon: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: accentColor,
                       ),
-                      ...divisions.map(
-                        (division) => DropdownMenuItem<String?>(
-                          value: division.id,
-                          child: Text(division.name),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      items: [
+                        DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text(
+                            leagues.length > 1
+                                ? 'All leagues'
+                                : 'All divisions',
+                          ),
                         ),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      ref.read(selectedDivisionIdProvider.notifier).state =
-                          value;
-                    },
+                        ...divisions.map(
+                          (division) => DropdownMenuItem<String?>(
+                            value: division.id,
+                            child: Text(division.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        ref.read(selectedDivisionIdProvider.notifier).state =
+                            value;
+                      },
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (selectedDivision != null) ...[
+            if (seasonLabel != null && league != null) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: ActionChip(
+                  label: Text(seasonLabel, overflow: TextOverflow.ellipsis),
+                  tooltip: 'Open historical records for ${league.name}',
+                  onPressed: () {
+                    ref.read(publicSelectedLeagueIdProvider.notifier).state =
+                        league.id;
+                    context.push(archivePath);
+                  },
+                ),
+              ),
+            ],
+            if (selectedDivision != null &&
+                (leagues.length != 1 || divisions.length != 1)) ...[
               const SizedBox(width: 10),
               TextButton(
                 onPressed: () {
