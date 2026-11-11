@@ -163,13 +163,16 @@ class _PublicPlayerDetailScreenState
                     const SizedBox(height: 24),
                     Text(
                       league.historicalStatistics
-                          ? '${league.seasonLabel} · Per-game averages'
+                          ? 'Per-game averages'
                           : 'Published season stats',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: const Color(0xFF0B1D3A),
                         fontWeight: FontWeight.w900,
                       ),
                     ),
+                    if (league.firstRoundStatisticsLabel
+                        case final String scope)
+                      Text(scope),
                     const SizedBox(height: 8),
                     _PlayerSectionCard(
                       child: Column(
@@ -231,7 +234,7 @@ class _PublicPlayerDetailScreenState
                     const SizedBox(height: 12),
                     Text(
                       league.historicalStatistics
-                          ? '${league.description}. Cumulative statistics through the recorded date.'
+                          ? 'Averages use this player’s recorded games.'
                           : 'Only fields cleared for this public snapshot are shown. No profile, contact, school, guardian, or account data is loaded.',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -309,9 +312,9 @@ class _PlayerHero extends StatelessWidget {
           radius: 34,
           backgroundColor: Colors.white,
           child: Text(
-            detail.displayName.trim().isEmpty
+            detail.readableName.trim().isEmpty
                 ? '?'
-                : detail.displayName.trim()[0].toUpperCase(),
+                : detail.readableName.trim()[0].toUpperCase(),
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
               color: const Color(0xFF184A9E),
               fontWeight: FontWeight.w900,
@@ -324,7 +327,7 @@ class _PlayerHero extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                detail.displayName,
+                detail.readableName,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(

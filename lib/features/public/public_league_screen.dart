@@ -37,126 +37,158 @@ class PublicLeagueScreen extends ConsumerWidget {
     final associationLogo =
         published?.effectiveAssociationBrand.logoUrl ??
         'asset:assets/images/jba_logo.png';
-    return DefaultTabController(
-      length: 4,
-      initialIndex: initialTab,
-      child: Scaffold(
-        backgroundColor: Theme.of(context).brightness == Brightness.light
-            ? const Color(0xFFF4F5F6)
-            : Theme.of(context).scaffoldBackgroundColor,
-        appBar: AppBar(
-          backgroundColor: AppColors.primary,
-          flexibleSpace: const DecoratedBox(
-            decoration: BoxDecoration(gradient: publicRoyalGradient),
-          ),
-          title: Semantics(
-            button: true,
-            label: 'Jamaica Basketball home',
-            child: Tooltip(
-              message: 'Back to Games',
-              child: InkWell(
-                key: const Key('public-association-home'),
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => context.go(PublicRoutePaths.games),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SponsorLogo(
-                        key: const Key('public-association-logo'),
-                        reference: associationLogo,
-                        semanticLabel: 'Jamaica Basketball Association crest',
-                        width: 28,
-                        height: 28,
-                        onPlate: false,
-                      ),
-                      const SizedBox(width: 10),
-                      const Flexible(child: Text('Jamaica Basketball')),
-                    ],
+    return _LeaguePageScroll(
+      child: DefaultTabController(
+        key: ValueKey(initialTab),
+        length: 4,
+        initialIndex: initialTab,
+        child: Scaffold(
+          backgroundColor: Theme.of(context).brightness == Brightness.light
+              ? const Color(0xFFF4F5F6)
+              : Theme.of(context).scaffoldBackgroundColor,
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            titleSpacing: 16,
+            backgroundColor: AppColors.primary,
+            flexibleSpace: const DecoratedBox(
+              decoration: BoxDecoration(gradient: publicRoyalGradient),
+            ),
+            title: Semantics(
+              button: true,
+              label: 'Jamaica Basketball home',
+              child: Tooltip(
+                message: 'Back to Games',
+                child: InkWell(
+                  key: const Key('public-association-home'),
+                  borderRadius: BorderRadius.circular(8),
+                  focusColor: const Color(0x66FFDD76),
+                  onTap: () => context.go(PublicRoutePaths.games),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SponsorLogo(
+                          key: const Key('public-association-logo'),
+                          reference: associationLogo,
+                          semanticLabel: 'Jamaica Basketball Association crest',
+                          width: 28,
+                          height: 28,
+                          onPlate: false,
+                        ),
+                        const SizedBox(width: 10),
+                        const Flexible(child: Text('Jamaica Basketball')),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
+            foregroundColor: Colors.white,
+            actions: [
+              if (signedInUser != null)
+                const NotificationBell(color: Colors.white),
+              if (signedInUser == null)
+                TextButton(
+                  onPressed: () => context.go('/login'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  child: const Text('Sign in'),
+                )
+              else
+                TextButton(
+                  key: const Key('public-back-to-app'),
+                  onPressed: () => context.canPop()
+                      ? context.pop()
+                      : context.go(AppRouteContract.landingFor(signedInUser)),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  child: const Text('Back to app'),
+                ),
+            ],
           ),
-          foregroundColor: Colors.white,
-          actions: [
-            if (signedInUser != null)
-              const NotificationBell(color: Colors.white),
-            if (signedInUser == null)
-              TextButton(
-                onPressed: () => context.go('/login'),
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
-                child: const Text('Sign in'),
-              )
-            else
-              TextButton(
-                key: const Key('public-back-to-app'),
-                onPressed: () => context.canPop()
-                    ? context.pop()
-                    : context.go(AppRouteContract.landingFor(signedInUser)),
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
-                child: const Text('Back to app'),
-              ),
-          ],
-        ),
-        bottomNavigationBar: Builder(
-          builder: (context) {
-            final tabs = DefaultTabController.of(context);
-            return ListenableBuilder(
-              listenable: tabs,
-              builder: (context, _) {
-                if (tabs.index != 0) return const SizedBox.shrink();
+          bottomNavigationBar: Builder(
+            builder: (context) {
+              final tabs = DefaultTabController.of(context);
+              return ListenableBuilder(
+                listenable: tabs,
+                builder: (context, _) {
+                  if (tabs.index != 0) return const SizedBox.shrink();
 
-                return const _AppDonorCredit();
-              },
-            );
-          },
-        ),
-        body: snapshot.when(
-          loading: () => const Center(
-            child: AppLoadingState(label: 'Loading published league data'),
-          ),
-          error: (_, _) => _PublicState(
-            title: 'Published data could not be loaded',
-            message:
-                'No private league records were used as a fallback. Check your connection and try again.',
-            tone: AppStateTone.error,
-            onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
-          ),
-          data: (data) {
-            if (data == null) {
-              return _PublicState(
-                title: 'Published data unavailable',
-                message:
-                    'The league has not published a public snapshot yet. No private data is shown.',
-                onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+                  return const _AppDonorCredit();
+                },
               );
-            }
-            return switch (data.version.state) {
-              PublicReleaseState.retracted => _PublicState(
-                title: 'This public release was withdrawn',
-                message:
-                    'Previously loaded scores and exports are not presented as current. Try again later for a new release.',
-                tone: AppStateTone.warning,
-                onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
-              ),
-              PublicReleaseState.unavailable => _PublicState(
-                title: 'Public league data unavailable',
-                message:
-                    'There is no active public release. No private source records were used.',
-                onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
-              ),
-              PublicReleaseState.published => _PublishedLeague(
-                snapshot: data,
-                tabIndex: initialTab,
-              ),
-            };
-          },
+            },
+          ),
+          body: snapshot.when(
+            loading: () => const Center(
+              child: AppLoadingState(label: 'Loading published league data'),
+            ),
+            error: (_, _) => _PublicState(
+              title: 'Published data could not be loaded',
+              message:
+                  'No private league records were used as a fallback. Check your connection and try again.',
+              tone: AppStateTone.error,
+              onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+            ),
+            data: (data) {
+              if (data == null) {
+                return _PublicState(
+                  title: 'Published data unavailable',
+                  message:
+                      'The league has not published a public snapshot yet. No private data is shown.',
+                  onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+                );
+              }
+              return switch (data.version.state) {
+                PublicReleaseState.retracted => _PublicState(
+                  title: 'This public release was withdrawn',
+                  message:
+                      'Previously loaded scores and exports are not presented as current. Try again later for a new release.',
+                  tone: AppStateTone.warning,
+                  onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+                ),
+                PublicReleaseState.unavailable => _PublicState(
+                  title: 'Public league data unavailable',
+                  message:
+                      'There is no active public release. No private source records were used.',
+                  onRetry: () => ref.invalidate(publicLeagueSnapshotProvider),
+                ),
+                PublicReleaseState.published => _PublishedLeague(
+                  snapshot: data,
+                  tabIndex: initialTab,
+                ),
+              };
+            },
+          ),
         ),
       ),
     );
   }
+}
+
+class _LeaguePageScroll extends StatefulWidget {
+  const _LeaguePageScroll({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_LeaguePageScroll> createState() => _LeaguePageScrollState();
+}
+
+class _LeaguePageScrollState extends State<_LeaguePageScroll> {
+  final _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => PrimaryScrollController(
+    controller: _controller,
+    automaticallyInheritForPlatforms: TargetPlatform.values.toSet(),
+    child: Focus(autofocus: true, skipTraversal: true, child: widget.child),
+  );
 }
 
 class _PublishedLeague extends ConsumerWidget {
@@ -177,32 +209,21 @@ class _PublishedLeague extends ConsumerWidget {
 
     return Column(
       children: [
-        if (tabIndex == 0)
-          _LeagueSwitcher(
-            snapshot: snapshot,
-            selected: selected,
-            onChanged: (leagueId) =>
-                ref.read(publicSelectedLeagueIdProvider.notifier).state =
-                    leagueId,
-          )
-        else
-          _LeagueContextBar(
-            snapshot: snapshot,
-            selected: selected,
-            onChanged: (leagueId) =>
-                ref.read(publicSelectedLeagueIdProvider.notifier).state =
-                    leagueId,
-          ),
+        _LeagueSwitcher(
+          snapshot: snapshot,
+          selected: selected,
+          onChanged: (leagueId) =>
+              ref.read(publicSelectedLeagueIdProvider.notifier).state =
+                  leagueId,
+        ),
         const _PublicTabBar(),
         Expanded(
-          child: TabBarView(
-            children: [
-              _GamesTab(snapshot: snapshot, league: selected),
-              _MediaTab(snapshot: snapshot, league: selected),
-              _StandingsTab(snapshot: snapshot, league: selected),
-              _LeadersTab(snapshot: snapshot, league: selected),
-            ],
-          ),
+          child: switch (tabIndex) {
+            1 => _MediaTab(snapshot: snapshot, league: selected),
+            2 => _StandingsTab(snapshot: snapshot, league: selected),
+            3 => _LeadersTab(snapshot: snapshot, league: selected),
+            _ => _GamesTab(snapshot: snapshot, league: selected),
+          },
         ),
       ],
     );
@@ -221,6 +242,12 @@ class _PublicTabBar extends StatelessWidget {
     shadowColor: const Color(0x24000000),
     child: TabBar(
       indicatorColor: AppColors.accent,
+      indicatorSize: TabBarIndicatorSize.tab,
+      overlayColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.focused)
+            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.18)
+            : null,
+      ),
       labelPadding: const EdgeInsets.symmetric(horizontal: 4),
       onTap: (index) {
         final destination = switch (index) {
@@ -301,7 +328,7 @@ class _LeagueSwitcher extends StatelessWidget {
 
     Widget leaguePicker() => Container(
       width: 160,
-      height: 32,
+      height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.12),
@@ -319,6 +346,7 @@ class _LeagueSwitcher extends StatelessWidget {
               ? MediaQuery.sizeOf(context).width - 32
               : 360,
           dropdownColor: theme.colorScheme.surface,
+          focusColor: const Color(0x77FFDD76),
           iconEnabledColor: Colors.white,
           selectedItemBuilder: (context) => [
             for (final _ in snapshot.availableLeagues)
@@ -373,27 +401,28 @@ class _LeagueSwitcher extends StatelessWidget {
     final leagueIdentity = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        _LeagueMark(league: selected, color: primary, size: compact ? 56 : 76),
+        _LeagueMark(league: selected, size: compact ? 50 : 64),
         SizedBox(width: compact ? 12 : 18),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                selected.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    (narrow
-                            ? theme.textTheme.titleMedium
-                            : compact
-                            ? theme.textTheme.titleLarge
-                            : theme.textTheme.headlineMedium)
-                        ?.copyWith(
-                          height: 1.08,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
+              Semantics(
+                header: true,
+                child: Text(
+                  selected.name,
+                  style:
+                      (narrow
+                              ? theme.textTheme.titleMedium
+                              : compact
+                              ? theme.textTheme.titleLarge
+                              : theme.textTheme.headlineMedium)
+                          ?.copyWith(
+                            height: 1.08,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -401,8 +430,6 @@ class _LeagueSwitcher extends StatelessWidget {
                     (compact
                         ? snapshot.seasonName
                         : '${snapshot.seasonName}${divisions.isEmpty ? '' : ' · ${divisions.map((division) => division.name).join(' · ')}'}'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: Colors.white.withValues(alpha: 0.72),
                 ),
@@ -418,12 +445,7 @@ class _LeagueSwitcher extends StatelessWidget {
               queryParameters: {'follow': selected.leagueId},
             ).toString(),
           ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.white,
-            side: BorderSide(color: Colors.white.withValues(alpha: 0.55)),
-            minimumSize: Size(0, compact ? 36 : 40),
-            padding: EdgeInsets.symmetric(horizontal: compact ? 11 : 15),
-          ),
+          style: _heroButtonStyle(compact),
           icon: const Icon(Icons.star_border_rounded, size: 18),
           label: const Text('Follow'),
         ),
@@ -446,29 +468,30 @@ class _LeagueSwitcher extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: compact ? 16 : 36,
-                vertical: compact ? 14 : 24,
+                vertical: compact ? 12 : 16,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      leaguePicker(),
-                      const Spacer(),
-                      Text(
-                        '${snapshot.availableLeagues.indexWhere((league) => league.leagueId == selected.leagueId) + 1} of ${snapshot.availableLeagues.length} leagues',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: Colors.white.withValues(alpha: 0.68),
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: compact ? 14 : 18),
+                  if (snapshot.availableLeagues.length > 1) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: leaguePicker(),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   if (compact) ...[
                     leagueIdentity,
                     if (sponsor.isActive) ...[
-                      const SizedBox(height: 16),
-                      _LeagueSponsorIdentity(sponsor: sponsor, compact: true),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: _LeagueSponsorIdentity(
+                          sponsor: sponsor,
+                          compact: true,
+                          isJbl: selected.leagueId == 'jbl',
+                        ),
+                      ),
                     ],
                   ] else
                     Row(
@@ -480,6 +503,7 @@ class _LeagueSwitcher extends StatelessWidget {
                           _LeagueSponsorIdentity(
                             sponsor: sponsor,
                             compact: false,
+                            isJbl: selected.leagueId == 'jbl',
                           ),
                         ],
                       ],
@@ -494,82 +518,18 @@ class _LeagueSwitcher extends StatelessWidget {
   }
 }
 
-class _LeagueContextBar extends StatelessWidget {
-  const _LeagueContextBar({
-    required this.snapshot,
-    required this.selected,
-    required this.onChanged,
-  });
-
-  final PublicLeagueSnapshot snapshot;
-  final PublicLeagueDefinition selected;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = _publicColor(
-      selected.primaryColorHex,
-      const Color(0xFF234EBD),
-    );
-    return Material(
-      color: theme.colorScheme.surface,
-      elevation: 1,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1120),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                _LeagueMark(league: selected, color: color, size: 32),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      key: const Key('public-league-dropdown'),
-                      value: selected.leagueId,
-                      isExpanded: true,
-                      borderRadius: BorderRadius.circular(12),
-                      items: [
-                        for (final league in snapshot.availableLeagues)
-                          DropdownMenuItem(
-                            key: Key('public-league-${league.leagueId}'),
-                            value: league.leagueId,
-                            child: Text(
-                              league.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) onChanged(value);
-                      },
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Choose teams to follow in ${selected.name}',
-                  onPressed: () => context.go(
-                    Uri(
-                      path: '/settings',
-                      queryParameters: {'follow': selected.leagueId},
-                    ).toString(),
-                  ),
-                  icon: const Icon(Icons.star_border_rounded),
-                ),
-              ],
-            ),
-          ),
-        ),
+ButtonStyle _heroButtonStyle(bool compact) =>
+    OutlinedButton.styleFrom(
+      foregroundColor: Colors.white,
+      minimumSize: const Size(0, 44),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14, vertical: 4),
+    ).copyWith(
+      side: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.focused)
+            ? const BorderSide(color: Color(0xFFFFDD76), width: 3)
+            : const BorderSide(color: Color(0xB3FFFFFF)),
       ),
     );
-  }
-}
 
 class _LeagueDot extends StatelessWidget {
   const _LeagueDot({required this.color, this.semanticLabel});
@@ -598,153 +558,72 @@ class _LeagueDot extends StatelessWidget {
 }
 
 class _LeagueMark extends StatelessWidget {
-  const _LeagueMark({
-    required this.league,
-    required this.color,
-    required this.size,
-  });
+  const _LeagueMark({required this.league, required this.size});
 
   final PublicLeagueDefinition league;
-  final Color color;
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    if (league.logoUrl != null) {
-      final isWidePresentationMark = league.logoUrl!.contains(
-        'nbl_jamaica_logo.png',
-      );
-      if (isWidePresentationMark) {
-        return SizedBox(
-          width: size * 1.64,
-          height: size,
-          child: SponsorLogo(
-            reference: league.logoUrl!,
-            semanticLabel: '${league.name} logo',
-            width: size * 1.64,
-            height: size,
-            onPlate: false,
-          ),
-        );
-      }
-      final radius = BorderRadius.circular(size <= 32 ? 8 : 12);
-      return Container(
-        width: size,
-        height: size,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          borderRadius: radius,
-          color: Colors.white,
-          border: Border.all(color: Colors.white.withValues(alpha: 0.86)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x36000000),
-              blurRadius: 12,
-              offset: Offset(0, 4),
-            ),
-          ],
-        ),
-        child: SponsorLogo(
-          reference: league.logoUrl!,
-          semanticLabel: '${league.name} logo',
-          width: size,
-          height: size,
-          onPlate: false,
-        ),
-      );
-    }
-    final abbreviation = league.shortName.trim().isEmpty
-        ? league.name.trim()
-        : league.shortName.trim();
-    return Semantics(
-      image: true,
-      label: '${league.name} league mark',
-      child: ExcludeSemantics(
-        child: Container(
-          width: size,
-          height: size,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(size <= 32 ? 8 : 12),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
-          ),
-          child: Text(
-            abbreviation.length <= 3
-                ? abbreviation.toUpperCase()
-                : abbreviation.substring(0, 3).toUpperCase(),
-            style: TextStyle(
-              color: color,
-              fontSize: size <= 32 ? 9 : (size <= 56 ? 13 : 18),
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-      ),
+    final isWide = league.logoUrl?.contains('nbl_jamaica_logo.png') ?? false;
+    return SponsorLogo(
+      reference: league.logoUrl,
+      semanticLabel: '${league.name} logo',
+      initials: league.shortName,
+      width: isWide ? size * 1.64 : size,
+      height: size,
+      onPlate: !isWide,
+      platePadding: const EdgeInsets.all(2),
     );
   }
 }
 
 class _LeagueSponsorIdentity extends StatelessWidget {
-  const _LeagueSponsorIdentity({required this.sponsor, required this.compact});
+  const _LeagueSponsorIdentity({
+    required this.sponsor,
+    required this.compact,
+    required this.isJbl,
+  });
 
   final PublicSponsor sponsor;
   final bool compact;
+  final bool isJbl;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Semantics(
-      container: true,
-      excludeSemantics: true,
-      label: '${sponsor.label}: ${sponsor.name}',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          if (sponsor.logoUrl != null)
-            SponsorLogo(
-              key: const Key('public-league-sponsor-logo'),
-              reference: sponsor.logoUrl!,
-              semanticLabel: '${sponsor.name} logo',
-              width: compact ? 160 : 240,
-              height: compact ? 56 : 80,
-            )
-          else
-            Container(
-              width: compact ? 160 : 240,
-              height: compact ? 56 : 80,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(compact ? 10 : 12),
-              ),
-              child: Text(
-                sponsor.name,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: const Color(0xFF141A15),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          const SizedBox(width: 12),
-          Column(
-            mainAxisSize: MainAxisSize.min,
+    final website = Uri.tryParse(sponsor.websiteUrl ?? '');
+    final target =
+        website != null && website.scheme == 'https' && website.host.isNotEmpty
+        ? website
+        : isJbl && sponsor.name.toLowerCase() == 'foska oats'
+        ? _sponsorKitUri('jbl-sponsors')
+        : null;
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SponsorLogo(
+          key: const Key('public-league-sponsor-logo'),
+          reference: sponsor.logoUrl,
+          semanticLabel: '${sponsor.name} logo',
+          width: compact ? 86 : 132,
+          height: compact ? 34 : 44,
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 sponsor.label.toUpperCase(),
                 style: theme.textTheme.labelSmall?.copyWith(
-                  letterSpacing: 0.7,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white.withValues(alpha: 0.72),
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFFE4EBFF),
                 ),
               ),
               Text(
                 sponsor.name,
-                maxLines: 2,
-                overflow: TextOverflow.fade,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
@@ -752,9 +631,29 @@ class _LeagueSponsorIdentity extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        if (target != null) ...[
+          const SizedBox(width: 8),
+          const Icon(Icons.chevron_right, size: 16),
         ],
-      ),
+      ],
     );
+    final label = '${sponsor.label}: ${sponsor.name}';
+    return target == null
+        ? Semantics(label: label, excludeSemantics: true, child: content)
+        : Link(
+            uri: target,
+            target: LinkTarget.self,
+            builder: (context, followLink) => OutlinedButton(
+              onPressed: followLink,
+              style: _heroButtonStyle(compact),
+              child: Semantics(
+                label: label,
+                excludeSemantics: true,
+                child: content,
+              ),
+            ),
+          );
   }
 }
 
@@ -1876,28 +1775,29 @@ class _MediaTab extends StatelessWidget {
           key: const Key('public-media-scroll'),
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
           children: [
-            Text(
-              'Latest from ${league.shortName}',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Published league news, announcements, and game-day updates.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            Semantics(
+              header: true,
+              child: Text(
+                'League media',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
-            const SizedBox(height: 18),
-            if (items.isEmpty)
-              const AppStateMessage(
-                title: 'No media published',
-                message:
-                    'There are no public stories or announcements for this league yet.',
-                icon: Icons.newspaper_outlined,
-              )
-            else
+            const SizedBox(height: 12),
+            if (items.isEmpty) ...[
+              const Text(
+                'No stories or announcements have been published for this league yet.',
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton(
+                  onPressed: () => context.go(PublicRoutePaths.games),
+                  child: const Text('Browse games'),
+                ),
+              ),
+            ] else
               for (final item in items) ...[
                 _PublicMediaCard(item: item, snapshot: snapshot),
                 const SizedBox(height: 14),
@@ -2067,6 +1967,9 @@ class _StandingsTabState extends ConsumerState<_StandingsTab> {
               (_divisionId == null || standing.divisionId == _divisionId),
         )
         .toList(growable: false);
+    final hasRecord = standings.any(
+      (row) => row.wins != null || row.losses != null,
+    );
     final standingSections = <String?, List<PublicStanding>>{};
     for (final standing in standings) {
       standingSections
@@ -2227,13 +2130,15 @@ class _StandingsTabState extends ConsumerState<_StandingsTab> {
                                       ),
                                     ),
                                     subtitle: Text(recordDetails),
-                                    trailing: Text(
-                                      _record(row.wins, row.losses),
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
+                                    trailing: hasRecord
+                                        ? Text(
+                                            _record(row.wins, row.losses),
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          )
+                                        : null,
                                   );
                                 },
                               ),
@@ -2292,157 +2197,180 @@ class _LeadersTabState extends ConsumerState<_LeadersTab> {
         ? 0
         : _selected.clamp(0, boards.length - 1);
     final board = boards.isEmpty ? null : boards[safeIndex];
-    return Align(
-      alignment: Alignment.topCenter,
+    final qualification = board == null
+        ? null
+        : widget.league.qualificationFor(board);
+    final statsScope = widget.league.firstRoundStatisticsLabel;
+    final duplicateCategories =
+        boards.map((b) => b.category).toSet().length < boards.length;
+    return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1120),
-        child: SizedBox(
-          width: double.infinity,
-          height: double.infinity,
-          child: Column(
-            children: [
-              const PublicStatsNavigation(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                child: _DivisionFilter(
-                  divisions: widget.snapshot.divisionsForLeague(
-                    widget.league.leagueId,
-                  ),
-                  value: _divisionId,
-                  onChanged: (value) => setState(() {
-                    _divisionId = value;
-                    _selected = 0;
-                  }),
-                ),
-              ),
-              if (boards.isNotEmpty)
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.all(12),
-                  child: SegmentedButton<int>(
-                    segments: [
-                      for (var i = 0; i < boards.length; i++)
-                        ButtonSegment(
-                          value: i,
-                          label: Text(
-                            _leaderboardSegmentLabel(
-                              widget.snapshot,
-                              boards[i],
-                              includeDivision: _divisionId == null,
-                            ),
-                          ),
-                        ),
-                    ],
-                    selected: {safeIndex},
-                    onSelectionChanged: (value) =>
-                        setState(() => _selected = value.first),
-                  ),
-                ),
-              if (board != null &&
-                  board.rankings.isNotEmpty &&
-                  widget.snapshot.canCreatePublishedArtifacts &&
-                  widget.snapshot.version.privacyEpoch != null)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: TextButton.icon(
-                      onPressed: () async {
-                        final branding = publicShareBranding(
-                          widget.snapshot,
-                          widget.league,
-                        );
-                        await _showValidatedPublicShare(
-                          context: context,
-                          ref: ref,
-                          snapshot: widget.snapshot,
-                          branding: branding,
-                          payload: BrandedSharePayload.publicLeaderboard(
-                            snapshot: widget.snapshot,
-                            leaderboard: board,
-                            branding: branding,
-                            canonicalUri: _publicCanonicalUri(
-                              PublicRoutePaths.leaders,
-                            ),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.ios_share_outlined, size: 18),
-                      label: const Text('Share leaders'),
+        child: CustomScrollView(
+          key: const Key('public-leaders-scroll'),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const PublicStatsNavigation(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: _DivisionFilter(
+                      divisions: widget.snapshot.divisionsForLeague(
+                        widget.league.leagueId,
+                      ),
+                      value: _divisionId,
+                      onChanged: (value) => setState(() {
+                        _divisionId = value;
+                        _selected = 0;
+                      }),
                     ),
                   ),
-                ),
-              Expanded(
-                child: board == null
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: AppStateMessage(
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            'Player statistics',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                        if (statsScope != null) Text(statsScope),
+                        if (board != null && duplicateCategories)
+                          Text(widget.snapshot.divisionName(board.divisionId)),
+                        if (boards.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 2,
+                            children: [
+                              for (var i = 0; i < boards.length; i++)
+                                ChoiceChip(
+                                  label: Semantics(
+                                    label: duplicateCategories
+                                        ? '${boards[i].metricName}, ${widget.snapshot.divisionName(boards[i].divisionId)}'
+                                        : boards[i].metricName,
+                                    excludeSemantics: true,
+                                    child: Text(
+                                      duplicateCategories
+                                          ? '${boards[i].categoryLabel} · ${widget.snapshot.divisionName(boards[i].divisionId)}'
+                                          : boards[i].categoryLabel,
+                                    ),
+                                  ),
+                                  showCheckmark: false,
+                                  selected: i == safeIndex,
+                                  onSelected: (_) =>
+                                      setState(() => _selected = i),
+                                ),
+                            ],
+                          ),
+                        ],
+                        if (board != null) ...[
+                          Text(board.metricName),
+                          if (qualification != null)
+                            Text('$qualification · GP = Games played')
+                          else
+                            const Text(
+                              'Minimum-games rule not published · GP = Games played',
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (board != null &&
+                      board.rankings.isNotEmpty &&
+                      widget.snapshot.canCreatePublishedArtifacts &&
+                      widget.snapshot.version.privacyEpoch != null)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final branding = publicShareBranding(
+                              widget.snapshot,
+                              widget.league,
+                            );
+                            await _showValidatedPublicShare(
+                              context: context,
+                              ref: ref,
+                              snapshot: widget.snapshot,
+                              branding: branding,
+                              payload: BrandedSharePayload.publicLeaderboard(
+                                snapshot: widget.snapshot,
+                                leaderboard: board,
+                                branding: branding,
+                                canonicalUri: _publicCanonicalUri(
+                                  PublicRoutePaths.leaders,
+                                ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.ios_share_outlined, size: 18),
+                          label: const Text('Share leaders'),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (board == null || board.rankings.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: board == null
+                      ? const AppStateMessage(
                           title: 'No leaders published',
                           message:
-                              'There are no cleared player leader rows for this division.',
+                              'There are no public player rankings for this selection.',
+                        )
+                      : const AppStateMessage(
+                          title: 'No cleared leaders published',
+                          message:
+                              'No player identity rows are available for this category and division.',
                         ),
-                      )
-                    : ListView(
-                        children: [
-                          if (board.qualificationLabel == null)
-                            const Padding(
-                              padding: EdgeInsets.fromLTRB(12, 0, 12, 8),
-                              child: AppStateMessage(
-                                title: 'Qualification criteria unavailable',
-                                message:
-                                    'The league has not published the minimum-games rule for this category.',
-                                tone: AppStateTone.warning,
-                                compact: true,
-                              ),
-                            )
-                          else
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                              child: Text(board.qualificationLabel!),
-                            ),
-                          if (board.rankings.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: AppStateMessage(
-                                title: 'No cleared leaders published',
-                                message:
-                                    'No player identity rows are available for this category and division.',
-                              ),
-                            )
-                          else
-                            for (
-                              var index = 0;
-                              index < board.rankings.length;
-                              index++
-                            )
-                              ListTile(
-                                onTap: board.rankings[index].playerId == null
-                                    ? null
-                                    : () => context.push(
-                                        PublicRoutePaths.player(
-                                          board.rankings[index].playerId!,
-                                        ),
-                                      ),
-                                leading: CircleAvatar(
-                                  child: Text('${index + 1}'),
-                                ),
-                                title: Text(board.rankings[index].displayName),
-                                subtitle: Text(
-                                  '${board.rankings[index].teamName} · ${_known(board.rankings[index].gamesPlayed)} GP',
-                                ),
-                                trailing: Text(
-                                  _metric(board.rankings[index].value),
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                        ],
+                ),
+              )
+            else
+              SliverList.builder(
+                itemCount: board.rankings.length,
+                itemBuilder: (context, index) {
+                  final row = board.rankings[index];
+                  return ListTile(
+                    onTap: row.playerId == null
+                        ? null
+                        : () => context.push(
+                            PublicRoutePaths.player(row.playerId!),
+                          ),
+                    leading: CircleAvatar(
+                      child: Text(
+                        '${index + 1}',
+                        semanticsLabel: 'Rank ${index + 1}',
                       ),
+                    ),
+                    title: Text(row.readableName),
+                    subtitle: Text(
+                      '${row.teamName} · ${_known(row.gamesPlayed)} GP',
+                      semanticsLabel:
+                          '${row.teamName}, games played: ${_known(row.gamesPlayed)}',
+                    ),
+                    trailing: Text(
+                      _metric(row.value),
+                      semanticsLabel:
+                          '${_metric(row.value)} ${board.metricName.toLowerCase()}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                },
               ),
-            ],
-          ),
+          ],
         ),
       ),
     );
@@ -2590,26 +2518,26 @@ Uri? _publicCanonicalUri(String path) {
   return base.resolve(path);
 }
 
+Uri _sponsorKitUri(String section) {
+  const origin = StagingEnvironment.enabled
+      ? 'https://hoopsconnect-jba-staging.web.app'
+      : 'https://hoops-connect-jm.web.app';
+  final path = '/sponsor-kit.html#$section';
+  return _publicCanonicalUri(path) ?? Uri.parse(origin).resolve(path);
+}
+
 class _AppDonorCredit extends StatelessWidget {
   const _AppDonorCredit();
-
-  static const _donorPath = '/sponsor-kit.html#app-donor';
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    const hostingOrigin = StagingEnvironment.enabled
-        ? 'https://hoopsconnect-jba-staging.web.app'
-        : 'https://hoops-connect-jm.web.app';
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.symmetric(horizontal: 16),
       child: Center(
         heightFactor: 1,
         child: Link(
-          uri:
-              _publicCanonicalUri(_donorPath) ??
-              Uri.parse(hostingOrigin).resolve(_donorPath),
+          uri: _sponsorKitUri('app-donor'),
           target: LinkTarget.self,
           builder: (context, followLink) => Tooltip(
             message: 'Open Sponsor Kit',
@@ -2675,21 +2603,11 @@ String _rankLabel(PublicStanding standing) => switch (standing.rankStatus) {
 
 String _known(int? value) => value?.toString() ?? 'Unknown';
 
-String _record(int? wins, int? losses) =>
-    wins == null || losses == null ? 'Unknown' : '$wins-$losses';
+String _record(int? wins, int? losses) => wins == null && losses == null
+    ? 'Unknown'
+    : '${wins ?? '—'}-${losses ?? '—'}';
 
 String _metric(double? value) => value?.toStringAsFixed(1) ?? 'Unknown';
-
-String _leaderboardSegmentLabel(
-  PublicLeagueSnapshot snapshot,
-  PublicLeaderboard board, {
-  required bool includeDivision,
-}) {
-  if (!includeDivision || board.divisionId == null) {
-    return board.categoryLabel;
-  }
-  return '${board.categoryLabel} · ${snapshot.divisionName(board.divisionId)}';
-}
 
 String _gameStatusLabel(PublicGameStatus status) => switch (status) {
   PublicGameStatus.finalResult => 'Final',

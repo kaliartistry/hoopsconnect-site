@@ -13,11 +13,13 @@ const baselineGitBlobHashes = Object.freeze({
   'firestore.rules': '2c1554fd7623fb9cbeb9423b192b1bdd3b674143',
   'storage.rules': '54d7ba69c6ae42dd1e7556b1e2ca2164a3c18d53',
   // Reviewed public deep-link transition: URL strategy only; V2 stays absent.
-  'lib/main.dart': '44069fb8be78b6bef7c30dbac812b3b1ae673ba9',
+  // Reviewed web semantics only; no new startup services.
+  'lib/main.dart': '89a4aa3c2a62095b0e826551f181be1ffebae573',
   'lib/providers/auth_providers.dart': 'db5ea8af4f341f8b5736b8f0814829b0dafbfb73',
   // Reviewed public detail-route mount; V2 candidate imports stay excluded.
   // Active fan invite entry and assigned-team redirect; no lifecycle activation.
-  'lib/app/router/app_router.dart': '750f9fe39b336ce3ffc2bc6d79ad2c09f95b4173',
+  // Reviewed public not-found route; auth and lifecycle guards are unchanged.
+  'lib/app/router/app_router.dart': 'f511a046620d45fcc030537af4876d7f96b04e64',
   'firebase.json': '6dc9cd9871ab92ce61a0ed0890521c8e220c3cf3',
 });
 

@@ -372,14 +372,14 @@ class BrandedSharePayload {
               .join(' · ');
     final performerLines = leaders
         .map((line) {
-          return '${line.displayName} · ${line.points ?? 'Unknown'} PTS · ${line.rebounds ?? 'Unknown'} REB · ${line.assists ?? 'Unknown'} AST';
+          return '${line.readableName} · ${line.points ?? 'Unknown'} PTS · ${line.rebounds ?? 'Unknown'} REB · ${line.assists ?? 'Unknown'} AST';
         })
         .toList(growable: false);
     final detail = [?periodLine, ...performerLines].join('\n');
     final textPerformerLines = leaders
         .map((line) {
           final team = _publicTeam(snapshot, line.teamId);
-          return '${line.displayName} · ${team?.name ?? 'Team unavailable'} · ${line.points ?? 'Unknown'} PTS · ${line.rebounds ?? 'Unknown'} REB · ${line.assists ?? 'Unknown'} AST';
+          return '${line.readableName} · ${team?.name ?? 'Team unavailable'} · ${line.points ?? 'Unknown'} PTS · ${line.rebounds ?? 'Unknown'} REB · ${line.assists ?? 'Unknown'} AST';
         })
         .toList(growable: false);
     final textDetail = [?periodLine, ...textPerformerLines].join('\n');
@@ -392,7 +392,7 @@ class BrandedSharePayload {
       sheetTitle: 'Share this box score',
       eyebrow: 'BOX SCORE',
       headline:
-          '${leader.displayName} leads all scorers with $leaderPoints PTS',
+          '${leader.readableName} leads all scorers with $leaderPoints PTS',
       detail: detail,
       shareText: [
         if (presentation) 'Presentation statistics',
@@ -493,27 +493,30 @@ class BrandedSharePayload {
       );
     }
     final label = leaderboard.categoryLabel;
-    final period = snapshot
-        .leagueForDivision(leaderboard.divisionId)
-        .seasonLabel;
+    final league = snapshot.leagueForDivision(leaderboard.divisionId);
+    final period = league.seasonLabel;
+    final scope = league.firstRoundStatisticsLabel;
+    final qualification = league.qualificationFor(leaderboard);
     final topRankings = leaderboard.rankings.take(3).toList(growable: false);
     final leader = topRankings.first;
     final detail = topRankings.indexed
         .map(
           (item) =>
-              '#${item.$1 + 1} ${item.$2.displayName} · ${item.$2.teamName} · ${_publicMetric(item.$2.value)}',
+              '#${item.$1 + 1} ${item.$2.readableName} · ${_publicMetric(item.$2.value)} · ${_publicGamesPlayed(item.$2.gamesPlayed)}',
         )
         .join('\n');
     final lines = <String>[
       '$label Leaders',
       if (period != null) '$period · Per-game averages',
+      ?scope,
+      ?qualification,
       '',
       ...leaderboard.rankings
           .take(25)
           .indexed
           .map(
             (item) =>
-                '${item.$1 + 1}. ${item.$2.displayName} (${item.$2.teamName}) - ${_publicMetric(item.$2.value)}',
+                '${item.$1 + 1}. ${item.$2.readableName} (${item.$2.teamName}) · ${_publicMetric(item.$2.value)} · ${_publicGamesPlayed(item.$2.gamesPlayed)}',
           ),
       '',
       ..._publishedFooter(snapshot, branding, canonicalUri),
@@ -523,13 +526,16 @@ class BrandedSharePayload {
       sheetTitle: 'Share these leaders',
       eyebrow: period == null ? 'SEASON LEADERS' : 'FIRST-ROUND LEADERS',
       divisionLabel: period,
-      headline:
-          '${leader.displayName} leads with ${_publicMetric(leader.value)} $label',
+      headline: scope == null
+          ? '${leader.readableName} leads with ${_publicMetric(leader.value)} $label'
+          : leaderboard.metricName,
       detail: detail,
       shareText: lines.join('\n'),
       fileName:
           '${_slug(snapshot.leagueShortName)}-${_slug(leaderboard.category)}-${snapshot.version.shortLabel}.png',
-      sourceLabel: period == null
+      sourceLabel: scope != null
+          ? '$scope · $qualification'
+          : period == null
           ? 'Published league statistics'
           : '$period · Per-game averages',
       versionLabel: null,
@@ -627,24 +633,24 @@ class BrandedSharePayload {
     final periodB = leagueB.seasonLabel ?? snapshot.seasonName;
     final period = periodA == periodB ? periodA : '$periodA / $periodB';
     return BrandedSharePayload(
-      title: '${first.displayName} vs ${second.displayName}',
+      title: '${first.readableName} vs ${second.readableName}',
       sheetTitle: 'Share this player comparison',
       eyebrow: 'PLAYER COMPARISON',
-      headline: '${first.displayName} vs ${second.displayName}',
+      headline: '${first.readableName} vs ${second.readableName}',
       detail: '${first.teamName} · ${second.teamName}',
       divisionLabel: period,
       sourceLabel: 'Per-game comparison · GP = appearances',
       comparisonRows: rows,
       teams: [
         BrandedShareTeam(
-          name: first.displayName,
+          name: first.readableName,
           logoUrl: _publicTeam(
             snapshot,
             first.categories.first.value.teamId,
           )?.logoUrl,
         ),
         BrandedShareTeam(
-          name: second.displayName,
+          name: second.readableName,
           logoUrl: _publicTeam(
             snapshot,
             second.categories.first.value.teamId,
@@ -652,7 +658,7 @@ class BrandedSharePayload {
         ),
       ],
       shareText: [
-        '${first.displayName} (${first.teamName}) vs ${second.displayName} (${second.teamName})',
+        '${first.readableName} (${first.teamName}) vs ${second.readableName} (${second.teamName})',
         '$period · Per-game comparison',
         for (final row in rows) '${row.$1}: ${row.$2} vs ${row.$3}',
         ..._publishedFooter(snapshot, branding, null),
@@ -670,9 +676,11 @@ class BrandedSharePayload {
   }) {
     _requirePublishedSnapshot(snapshot);
     _requirePublicIdentityEpoch(snapshot);
-    final period = snapshot
-        .leagueForDivision(player.categories.first.divisionId)
-        .seasonLabel;
+    final league = snapshot.leagueForDivision(
+      player.categories.first.divisionId,
+    );
+    final period = league.seasonLabel;
+    final scope = league.firstRoundStatisticsLabel;
     final statLine = player.categories
         .map(
           (entry) =>
@@ -682,8 +690,9 @@ class BrandedSharePayload {
     final gamesPlayed = player.categories.first.value.gamesPlayed;
     final team = _publicTeam(snapshot, player.categories.first.value.teamId);
     final lines = <String>[
-      player.displayName,
+      player.readableName,
       if (period != null) '$period · Historical cumulative statistics',
+      ?scope,
       '${player.teamName} · ${_publicGamesPlayed(gamesPlayed)}',
       '',
       statLine.join(' · '),
@@ -695,7 +704,7 @@ class BrandedSharePayload {
       sheetTitle: 'Share this player spotlight',
       eyebrow: 'PLAYER SPOTLIGHT',
       divisionLabel: period,
-      headline: player.displayName,
+      headline: player.readableName,
       spotlightStats: {
         'GP': gamesPlayed?.toString() ?? 'N/A',
         for (final entry in player.categories)
@@ -707,7 +716,9 @@ class BrandedSharePayload {
       shareText: lines.join('\n'),
       fileName:
           '${_slug(snapshot.leagueShortName)}-${_slug(player.playerId)}-${snapshot.version.shortLabel}.png',
-      sourceLabel: period == null
+      sourceLabel: scope != null
+          ? '$scope · Per-game averages'
+          : period == null
           ? 'Published league statistics'
           : '$period · Per-game averages',
       versionLabel: null,

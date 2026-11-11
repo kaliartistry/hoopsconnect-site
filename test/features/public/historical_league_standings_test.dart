@@ -94,15 +94,50 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text('LEAGUE\nPOINTS'), findsOneWidget);
-        expect(find.text('W'), findsOneWidget);
-        expect(find.text('L'), findsOneWidget);
+        expect(find.text('W'), findsNothing);
+        expect(find.text('L'), findsNothing);
         expect(find.text('16'), findsNWidgets(2));
-        expect(find.textContaining('First Round'), findsNothing);
+        expect(find.text('Midseason standings'), findsOneWidget);
+        expect(find.textContaining('Reported Apr 15, 2025'), findsOneWidget);
         expect(find.textContaining('7-2'), findsNothing);
         expect(tester.takeException(), isNull);
       },
     );
   }
+  testWidgets('standings keep columns supported by the same report', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: HistoricalLeagueStandings(
+              snapshot: loadedSnapshot,
+              league: const PublicLeagueDefinition(
+                leagueId: 'jbl',
+                name: 'Jamaica Basketball League',
+                shortName: 'JBL',
+                historicalStatistics: true,
+                divisionIds: ['jbl-2025-first-round'],
+                reportedStandings: [
+                  ReportedTeamStanding(
+                    teamId: 'st-georges-slayers',
+                    leaguePoints: 16,
+                    wins: 7,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('W'), findsOneWidget);
+    expect(find.text('7'), findsOneWidget);
+    expect(find.text('L'), findsNothing);
+  });
+
   testWidgets(
     'member standings use published JBL totals without requiring win-loss documents',
     (tester) async {
@@ -174,9 +209,9 @@ void main() {
     }
     expect(find.text('LEAGUE PTS'), findsOneWidget);
     expect(find.textContaining('Equal points remain tied'), findsOneWidget);
-    expect(find.text('W'), findsOneWidget);
-    expect(find.text('L'), findsOneWidget);
-    expect(find.text('—'), findsNWidgets(20));
+    expect(find.text('W'), findsNothing);
+    expect(find.text('L'), findsNothing);
+    expect(find.text('—'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

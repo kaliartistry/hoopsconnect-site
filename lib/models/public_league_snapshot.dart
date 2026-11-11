@@ -276,6 +276,7 @@ class PublicPeriodScore {
 class PublicPlayerGameLine {
   final String playerId;
   final String displayName;
+  String get readableName => _readablePlayerName(displayName);
   final String teamId;
   final int? minutes;
   final int? points;
@@ -601,6 +602,7 @@ class PublicStanding {
 class PublicLeader {
   final String? playerId;
   final String displayName;
+  String get readableName => _readablePlayerName(displayName);
   final String? teamId;
   final String teamName;
   final String? divisionId;
@@ -663,6 +665,15 @@ class PublicLeaderboard {
     _ => category.toUpperCase(),
   };
 
+  String get metricName => switch (category.toLowerCase()) {
+    'ppg' => 'Points per game',
+    'rpg' => 'Rebounds per game',
+    'apg' => 'Assists per game',
+    'spg' => 'Steals per game',
+    'bpg' => 'Blocks per game',
+    _ => categoryLabel,
+  };
+
   factory PublicLeaderboard.fromMap(
     Map<String, dynamic> map, {
     required bool includePlayerIdentity,
@@ -712,6 +723,7 @@ class PublicTeamDetail {
 class PublicPlayerDetail {
   final String playerId;
   final String displayName;
+  String get readableName => _readablePlayerName(displayName);
   final String teamName;
   final List<({String category, String? divisionId, PublicLeader value})>
   categories;
@@ -723,6 +735,15 @@ class PublicPlayerDetail {
     required this.categories,
   });
 }
+
+// Display fixes for the supplied archive. Keep the raw names for identity
+// matching, source reconciliation and release fingerprints.
+String _readablePlayerName(String name) => switch (name) {
+  'TOMMY McDONALD' || 'TOMMY MCDONALD' => 'Tommy McDonald',
+  'KIMARY BROWN' => 'Kimary Brown',
+  'JORDAN ANDERSON' => 'Jordan Anderson',
+  _ => name,
+};
 
 class PublicSponsor {
   const PublicSponsor({
@@ -815,9 +836,13 @@ class ReportedTeamStanding {
   const ReportedTeamStanding({
     required this.teamId,
     required this.leaguePoints,
+    this.wins,
+    this.losses,
   });
   final String teamId;
   final int leaguePoints;
+  final int? wins;
+  final int? losses;
 
   factory ReportedTeamStanding.fromMap(Map<String, dynamic> map) =>
       ReportedTeamStanding(
@@ -825,6 +850,8 @@ class ReportedTeamStanding {
         leaguePoints:
             _integer(map['leaguePoints']) ??
             (throw const FormatException('Standing league points required.')),
+        wins: _integer(map['wins']),
+        losses: _integer(map['losses']),
       );
 }
 
@@ -859,6 +886,20 @@ class PublicLeagueDefinition extends PublicBrandIdentity {
   final String? standingsSourceUrl;
   final List<PublicSponsor> supportingSponsorExamples;
   final List<String> divisionIds;
+
+  /// The supplied 2025 NBL workbook is a first-round snapshot, separate from
+  /// the midseason standings and the game reports. See JBL_LOCAL_IMPORT.md.
+  bool get isNbl2025Archive =>
+      historicalStatistics &&
+      leagueId == 'jbl' &&
+      divisionIds.contains('jbl-2025-first-round');
+
+  String? get firstRoundStatisticsLabel =>
+      isNbl2025Archive ? 'First-round statistics through Apr 10, 2025' : null;
+
+  String? qualificationFor(PublicLeaderboard board) => isNbl2025Archive
+      ? 'All recorded players, no minimum games'
+      : board.qualificationLabel;
 
   factory PublicLeagueDefinition.fromMap(Map<String, dynamic> map) {
     final branding = _optionalMap(map['branding']);

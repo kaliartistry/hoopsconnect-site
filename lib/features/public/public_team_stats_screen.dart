@@ -5,6 +5,7 @@ import '../../models/public_league_snapshot.dart';
 import '../../providers/public_league_provider.dart';
 import 'historical_league_standings.dart';
 import 'public_stats_navigation.dart';
+import 'public_team_identity.dart';
 
 /// Averages use the same period as the source totals, never player appearances.
 Map<String, String> publicTeamMetrics(
@@ -16,11 +17,11 @@ Map<String, String> publicTeamMetrics(
   final standing = detail.standing;
   final historical = league.historicalStatistics;
   final gp = historical
-      ? (league.leagueId == 'jbl' &&
-                league.seasonLabel?.contains('2025') == true
-            ? 9
-            : null)
+      ? (league.isNbl2025Archive ? 9 : null)
       : standing?.gamesPlayed;
+  final reported = league.reportedStandings
+      .where((r) => r.teamId == id)
+      .firstOrNull;
   final totals = historical
       ? recordedTeamTotals(snapshot, id)
       : <String, int?>{};
@@ -29,8 +30,8 @@ Map<String, String> publicTeamMetrics(
       : (total / gp).toStringAsFixed(1);
   return {
     'GP': '${gp ?? '—'}',
-    'W': '${standing?.wins ?? '—'}',
-    'L': '${standing?.losses ?? '—'}',
+    'W': '${(historical ? reported?.wins : standing?.wins) ?? '—'}',
+    'L': '${(historical ? reported?.losses : standing?.losses) ?? '—'}',
     'PPG': avg(historical ? totals['ppg'] : standing?.pointsFor),
     'RPG': avg(totals['rpg']),
     'APG': avg(totals['apg']),
@@ -75,96 +76,115 @@ class _PublicTeamStatsState extends ConsumerState<PublicTeamStatsScreen> {
               for (final t in teams)
                 t.teamId: publicTeamMetrics(snapshot, t.teamId),
             };
+            final hasWins = values.values.any((v) => v['W'] != '—');
+            final hasLosses = values.values.any((v) => v['L'] != '—');
+            final metrics = {
+              'PPG': 'Points per game',
+              'RPG': 'Rebounds per game',
+              'APG': 'Assists per game',
+              'SPG': 'Steals per game',
+              'BPG': 'Blocks per game',
+              if (hasWins) 'W': 'Wins',
+              if (hasLosses) 'L': 'Losses',
+            };
+            final metric = metrics.containsKey(_metric) ? _metric : 'PPG';
             teams.sort(
-              (a, b) => (double.tryParse(values[b.teamId]![_metric]!) ?? -1)
-                  .compareTo(
-                    double.tryParse(values[a.teamId]![_metric]!) ?? -1,
-                  ),
+              (a, b) => (double.tryParse(values[b.teamId]![metric]!) ?? -1)
+                  .compareTo(double.tryParse(values[a.teamId]![metric]!) ?? -1),
             );
-            return Column(
-              children: [
-                const PublicStatsNavigation(selected: 'teams'),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: DropdownButtonFormField<String>(
-                    initialValue: league.leagueId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'League'),
-                    items: [
-                      for (final l in leagues)
-                        DropdownMenuItem(
-                          value: l.leagueId,
-                          child: Text(l.name, overflow: TextOverflow.ellipsis),
-                        ),
-                    ],
-                    onChanged: (id) =>
-                        ref
-                                .read(publicSelectedLeagueIdProvider.notifier)
-                                .state =
-                            id,
-                  ),
-                ),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.all(12),
-                  child: SegmentedButton<String>(
-                    segments: [
-                      for (final m in [
-                        'PPG',
-                        'RPG',
-                        'APG',
-                        'SPG',
-                        'BPG',
-                        'W',
-                        'L',
-                      ])
-                        ButtonSegment(value: m, label: Text(m)),
-                    ],
-                    selected: {_metric},
-                    onSelectionChanged: (v) =>
-                        setState(() => _metric = v.first),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    '${league.seasonLabel ?? snapshot.seasonName} · Per-game averages. — means unavailable.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: teams.length,
-                    itemBuilder: (context, index) {
-                      final team = teams[index];
-                      final stats = values[team.teamId]!;
-                      return Card(
-                        child: ListTile(
-                          leading: CircleAvatar(child: Text('${index + 1}')),
-                          title: Text(team.name),
-                          subtitle: Text(
-                            '${stats['GP']} GP · ${stats['W']} W · ${stats['L']} L',
-                          ),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                stats[_metric]!,
-                                style: Theme.of(context).textTheme.titleLarge,
+            return Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1120),
+                child: ListView(
+                  primary: true,
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                  children: [
+                    const PublicStatsNavigation(selected: 'teams'),
+                    if (leagues.length > 1)
+                      DropdownButtonFormField<String>(
+                        initialValue: league.leagueId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: 'League'),
+                        items: [
+                          for (final l in leagues)
+                            DropdownMenuItem(
+                              value: l.leagueId,
+                              child: Text(
+                                l.name,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              Text(_metric),
-                            ],
+                            ),
+                        ],
+                        onChanged: (id) =>
+                            ref
+                                    .read(
+                                      publicSelectedLeagueIdProvider.notifier,
+                                    )
+                                    .state =
+                                id,
+                      )
+                    else
+                      Text(
+                        league.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    if (league.seasonLabel case final String season)
+                      Text(season),
+                    const SizedBox(height: 8),
+                    Text(
+                      league.isNbl2025Archive
+                          ? '${league.firstRoundStatisticsLabel}. Team averages use the nine-game reporting period.'
+                          : 'Published per-game averages. A dash means unavailable.',
+                    ),
+                    if (metric == 'W' || metric == 'L')
+                      const Text('Records are from the published standings.'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 2,
+                      children: [
+                        for (final m in metrics.entries)
+                          ChoiceChip(
+                            label: Text(m.key, semanticsLabel: m.value),
+                            selected: metric == m.key,
+                            showCheckmark: false,
+                            onSelected: (_) => setState(() => _metric = m.key),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    for (final (index, team) in teams.indexed)
+                      Card(
+                        child: ListTile(
+                          leading: PublicTeamMark(
+                            snapshot: snapshot,
+                            teamId: team.teamId,
+                            name: team.name,
+                            size: 36,
+                          ),
+                          title: Text('${index + 1}. ${team.name}'),
+                          subtitle: Text(
+                            [
+                              '${values[team.teamId]!['GP']} GP',
+                              if (hasWins) '${values[team.teamId]!['W']} W',
+                              if (hasLosses) '${values[team.teamId]!['L']} L',
+                            ].join(' · '),
+                          ),
+                          trailing: Text(
+                            values[team.teamId]![metric]!,
+                            semanticsLabel:
+                                '${values[team.teamId]![metric]} ${metrics[metric]}',
+                            style: Theme.of(context).textTheme.titleLarge,
                           ),
                           onTap: () => context.push(
                             '/public/teams/${Uri.encodeComponent(team.teamId)}',
                           ),
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         ),

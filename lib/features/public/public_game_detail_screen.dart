@@ -1392,7 +1392,7 @@ class _PlayerNameCell extends StatelessWidget {
       children: [
         Expanded(
           child: Text(
-            line.displayName,
+            line.readableName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

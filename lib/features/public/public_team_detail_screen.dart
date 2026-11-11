@@ -275,20 +275,20 @@ class _PublicTeamDetailScreenState
             else ...[
               if (league.historicalStatistics) ...[
                 Text(
-                  '${league.description}. Team totals are summed from the recorded player statistics.',
+                  '${league.firstRoundStatisticsLabel ?? league.description ?? 'Recorded statistics'}. Team totals are summed from the recorded player statistics.',
                 ),
                 const SizedBox(height: 12),
                 Text(
                   _perGame ? 'Team averages' : 'Team totals',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
-                if (league.leagueId == 'jbl')
-                  const Text('9 games · 2025 statistical period'),
+                if (league.isNbl2025Archive && _perGame)
+                  const Text('Averages use the nine-game reporting period.'),
                 RecordedTeamTotals(
                   snapshot: snapshot,
                   teamId: detail.team.teamId,
                   showAverages: _perGame,
-                  gamesPlayed: league.leagueId == 'jbl' ? 9 : null,
+                  gamesPlayed: league.isNbl2025Archive ? 9 : null,
                 ),
                 const SizedBox(height: 20),
               ] else ...[
@@ -383,7 +383,7 @@ class _PublicTeamDetailScreenState
                                           leader.playerId!,
                                         ),
                                       ),
-                                title: Text(leader.displayName),
+                                title: Text(leader.readableName),
                                 subtitle: Text(
                                   _gamesPlayed(leader.gamesPlayed),
                                 ),

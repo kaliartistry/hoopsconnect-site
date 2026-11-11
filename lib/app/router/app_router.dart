@@ -49,6 +49,8 @@ import '../../core/widgets/navigation_loading.dart';
 import '../app_shell.dart';
 import 'app_route_contract.dart';
 
+const _publicNotFoundPath = '${PublicRoutePaths.root}/:unmatched(.+)';
+
 // Navigator keys — one per StatefulShellBranch to preserve tab state
 final _boardNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'board');
 final _standingsNavigatorKey = GlobalKey<NavigatorState>(
@@ -66,6 +68,55 @@ Uri? _absolutePublicUri(String path) {
   final base = Uri.base;
   if (base.scheme != 'http' && base.scheme != 'https') return null;
   return base.resolve(path);
+}
+
+class _RouteNotFoundScreen extends StatelessWidget {
+  const _RouteNotFoundScreen();
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Jamaica Basketball')),
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                header: true,
+                child: Text(
+                  'Page not found',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text('Check the address or choose a league page below.'),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    onPressed: () => context.go(PublicRoutePaths.games),
+                    child: const Text('Games'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () => context.go(PublicRoutePaths.standings),
+                    child: const Text('Standings'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () => context.go(PublicRoutePaths.leaders),
+                    child: const Text('Stats'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 /// Survives the provider-driven GoRouter rebuild that occurs when Auth changes.
@@ -260,6 +311,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     // links survive a hard refresh. On later auth-driven router rebuilds, use
     // the same-app location captured by the redirect above.
     overridePlatformDefaultLocation: initialLocation != null,
+    errorBuilder: (context, state) => const _RouteNotFoundScreen(),
     redirect: (context, state) {
       final matchedRule = AppRouteContract.ruleFor(state.matchedLocation);
       if (matchedRule != null) {
@@ -432,6 +484,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             canonicalUri: _absolutePublicUri(path),
           );
         },
+      ),
+      // A matched route keeps its URL in GoRouter's browser history. Its
+      // generic error page has no match to restore and can reset to '/'.
+      GoRoute(
+        path: _publicNotFoundPath,
+        builder: (context, state) => const _RouteNotFoundScreen(),
       ),
 
       GoRoute(

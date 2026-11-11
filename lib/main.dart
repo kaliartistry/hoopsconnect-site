@@ -35,8 +35,11 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  final binding = WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
+  // Keep web semantics active for the lifetime of the page so keyboard and
+  // assistive technology users can reach the app on their first visit.
+  if (kIsWeb) binding.ensureSemantics();
 
   // Capture the browser deep link before async Firebase startup. Reading it
   // later can yield `/` after a provider-driven router rebuild.

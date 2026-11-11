@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/link.dart';
 
 import '../../app/router/app_route_contract.dart';
 import '../../core/sharing/branded_share_payload.dart';
@@ -129,12 +130,26 @@ class HistoricalLeagueStandings extends ConsumerWidget {
     final teams = snapshot.teams
         .where((t) => league.divisionIds.contains(t.divisionId))
         .toList();
-    final points = {
-      for (final row in league.reportedStandings) row.teamId: row.leaguePoints,
+    final reports = {
+      for (final row in league.reportedStandings) row.teamId: row,
     };
-    teams.sort(
-      (a, b) => (points[b.teamId] ?? -1).compareTo(points[a.teamId] ?? -1),
-    );
+    int? points(PublicTeam team) => reports[team.teamId]?.leaguePoints;
+    final hasWins = teams.any((team) => reports[team.teamId]?.wins != null);
+    final hasLosses = teams.any((team) => reports[team.teamId]?.losses != null);
+    final reportedDate = DateTime.tryParse(league.standingsAsOf ?? '');
+    final isMidseason =
+        league.isNbl2025Archive && league.standingsAsOf == '2025-04-15';
+    final reportLabel = [
+      if (reportedDate != null)
+        'Reported ${DateFormat.yMMMd().format(reportedDate)}',
+      if (isMidseason) 'After nine games per team',
+    ].join(' · ');
+    String shareRow(PublicTeam team) => [
+      if (hasWins) '${reports[team.teamId]?.wins ?? '—'} W',
+      if (hasLosses) '${reports[team.teamId]?.losses ?? '—'} L',
+      '${points(team) ?? '—'} league points',
+    ].join(' · ');
+    teams.sort((a, b) => (points(b) ?? -1).compareTo(points(a) ?? -1));
     final theme = Theme.of(context);
     return Align(
       alignment: Alignment.topCenter,
@@ -152,17 +167,23 @@ class HistoricalLeagueStandings extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
             ],
-            Text(
-              '${league.name} · ${league.seasonLabel ?? 'Statistics'}',
-              style: theme.textTheme.titleLarge,
+            Semantics(
+              header: true,
+              child: Text(
+                isMidseason ? 'Midseason standings' : 'Reported standings',
+                style: theme.textTheme.titleLarge,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
-              points.isEmpty
+              reports.isEmpty
                   ? 'League points have not been supplied. Recorded team totals are below.'
-                  : 'League points · Reported ${league.standingsAsOf ?? ''}. Equal points remain tied; no tie-break order is assumed.',
+                  : [
+                      if (reportLabel.isNotEmpty) '$reportLabel.',
+                      'Equal points remain tied.',
+                    ].join(' '),
             ),
-            if (points.isNotEmpty && snapshot.canCreatePublishedArtifacts)
+            if (reports.isNotEmpty && snapshot.canCreatePublishedArtifacts)
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
@@ -190,22 +211,20 @@ class HistoricalLeagueStandings extends ConsumerWidget {
                             for (final team in teams)
                               BrandedShareTableRow(
                                 name: team.name,
-                                value: '${points[team.teamId] ?? '—'}',
+                                value: '${points(team) ?? '—'}',
                                 logoUrl: team.logoUrl,
+                                wins: reports[team.teamId]?.wins,
+                                losses: reports[team.teamId]?.losses,
                               ),
                           ],
                           detail: teams
-                              .map(
-                                (t) =>
-                                    '${t.name} · W — · L — · ${points[t.teamId]} league pts',
-                              )
+                              .map((t) => '${t.name} · ${shareRow(t)}')
                               .join('\n'),
                           shareText: [
                             league.name,
                             '${league.seasonLabel} standings',
-                            for (final t in teams)
-                              '${t.name}: W — · L — · ${points[t.teamId] ?? '—'} league points',
-                            'Reported ${league.standingsAsOf}',
+                            for (final t in teams) '${t.name}: ${shareRow(t)}',
+                            if (reportLabel.isNotEmpty) reportLabel,
                             'Equal points remain tied.',
                             if (league.standingsSourceUrl != null)
                               league.standingsSourceUrl!,
@@ -213,8 +232,9 @@ class HistoricalLeagueStandings extends ConsumerWidget {
                               '${league.sponsor.label}: ${league.sponsor.name}',
                           ].join('\n'),
                           fileName: '${league.leagueId}-standings.png',
-                          sourceLabel:
-                              'League points · ${league.standingsAsOf}',
+                          sourceLabel: reportLabel.isEmpty
+                              ? 'League points'
+                              : reportLabel,
                         ),
                         validateCurrent: () async {
                           await validator.requireCurrent(binding);
@@ -238,9 +258,9 @@ class HistoricalLeagueStandings extends ConsumerWidget {
                   Container(
                     color: const Color(0xFF173B8F),
                     padding: const EdgeInsets.all(14),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        Expanded(
+                        const Expanded(
                           child: Text(
                             'TEAM',
                             style: TextStyle(
@@ -249,23 +269,25 @@ class HistoricalLeagueStandings extends ConsumerWidget {
                             ),
                           ),
                         ),
-                        SizedBox(
-                          width: 28,
-                          child: Text(
-                            'W',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white),
+                        if (hasWins)
+                          const SizedBox(
+                            width: 28,
+                            child: Text(
+                              'W',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white),
+                            ),
                           ),
-                        ),
-                        SizedBox(
-                          width: 28,
-                          child: Text(
-                            'L',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white),
+                        if (hasLosses)
+                          const SizedBox(
+                            width: 28,
+                            child: Text(
+                              'L',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white),
+                            ),
                           ),
-                        ),
-                        SizedBox(
+                        const SizedBox(
                           width: 64,
                           child: Text(
                             'LEAGUE\nPOINTS',
@@ -283,34 +305,40 @@ class HistoricalLeagueStandings extends ConsumerWidget {
                     ListTile(
                       onTap: () =>
                           context.push(PublicRoutePaths.team(team.teamId)),
-                      leading: team.logoUrl == null
-                          ? const Icon(Icons.sports_basketball_outlined)
-                          : SponsorLogo(
-                              reference: team.logoUrl!,
-                              semanticLabel: '${team.name} logo',
-                              width: 40,
-                              height: 40,
-                            ),
+                      leading: SponsorLogo(
+                        reference: team.logoUrl,
+                        semanticLabel: '${team.name} logo',
+                        width: 40,
+                        height: 40,
+                      ),
                       title: Text(
                         team.name,
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       trailing: SizedBox(
-                        width: 120,
+                        width: 64 + (hasWins ? 28 : 0) + (hasLosses ? 28 : 0),
                         child: Row(
                           children: [
-                            const SizedBox(
-                              width: 28,
-                              child: Text('—', textAlign: TextAlign.center),
-                            ),
-                            const SizedBox(
-                              width: 28,
-                              child: Text('—', textAlign: TextAlign.center),
-                            ),
+                            if (hasWins)
+                              SizedBox(
+                                width: 28,
+                                child: Text(
+                                  '${reports[team.teamId]?.wins ?? '—'}',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            if (hasLosses)
+                              SizedBox(
+                                width: 28,
+                                child: Text(
+                                  '${reports[team.teamId]?.losses ?? '—'}',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
                             SizedBox(
                               width: 64,
                               child: Text(
-                                '${points[team.teamId] ?? '—'}',
+                                '${points(team) ?? '—'}',
                                 textAlign: TextAlign.right,
                                 style: theme.textTheme.titleLarge,
                               ),
@@ -322,26 +350,28 @@ class HistoricalLeagueStandings extends ConsumerWidget {
                 ],
               ),
             ),
-            Text(
-              '— Win/loss records were not supplied with this standings table. Available game reports do not cover the complete season.',
-              style: theme.textTheme.bodySmall,
-            ),
-            if (league.standingsSourceUrl != null)
+            if (!hasWins && !hasLosses)
+              Text(
+                'The report gives league points. Win and loss totals were not supplied.',
+                style: theme.textTheme.bodySmall,
+              ),
+            if (league.standingsSourceUrl case final String url)
               Align(
                 alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: () => launchUrl(
-                    Uri.parse(league.standingsSourceUrl!),
-                    mode: LaunchMode.externalApplication,
+                child: Link(
+                  uri: Uri.parse(url),
+                  target: LinkTarget.blank,
+                  builder: (context, followLink) => TextButton(
+                    onPressed: followLink,
+                    child: const Text('Source: Jamaica Gleaner'),
                   ),
-                  child: const Text('Source: Jamaica Gleaner'),
                 ),
               ),
             const SizedBox(height: 24),
             Text('Team statistics', style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-              '${league.description ?? 'Recorded player totals'}. Cumulative totals, not per-game averages or standings points.',
+              '${league.firstRoundStatisticsLabel ?? league.description ?? 'Recorded player totals'}. These totals come from the player statistics workbook.',
             ),
             for (final team in teams) ...[
               const SizedBox(height: 16),
