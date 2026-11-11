@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/link.dart';
 
 import '../../app/router/app_route_contract.dart';
 import '../../core/constants/app_constants.dart';
@@ -13,6 +14,7 @@ import '../../core/widgets/app_state_message.dart';
 import '../../core/widgets/sponsor_banner.dart';
 import '../../models/association_branding_model.dart';
 import '../../models/public_league_snapshot.dart';
+import '../../platform/staging_environment.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/public_league_provider.dart';
 import '../../services/public_artifact_release_validator.dart';
@@ -106,18 +108,7 @@ class PublicLeagueScreen extends ConsumerWidget {
               builder: (context, _) {
                 if (tabs.index != 0) return const SizedBox.shrink();
 
-                final theme = Theme.of(context);
-                return SafeArea(
-                  top: false,
-                  minimum: const EdgeInsets.fromLTRB(16, 6, 16, 8),
-                  child: Text(
-                    'App donated by Kali McCarthy',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                );
+                return const _AppDonorCredit();
               },
             );
           },
@@ -2597,6 +2588,55 @@ Uri? _publicCanonicalUri(String path) {
   final base = Uri.base;
   if (base.scheme != 'http' && base.scheme != 'https') return null;
   return base.resolve(path);
+}
+
+class _AppDonorCredit extends StatelessWidget {
+  const _AppDonorCredit();
+
+  static const _donorPath = '/sponsor-kit.html#app-donor';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const hostingOrigin = StagingEnvironment.enabled
+        ? 'https://hoopsconnect-jba-staging.web.app'
+        : 'https://hoops-connect-jm.web.app';
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.symmetric(horizontal: 16),
+      child: Center(
+        heightFactor: 1,
+        child: Link(
+          uri:
+              _publicCanonicalUri(_donorPath) ??
+              Uri.parse(hostingOrigin).resolve(_donorPath),
+          target: LinkTarget.self,
+          builder: (context, followLink) => Tooltip(
+            message: 'Open Sponsor Kit',
+            child: TextButton(
+              onPressed: followLink,
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.onSurfaceVariant,
+                textStyle: theme.textTheme.labelSmall,
+              ),
+              child: const Text.rich(
+                TextSpan(
+                  text: 'App donated by ',
+                  children: [
+                    TextSpan(
+                      text: 'Kali McCarthy',
+                      style: TextStyle(decoration: TextDecoration.underline),
+                    ),
+                  ],
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PublicState extends StatelessWidget {
